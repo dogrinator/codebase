@@ -139,122 +139,92 @@ classdef Control < handle
         end
 
 %% PLC
-        function connectPLC(controler, app, src)
-            disp("connectPLC called")
-        
-            persistent dllLoaded
-        
+    % PLC Connection
+    function connectPLC(controler, app, src)
+        if src.Value == "ON"
             try
-                import TwinCAT.Ads.*
-        
-                % Load DLL once
-                if isempty(dllLoaded)
-                    NET.addAssembly('C:\Program Files (x86)\Beckhoff\TwinCAT\Functions\TE14xx-ToolsForMatlabAndSimulink\TE140x\NET\TwinCAT.Ads.dll');
-                    dllLoaded = true;
-                end
-        
-                if src.Value == "ON"
-                    % Connect
-                    controler.client = TcAdsClient();
-                    controler.client.Connect('5.85.113.174.1.1', 851);
-        
-                    % Event callback for typed notifications
-                    controler.adsListener = addlistener( ...
-                        controler.client, ...
-                        'AdsNotificationEx', ...
-                        @(s,e) controler.onNotification(app, e));
-        
-                    % Start with a simple PLC scalar first
-                    % Replace MAIN.myTestInt with your test variable
-                    controler.notificationHandle = controler.client.AddDeviceNotificationEx( ...
-                        'MAIN.myTestInt', ...
-                        AdsTransMode.OnChange, ...
-                        100, ...
-                        0, ...
-                        [], ...
-                        int32(0).GetType());
-        
-                    disp("PLC connected");
-        
-                else
-                    % Disconnect
-                    if ~isempty(controler.client)
-                        if ~isempty(controler.notificationHandle)
-                            controler.client.DeleteDeviceNotification(controler.notificationHandle);
-                        end
-        
-                        if ~isempty(controler.adsListener)
-                            delete(controler.adsListener);
-                        end
-        
-                        controler.client.Dispose();
-                        controler.client = [];
-                        controler.notificationHandle = [];
-                        controler.adsListener = [];
-        
-                        disp("PLC disconnected");
-                    end
-                end
-        
+                % 1. Načítanie DLL knižnice (použi tvoju overenú cestu)
+                dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll';
+                NET.addAssembly(dllPath);
+                
+                % 2. Vytvorenie klienta a pripojenie
+                controler.client = TwinCAT.Ads.TcAdsClient();
+                % Nahraď tvojím AMS Net ID a portom (851 je TwinCAT 3)
+                controler.client.Connect('192.168.1.10.1.1', 851); 
+                
+                % 3. Nastavenie Timera (nahrádza Callbacky z PLC)
+                % Perioda 0.1s = 10Hz (dostatočné pre live grafy)
+                controler.plcTimer = timer(...
+                    'ExecutionMode', 'fixedRate', ...
+                    'Period', 0.1, ... 
+                    'TimerFcn', @(~,~) controler.comCallback(app));
+                
+                start(controler.plcTimer);
+                controler.Connected = true;
+                disp("PLC Pripojené (Režim: Timer 10Hz)");
+
             catch ME
-                uialert(app.fig, ME.message, 'PLC Error');
+                uialert(app.fig, ME.message, 'PLC Connection Error');
                 src.Value = "OFF";
+                controler.Connected = false;
             end
+        else
+            controler.disconnectPLC();
         end
-            
-        % 4. Samotný "Interrupt" (Callback funkcia)
-        function onNotification(controler, app, event)
-            % try
-            %     % Dáta z PLC prídu ako event.Value
-            %     % MATLAB ich automaticky mapuje na štruktúru
-            %     plcData = event.Value;
-            % 
-            %     % Uložíme do modelu (fTenzo, fActualPos atď.)
-            %     controler.model.saveData(plcData);
-            % 
-            %     % Aktualizujeme grafy (napr. každú 2. notifikáciu pre výkon)
-            %     if mod(plcData.nSyncCounter, 2) == 0
-            %         % Vykreslenie tenzometra na ľavý panel
-            %         addpoints(app.FxLine, plcData.nSyncCounter, plcData.fTenzo);
-            %         drawnow limitrate;
-            %     end
-            % catch
-            %     % Ignorujeme chyby pri spracovaní počas behu
-            % end
-        end
+    end
 
-    % Read data
-        function updatePlcData(controler, app)
-            % % This function runs in the background to read your 4 tenzos
-            % if isempty(controler.plcClient) || ~isvalid(controler.plcClient)
-            %     return;
-            % end
-            % 
-            % try
-            %     % --- OPTIMIZATION TIP ---
-            %     % Instead of 4 separate reads, read them as one array if possible
-            %     % For now, let's assume they are separate GVLs
-            %     fx = read(controler.plcClient, 'GVL.fTenzo_Fx');
-            %     fy = read(controler.plcClient, 'GVL.fTenzo_Fy');
-            % 
-            %     % Save to Model
-            %     controler.model.saveTenzoX(fx);
-            %     controler.model.saveTenzoy(fy);
-            % 
-            %     % Update GUI Plots
-            %     % (We use 'animatedline' usually, but for now we update the axes)
-            %     plot(app.FxAxes, controler.model.tenzoX, 'Color', 'g');
-            %     plot(app.FyAxes, controler.model.tenzoY, 'Color', 'c');
-            %     drawnow limitrate;
-            % 
-            % catch
-            %     % Silently catch PLC timeouts to prevent GUI locking
-            % end
+    %% Disconnect PLC
+    function disconnectPLC(controler)
+        % Zastavenie timera
+        if ~isempty(controler.plcTimer) && isvalid(controler.plcTimer)
+            stop(controler.plcTimer);
+            delete(controler.plcTimer);
+            controler.plcTimer = [];
         end
+        
+        % Odpojenie klienta
+        if ~isempty(controler.client)
+            controler.client.Disconnect();
+            controler.client.Dispose();
+            controler.client = [];
+        end
+        
+        controler.Connected = false;
+        disp("PLC Odpojené");
+    end
 
-        function disconnectPLC(controler)
+    %% Communication Callback (Master Polling)
+    function comCallback(controler, app)
+        if ~controler.Connected || isempty(controler.client), return; end
+        
+        try
+            % 1. ČÍTANIE DÁT (Z PLC do PC)
+            % Pre jednoduchosť čítame celú štruktúru naraz
+            % MATLAB .NET interface vie prečítať štruktúru ako objekt
+            plcData = controler.client.ReadSymbol('GVL.stDataToPC', ...
+                controler.client.GetType(), true);
             
-            disp("PLC Disconnected");
+            % Uloženie do modelu
+            controler.model.saveLivePoint(plcData.fTenzo, plcData.fActualPos);
+            
+            % Aktualizácia GUI
+            if isvalid(app.FxAxes)
+                addpoints(app.FxLine, plcData.nSyncCounter, plcData.fTenzo);
+                drawnow limitrate;
+            end
+            
+            % 2. ZÁPIS DÁT (Z PC do PLC)
+            % Ak máš v modeli nejaké príkazy (napr. z GUI tlačidiel)
+            if controler.model.needsUpdate
+                % Príklad zápisu jednej premennej (bool)
+                controler.client.WriteSymbol('GVL.bStartTest', controler.model.startCmd);
+                controler.model.needsUpdate = false;
+            end
+            
+        catch ME
+            % Ak nastane chyba (napr. strata spojenia), vypneme komunikáciu
+            disp(['PLC Com Error: ', ME.message]);
+            % controler.disconnectPLC(); % Voliteľné: automatické odpojenie pri chybe
         end
 
     end
