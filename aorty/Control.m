@@ -253,20 +253,10 @@ classdef Control < handle
         end
 
         function disconnectPLC(controler)
+            
             disp("PLC Disconnected");
         end
 
-    % % Motor Controls (Manual Move)
-    %     function plcMove(controler, axis, direction)
-    %         if isempty(controler.plcClient), return; end
-    % 
-    %         % Write to the PLC command variables
-    %         % Assumes you have a 'bMove' variable in your PLC
-    %         varName = sprintf('GVL.bMove%s_%s', axis, direction); 
-    %         write(controler.plcClient, varName, true);
-    % 
-    %         % Note: You'll need a way to set them to false when button is released
-    %     end
     end
 end
 
