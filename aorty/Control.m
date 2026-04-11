@@ -12,13 +12,11 @@ classdef Control < handle
         frameCount = 0;   % Counter to track frames for plotting
         
     % PLC Properties
-        plcClient      % Native MATLAB ADS Client
-        plcTimer       % Timer for reading sensors (Tenzos + Temp)
+        plcTimer       % Timer for reading sensors (Tenzos + Temp) and sending data
         amsNetID = '5.85.113.174.1.1';
-        amsPort = 851;
+        dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll';
         client
-        adsListener
-        notificationHandle
+        Connected = false;
 
     end
     
@@ -37,7 +35,7 @@ classdef Control < handle
                     % 2. Get the source (hardware) handle
                     camSource = getselectedsource(controler.cam);
                     
-                    % 3. THE TRIGGER RESET (Crucial for Basler)
+                    % 3. THE TRIGGER RESET 
                     % We cycle through all selectors to ensure the camera is in Freerun
                     selectors = {'FrameStart', 'AcquisitionStart', 'FrameBurstStart'};
                     for i = 1:length(selectors)
@@ -45,7 +43,7 @@ classdef Control < handle
                             camSource.TriggerSelector = selectors{i};
                             camSource.TriggerMode = 'Off';
                         catch
-                            % Some cameras don't support all selectors, just skip
+                            % if error skip
                         end
                     end
         
@@ -79,7 +77,7 @@ classdef Control < handle
             end
         end
 
-    % Process Frame (Triggered automatically by Ethernet)
+    % Process Frame
         function processFrame(controler, app, src)
             try
                 % Grab the frame from the memory buffer
@@ -91,7 +89,7 @@ classdef Control < handle
                     controler.frameCount = 0; % Reset periodically
                 end
         
-                % Store the FULL quality frame in the model (for the real test data)
+                % Store the FULL quality frame in the model 
                 controler.model.saveCameraFrame(frame);
                 
                 % Update GUI every n-th frame (added at begining for performance)
@@ -112,7 +110,7 @@ classdef Control < handle
             end
         end
 
-    % Settings Updates (settings can be added later, dinamicly is bad idea for performance '25s XD')
+    % Settings Updates
         function updateExposure(controler, exposureValue)
             if ~isempty(controler.cam) && isvalid(controler.cam)
                 src = getselectedsource(controler.cam);
@@ -124,7 +122,7 @@ classdef Control < handle
         function updateGain(controler, gainValue)
             if ~isempty(controler.cam) && isvalid(controler.cam)
                 src = getselectedsource(controler.cam);
-                src.ExposureTimeAbs = exposureValue; 
+                src.GainRaw = gainValue; 
                 disp(['Gain set to: ', num2str(gainValue)]);
             end
         end
@@ -140,93 +138,91 @@ classdef Control < handle
 
 %% PLC
     % PLC Connection
-    function connectPLC(controler, app, src)
-        if src.Value == "ON"
+        function connectPLC(controler, app, src)
+            if src.Value == "ON"
+                try
+                    % 1. Load .dll library from beckhoff
+                    NET.addAssembly(controler.dllPath);
+                    
+                    % 2. Create client and connect
+                    controler.client = TwinCAT.Ads.TcAdsClient();
+                    % Choose AMS Net ID (851 is TwinCAT 3)
+                    controler.client.Connect(controler.amsNetID, 851); 
+                    
+                    % 3. Setup and start timer
+                    controler.plcTimer = timer(...
+                        'ExecutionMode', 'fixedRate', ...
+                        'Period', 0.1, ... 
+                        'TimerFcn', @(~,~) controler.comCallback(app));
+                    
+                    start(controler.plcTimer);
+                    controler.Connected = true;
+                    disp("PLC Pripojené (Režim: Timer 10Hz)");
+                
+                % If something went wrong show error
+                catch ME
+                    uialert(app.fig, ME.message, 'PLC Connection Error');
+                    src.Value = "OFF";
+                    controler.Connected = false;
+                end
+            else
+                controler.disconnectPLC();
+            end
+        end
+    
+    % Disconnect PLC
+        function disconnectPLC(controler)
+            % Stop and delete timer
+            if ~isempty(controler.plcTimer) && isvalid(controler.plcTimer)
+                stop(controler.plcTimer);
+                delete(controler.plcTimer);
+                controler.plcTimer = [];
+            end
+            
+            % Disconect client
+            if ~isempty(controler.client)
+                controler.client.Disconnect();
+                controler.client.Dispose();
+                controler.client = [];
+            end
+            
+            controler.Connected = false;
+            disp("PLC disconnected");
+        end
+    
+    % Communication Callback (TODO)
+        function comCallback(controler, app)
+            if ~controler.Connected || isempty(controler.client), return; end
+            
             try
-                % 1. Načítanie DLL knižnice (použi tvoju overenú cestu)
-                dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll';
-                NET.addAssembly(dllPath);
+                % 1. ČÍTANIE DÁT (Z PLC do PC)
+                % Pre jednoduchosť čítame celú štruktúru naraz
+                % MATLAB .NET interface vie prečítať štruktúru ako objekt
+                plcData = controler.client.ReadSymbol('GVL.stDataToPC', ...
+                    controler.client.GetType(), true);
                 
-                % 2. Vytvorenie klienta a pripojenie
-                controler.client = TwinCAT.Ads.TcAdsClient();
-                % Nahraď tvojím AMS Net ID a portom (851 je TwinCAT 3)
-                controler.client.Connect('192.168.1.10.1.1', 851); 
+                % Uloženie do modelu
+                controler.model.saveLivePoint(plcData.fTenzo, plcData.fActualPos);
                 
-                % 3. Nastavenie Timera (nahrádza Callbacky z PLC)
-                % Perioda 0.1s = 10Hz (dostatočné pre live grafy)
-                controler.plcTimer = timer(...
-                    'ExecutionMode', 'fixedRate', ...
-                    'Period', 0.1, ... 
-                    'TimerFcn', @(~,~) controler.comCallback(app));
+                % Aktualizácia GUI
+                if isvalid(app.FxAxes)
+                    addpoints(app.FxLine, plcData.nSyncCounter, plcData.fTenzo);
+                    drawnow limitrate;
+                end
                 
-                start(controler.plcTimer);
-                controler.Connected = true;
-                disp("PLC Pripojené (Režim: Timer 10Hz)");
-
+                % 2. ZÁPIS DÁT (Z PC do PLC)
+                % Ak máš v modeli nejaké príkazy (napr. z GUI tlačidiel)
+                if controler.model.needsUpdate
+                    % Príklad zápisu jednej premennej (bool)
+                    controler.client.WriteSymbol('GVL.bStartTest', controler.model.startCmd);
+                    controler.model.needsUpdate = false;
+                end
+                
             catch ME
-                uialert(app.fig, ME.message, 'PLC Connection Error');
-                src.Value = "OFF";
-                controler.Connected = false;
+                % Ak nastane chyba (napr. strata spojenia), vypneme komunikáciu
+                disp(['PLC Com Error: ', ME.message]);
+                % controler.disconnectPLC(); % Voliteľné: automatické odpojenie pri chybe
             end
-        else
-            controler.disconnectPLC();
         end
-    end
-
-    %% Disconnect PLC
-    function disconnectPLC(controler)
-        % Zastavenie timera
-        if ~isempty(controler.plcTimer) && isvalid(controler.plcTimer)
-            stop(controler.plcTimer);
-            delete(controler.plcTimer);
-            controler.plcTimer = [];
-        end
-        
-        % Odpojenie klienta
-        if ~isempty(controler.client)
-            controler.client.Disconnect();
-            controler.client.Dispose();
-            controler.client = [];
-        end
-        
-        controler.Connected = false;
-        disp("PLC Odpojené");
-    end
-
-    %% Communication Callback (Master Polling)
-    function comCallback(controler, app)
-        if ~controler.Connected || isempty(controler.client), return; end
-        
-        try
-            % 1. ČÍTANIE DÁT (Z PLC do PC)
-            % Pre jednoduchosť čítame celú štruktúru naraz
-            % MATLAB .NET interface vie prečítať štruktúru ako objekt
-            plcData = controler.client.ReadSymbol('GVL.stDataToPC', ...
-                controler.client.GetType(), true);
-            
-            % Uloženie do modelu
-            controler.model.saveLivePoint(plcData.fTenzo, plcData.fActualPos);
-            
-            % Aktualizácia GUI
-            if isvalid(app.FxAxes)
-                addpoints(app.FxLine, plcData.nSyncCounter, plcData.fTenzo);
-                drawnow limitrate;
-            end
-            
-            % 2. ZÁPIS DÁT (Z PC do PLC)
-            % Ak máš v modeli nejaké príkazy (napr. z GUI tlačidiel)
-            if controler.model.needsUpdate
-                % Príklad zápisu jednej premennej (bool)
-                controler.client.WriteSymbol('GVL.bStartTest', controler.model.startCmd);
-                controler.model.needsUpdate = false;
-            end
-            
-        catch ME
-            % Ak nastane chyba (napr. strata spojenia), vypneme komunikáciu
-            disp(['PLC Com Error: ', ME.message]);
-            % controler.disconnectPLC(); % Voliteľné: automatické odpojenie pri chybe
-        end
-
     end
 end
-

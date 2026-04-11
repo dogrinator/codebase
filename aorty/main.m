@@ -1,5 +1,6 @@
 clc
-clear all
+clf
+cear vars
 close all
 
 tic
