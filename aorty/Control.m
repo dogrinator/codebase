@@ -17,7 +17,9 @@ classdef Control < handle
         dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll';
         client
         Connected = false;
-
+        lastPlcHead = 1; % This variable remember last head of plc data
+        totalSamples = 0; % Number of samples from one reading
+        isWorking = false; % PLC is ocupied
     end
     
     methods
@@ -49,7 +51,7 @@ classdef Control < handle
         
                     % 4. NETWORK STABILITY TEST
                     if isprop(camSource, 'PacketSize')
-                        camSource.PacketSize = 9000; 
+                        camSource.PacketSize = 2000; 
                     end
                     if isprop(camSource, 'PacketDelay')
                         camSource.PacketDelay = 2000; % Higher delay = more stability
@@ -133,6 +135,7 @@ classdef Control < handle
                 stop(controler.cam);
                 delete(controler.cam);
                 controler.cam = [];
+                disp("Camera disconnected")
             end
         end
 
@@ -153,7 +156,7 @@ classdef Control < handle
                     controler.plcTimer = timer(...
                         'ExecutionMode', 'fixedRate', ...
                         'Period', 0.1, ... 
-                        'TimerFcn', @(~,~) controler.comCallback(app));
+                        'TimerFcn', @(~,~) controler.ReadCallback(app));
                     
                     start(controler.plcTimer);
                     controler.Connected = true;
@@ -184,44 +187,133 @@ classdef Control < handle
                 controler.client.Disconnect();
                 controler.client.Dispose();
                 controler.client = [];
+                disp("PLC disconnected");
             end
             
             controler.Connected = false;
-            disp("PLC disconnected");
         end
     
-    % Communication Callback (TODO)
-        function comCallback(controler, app)
-            if ~controler.Connected || isempty(controler.client), return; end
+    % Read from Plc
+        function ReadCallback(controler, app)
+            % Read struct
+            plcData = controler.client.ReadSymbol('MAIN.stSystemStatus', controler.client.GetType(), true);
+
+            % Save actual state
+            controler.isWorking = plcData.bWorking;
             
-            try
-                % 1. ČÍTANIE DÁT (Z PLC do PC)
-                % Pre jednoduchosť čítame celú štruktúru naraz
-                % MATLAB .NET interface vie prečítať štruktúru ako objekt
-                plcData = controler.client.ReadSymbol('GVL.stDataToPC', ...
-                    controler.client.GetType(), true);
+            % FIFO buffer
+            currentHead = double(plcData.nBufferHead); 
+            buffer = double(plcData.fTenzoBuffer);
+            
+            % Init vector
+            newTenzoData = []; 
+            
+            if currentHead > controler.lastPlcHead
+                % Read data from last to head
+                newTenzoData = buffer(controler.lastPlcHead : currentHead - 1);
                 
-                % Uloženie do modelu
-                controler.model.saveLivePoint(plcData.fTenzo, plcData.fActualPos);
+            elseif currentHead < controler.lastPlcHead
+
+                part1 = buffer(controler.lastPlcHead : end);
+                part2 = buffer(1 : currentHead - 1);
+                newTenzoData = [part1, part2];
+            end
+            
+            % Actualization of head
+            controler.lastPlcHead = currentHead;
+            
+            % Plot data
+            if ~isempty(newTenzoData) && isvalid(app.FxAxes)
+                % How many data came
+                numPoints = length(newTenzoData);
                 
-                % Aktualizácia GUI
-                if isvalid(app.FxAxes)
-                    addpoints(app.FxLine, plcData.nSyncCounter, plcData.fTenzo);
-                    drawnow limitrate;
+                % Create x 
+                xData = controler.totalSamples + (1:numPoints);
+                
+                % Plot data
+                addpoints(app.FxLine, xData, newTenzoData);
+                
+                % prepare for next data
+                controler.totalSamples = controler.totalSamples + numPoints;
+                
+                drawnow limitrate;
+            end
+        end
+        
+    % Send control data
+        function SendCommands(controler,Mode,myData,myVels)
+            
+            % 1. Check if PLC is occupied
+            if controler.isWorking
+                disp('PLC is currently working. Commands ignored.');
+                return;
+            end
+
+           try
+                % 2. Clean and format arrays
+                maxSteps = 100;
+                distBuffer = zeros(1, maxSteps);
+                velBuffer = zeros(1, maxSteps);
+        
+                % Add data to buffers
+                distBuffer(1:length(myData)) = myData; 
+                velBuffer(1:length(myVels)) = myVels;
+                
+                % This is needed to bypas error with datatype
+                netDistBuffer = NET.createArray('System.Double', maxSteps);
+                netVelBuffer  = NET.createArray('System.Double', maxSteps);
+                for i = 1:maxSteps
+                    netDistBuffer(i) = distBuffer(i);
+                    netVelBuffer(i)  = velBuffer(i);
                 end
                 
-                % 2. ZÁPIS DÁT (Z PC do PLC)
-                % Ak máš v modeli nejaké príkazy (napr. z GUI tlačidiel)
-                if controler.model.needsUpdate
-                    % Príklad zápisu jednej premennej (bool)
-                    controler.client.WriteSymbol('GVL.bStartTest', controler.model.startCmd);
-                    controler.model.needsUpdate = false;
-                end
+                % 3. Create Variable Handles
+                hDist = controler.client.CreateVariableHandle('MAIN.stMoveCommand.fDistancesX');
+                hVel  = controler.client.CreateVariableHandle('MAIN.stMoveCommand.fVelocitiesX');
+                hTot  = controler.client.CreateVariableHandle('MAIN.stMoveCommand.nTotalStepsX');
+                hMode = controler.client.CreateVariableHandle('MAIN.stMoveCommand.nMode');
+                hExec = controler.client.CreateVariableHandle('MAIN.stMoveCommand.bExecute');
+                hPwr  = controler.client.CreateVariableHandle('MAIN.stMoveCommand.bPower');
+
+                % 4. Write data via WriteAny
+                controler.client.WriteAny(hDist, netDistBuffer);
+                controler.client.WriteAny(hVel, netVelBuffer);
+                
+                % INT v PLC is int16 in MATLAB
+                controler.client.WriteAny(hTot, int16(length(myData)));
+                controler.client.WriteAny(hMode, int16(Mode));
+                
+                % BOOL in PLC
+                controler.client.WriteAny(hExec, true);
+                controler.client.WriteAny(hPwr, true);
+                
+                % 5. Delete Handles
+                controler.client.DeleteVariableHandle(hDist);
+                controler.client.DeleteVariableHandle(hVel);
+                controler.client.DeleteVariableHandle(hTot);
+                controler.client.DeleteVariableHandle(hMode);
+                controler.client.DeleteVariableHandle(hExec);
+                controler.client.DeleteVariableHandle(hPwr);
+                
+                disp('Commands successfully sent to PLC.');
                 
             catch ME
-                % Ak nastane chyba (napr. strata spojenia), vypneme komunikáciu
-                disp(['PLC Com Error: ', ME.message]);
-                % controler.disconnectPLC(); % Voliteľné: automatické odpojenie pri chybe
+                % Error
+                disp(['Write Error: ', ME.message]);
+           end
+        end
+
+        % Power Enable 
+        function powerCallback(controler, btn)
+            if btn.Value
+                btn.Text = 'ON';
+                btn.BackgroundColor = [0.4 1 0.4];
+                % Pošleme príkaz na zapnutie (uprav si SendPower metódu v kontroleri)
+                controler.client.WriteSymbol('MAIN.stMoveCommand.bPower', true);
+            else
+                btn.Text = 'OFF';
+                btn.BackgroundColor = [1 0.7 0.7];
+                controler.client.WriteSymbol('MAIN.stMoveCommand.bPower', false);
             end
         end
     end

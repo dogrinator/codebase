@@ -30,6 +30,12 @@ classdef View < handle
         FxAxes
         FyAxes
 
+        % Main control
+        posX
+        posY
+        velX
+        velY
+
     end
     
     methods
@@ -60,8 +66,25 @@ classdef View < handle
 
         %% Close app
         function shutdown(app)
-            app.controler.closeCam();
-            app.controler.disconnectPLC();
+        % to be shure that it is not ethernal loop
+            app.fig.CloseRequestFcn = ''; 
+            
+            try
+                % Try to close hardware com
+                app.controler.disconnectPLC();
+                app.controler.closeCam();
+            catch
+                % If fail objects dont exist anymore
+            end
+            
+            % Stop timers if they still exist
+            t = timerfindall;
+            if ~isempty(t), stop(t); delete(t); end
+            
+            % Force fig to close
+            delete(app.fig);
+            
+            % Finall close app
             delete(app);
         end
 
@@ -177,7 +200,7 @@ classdef View < handle
         
             % Test dropdown
             app.modeDrop = uidropdown(topGrid, ...
-                'Items', {'Manual Control', 'Constant Force', 'Oscillation', 'G-Code Speed'}, ...
+                'Items', {'Manual Control','Constant Speed', 'Constant Force', 'G-Code Speed', 'G-Code Force'}, ...
                 'ValueChangedFcn', @(src,event) app.updateTestUI(src.Value));
 
             % Connect switch
@@ -198,26 +221,61 @@ classdef View < handle
             % Clear the previous dynamic buttons
             delete(app.dynamicControlGroup.Children);
             
-            % === TODO === %
             switch selectedMode
                 case 'Manual Control'
+                    % Create grid
+                    g = uigridlayout(app.dynamicControlGroup, [7 2]);
+                    
+                    % X axes control
+                    uibutton(g, 'Text', 'Move X +', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,app.posX.Value,app.velX.Value));
+                    uibutton(g, 'Text', 'Move X -', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,- app.posX.Value,app.velX.Value));
+                    uilabel(g, 'Text', 'Distance for X axis [mm]:');
+                    app.posX = uieditfield(g, 'numeric', 'Value', 10);
+                    uilabel(g, 'Text', 'Speed of X axis [m/s]:');
+                    app.velX = uieditfield(g, 'numeric', 'Value', 10);
+                    
+                    % Y axes control
+                    uibutton(g, 'Text', 'Move Y +', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,app.posY.Value,app.velY.Value));
+                    uibutton(g, 'Text', 'Move Y -', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,- app.posY.Value,app.velY.Value));
+                    uilabel(g, 'Text', 'Distance for Y axis [mm]:');
+                    app.posY = uieditfield(g, 'numeric', 'Value', 10);
+                    uilabel(g, 'Text', 'Speed of Y axis [m/s]:');
+                    app.velY = uieditfield(g, 'numeric', 'Value', 10);
+
+                    % --- POWER / ENABLE SECTION ---
+                    uilabel(g, 'Text', 'Axis Motors:', 'FontWeight', 'bold');
+                    pwrBtn = uibutton(g, 'state', 'Text', 'OFF', 'BackgroundColor', [1 0.7 0.7]);
+                    pwrBtn.ValueChangedFcn = @(s,e) app.controler.powerCallback(app, s);
+                    
+                case 'Constant Speed'
                     % Create a 2x2 grid for Manual Buttons
-                    g = uigridlayout(app.dynamicControlGroup, [3 2]);
-                    uibutton(g, 'Text', 'Move X +', 'ButtonPushedFcn', @(s,e) app.controler.plcMove('X', 1));
-                    uibutton(g, 'Text', 'Move X -', 'ButtonPushedFcn', @(s,e) app.controler.plcMove('X', -1));
-                    uibutton(g, 'Text', 'Move Y +', 'ButtonPushedFcn', @(s,e) app.controler.plcMove('Y', 1));
-                    uibutton(g, 'Text', 'Move Y -', 'ButtonPushedFcn', @(s,e) app.controler.plcMove('Y', -1));
-                    uibutton(g, 'Text', 'ENABLE MOTORS', 'BackgroundColor', [0.8 1 0.8]);
-        
-                case 'Constant Force'
+                    g = uigridlayout(app.dynamicControlGroup, [4 2]);
+                    uilabel(g, 'Text', 'Distance for X axis [mm]:');
+                    uieditfield(g, 'numeric', 'Value', 10);
+                    uilabel(g, 'Text', 'Speed of X axis [m/s]:');
+                    uieditfield(g, 'numeric', 'Value', 10);
+
+                    uilabel(g, 'Text', 'Distance for Y axis [mm]:');
+                    uieditfield(g, 'numeric', 'Value', 10);
+                    uilabel(g, 'Text', 'Speed of Y axis [m/s]:');
+                    uieditfield(g, 'numeric', 'Value', 10);
+
+                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,positionY,VelY));
+                    
+                case 'Constant Force' % TODO
                     g = uigridlayout(app.dynamicControlGroup, [2 2]);
                     uilabel(g, 'Text', 'Target Force (N):');
                     uieditfield(g, 'numeric', 'Value', 10);
-                    uibutton(g, 'Text', 'START PID CONTROL');
+                    uibutton(g, 'Text', 'Start Test');
                     
-                case 'G-Code Speed'
+                case 'G-Code Speed' %TODO
                     g = uigridlayout(app.dynamicControlGroup, [2 1]);
-                    uibutton(g, 'Text', 'Load G-Code File', 'Icon', 'file');
+                    uibutton(g, 'Text', 'Load G-Code File');
+                    uilistbox(g, 'Items', {'No file loaded...'});
+                
+                case 'G-Code Force' %TODO
+                    g = uigridlayout(app.dynamicControlGroup, [2 1]);
+                    uibutton(g, 'Text', 'Load G-Code File');
                     uilistbox(g, 'Items', {'No file loaded...'});
             end
         end
