@@ -275,7 +275,7 @@ classdef View < handle
                     uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,positionX,VelX));
                     
                     % Panic stop
-                    pwrBtn = uibutton(g, 'state', 'Text', 'STOP', 'BackgroundColor', [1 0.7 0.7]);
+                    pwrBtn = uibutton(g, 'state', 'Text', 'Stop', 'BackgroundColor', [1 0.7 0.7]);
                     pwrBtn.ValueChangedFcn = @(s,e) app.controler.panicStop(s);
                     
                 case 'Constant Force' 
@@ -311,6 +311,10 @@ classdef View < handle
                     uibutton(g, 'Text', 'Load G-Code File');
                     uilistbox(g, 'Items', {'No file loaded...'});
             end
+        end
+
+        function cSpeedTest(controler)
+
         end
     end
 end

@@ -35,89 +35,71 @@ classdef Control < handle
         end
 
 %% Camera
+
         function connectCamera(controler, app, src)
             if src.Value == "ON"
                 try
-                    % 1. Create the object
                     controler.cam = videoinput('gige', 1, 'Mono8');
-                    
-                    % 2. Get the source (hardware) handle
                     camSource = getselectedsource(controler.cam);
-                    
-                    % 3. THE TRIGGER RESET 
-                    % We cycle through all selectors to ensure the camera is in Freerun
-                    selectors = {'FrameStart', 'AcquisitionStart', 'FrameBurstStart'};
-                    for i = 1:length(selectors)
+        
+                    % Trigger reset
+                    for sel = {'FrameStart','AcquisitionStart','FrameBurstStart'}
                         try
-                            camSource.TriggerSelector = selectors{i};
+                            camSource.TriggerSelector = sel{1};
                             camSource.TriggerMode = 'Off';
-                        catch
-                            % if error skip
-                        end
+                        catch, end
                     end
         
-                    % 4. NETWORK STABILITY TEST
-                    if isprop(camSource, 'PacketSize')
-                        camSource.PacketSize = 2000; 
-                    end
-                    if isprop(camSource, 'PacketDelay')
-                        camSource.PacketDelay = 2000; % Higher delay = more stability
-                    end
+                    % Network — lower delay on dedicated NIC
+                    if isprop(camSource,'PacketSize'),  camSource.PacketSize  = 8000; end
+                    if isprop(camSource,'PacketDelay'), camSource.PacketDelay = 500;  end
         
-                    % 5. Configure MATLAB side
-                    controler.cam.FramesPerTrigger = Inf;
-                    controler.cam.FramesAcquiredFcnCount = 5;
-                    controler.cam.FramesAcquiredFcn = @(src, event) controler.processFrame(app, src);
-                    
-                    % 6. Clean the buffer and start
+                    % KEY FIX: bounded buffer
+                    controler.cam.FramesPerTrigger      = 1;   % 1 frame per trigger
+                    controler.cam.TriggerRepeat         = Inf; % repeat forever
+                    triggerconfig(controler.cam, 'immediate');
+        
+                    % Callback every frame
+                    controler.cam.FramesAcquiredFcnCount = 1;
+                    controler.cam.FramesAcquiredFcn = ...
+                        @(s,ev) controler.processFrame(app, s);
+        
                     flushdata(controler.cam);
                     start(controler.cam);
-                    
-                    disp("--- Camera Foundation Stable ---");
-                    disp(['Resolution: ', num2str(controler.cam.VideoResolution)]);
-                    
+                    disp("Camera connected.");
                 catch ME
-                    report = getReport(ME);
-                    uialert(app.fig, report, 'Camera Connection Error');
+                    uialert(app.fig, getReport(ME), 'Camera Error');
                     src.Value = "OFF";
                 end
             else
                 controler.closeCam();
             end
         end
-
-    % Process Frame
-        function processFrame(controler, app, src)
-            try
-                % Grab the frame from the memory buffer
-                frame = getdata(src, 1);
-
-                % Add 1 frame to counter and reset framecount in long run
-                controler.frameCount = controler.frameCount + 1;
-                if controler.frameCount > 10000
-                    controler.frameCount = 0; % Reset periodically
-                end
         
-                % Store the FULL quality frame in the model 
-                controler.model.saveCameraFrame(frame);
-                
-                % Update GUI every n-th frame (added at begining for performance)
-                n = 2;
-                if mod(controler.frameCount, n) == 0 && isvalid(app.cameraAxes)
-                    
-                    % --- DROP QUALITY FOR DISPLAY ---
-                    % Take every 2nd pixel in both directions (1:2:end)
-                    displayFrame = frame(1:2:end, 1:2:end); 
-                    
-                    % Update the image handle
-                    app.camImageHandle.CData = displayFrame;
-                    drawnow limitrate;
-                end
-
-            catch
-                % ignore dropped frames in GUI
+    % Process Frame
+    function processFrame(controler, app, src)
+        try
+            % If buffer built up, skip stale frames
+            if src.FramesAvailable > 2
+                flushdata(src);
+                return;
             end
+    
+            frame = getdata(src, 1);
+            controler.frameCount = controler.frameCount + 1;
+            if controler.frameCount > 10000, controler.frameCount = 0; end
+    
+            controler.model.saveCameraFrame(frame);
+    
+            % Display every frame (callback rate is already throttled)
+            if isvalid(app.cameraAxes)
+                app.camImageHandle.CData = frame(1:2:end, 1:2:end);
+                drawnow limitrate;
+            end
+        catch
+            % drop frame silently
         end
+    end
 
     % Settings Updates
         function updateExposure(controler, exposureValue)
