@@ -16,6 +16,12 @@ classdef Control < handle
         amsNetID = '5.85.113.174.1.1';
         dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll';
         client
+        % Handles for reciving
+        hWorking
+        hHead
+        hBuffer
+        % Handles for sending
+        hDist, hVel, hTot, hMode, hExec, hPwr
         Connected = false;
         lastPlcHead = 1; % This variable remember last head of plc data
         totalSamples = 0; % Number of samples from one reading
@@ -144,29 +150,34 @@ classdef Control < handle
         function connectPLC(controler, app, src)
             if src.Value == "ON"
                 try
-                    % 1. Load .dll library from beckhoff
                     NET.addAssembly(controler.dllPath);
-                    
-                    % 2. Create client and connect
                     controler.client = TwinCAT.Ads.TcAdsClient();
-                    % Choose AMS Net ID (851 is TwinCAT 3)
                     controler.client.Connect(controler.amsNetID, 851); 
+        
+                    % --- Create persistent handles ---
+                    % For reading
+                    controler.hWorking = int32(controler.client.CreateVariableHandle('MAIN.stSystemStatus.bWorking'));
+                    controler.hHead    = int32(controler.client.CreateVariableHandle('MAIN.stSystemStatus.nBufferHead'));
+                    controler.hBuffer  = int32(controler.client.CreateVariableHandle('MAIN.stSystemStatus.fTenzoBuffer'));
                     
-                    % 3. Setup and start timer
-                    controler.plcTimer = timer(...
-                        'ExecutionMode', 'fixedRate', ...
-                        'Period', 0.1, ... 
+                    % For writing
+                    controler.hDist = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.fDistancesX'));
+                    controler.hVel  = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.fVelocitiesX'));
+                    controler.hTot  = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.nTotalStepsX'));
+                    controler.hMode = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.nMode'));
+                    controler.hExec = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.bExecute'));
+                    controler.hPwr  = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.bPower'));
+        
+                    % Start timer
+                    controler.plcTimer = timer('ExecutionMode', 'fixedRate', 'Period', 0.1, ...
                         'TimerFcn', @(~,~) controler.ReadCallback(app));
-                    
                     start(controler.plcTimer);
+                    
                     controler.Connected = true;
-                    disp("PLC Pripojené (Režim: Timer 10Hz)");
-                
-                % If something went wrong show error
+                    disp("PLC connected.");
                 catch ME
-                    uialert(app.fig, ME.message, 'PLC Connection Error');
+                    uialert(app.fig, ME.message, 'PLC Error');
                     src.Value = "OFF";
-                    controler.Connected = false;
                 end
             else
                 controler.disconnectPLC();
@@ -175,35 +186,45 @@ classdef Control < handle
     
     % Disconnect PLC
         function disconnectPLC(controler)
-            % Stop and delete timer
             if ~isempty(controler.plcTimer) && isvalid(controler.plcTimer)
                 stop(controler.plcTimer);
                 delete(controler.plcTimer);
-                controler.plcTimer = [];
             end
             
-            % Disconect client
             if ~isempty(controler.client)
+                try
+                    % delete all handles
+                    handles = {controler.hWorking, controler.hHead, controler.hBuffer, ...
+                               controler.hDist, controler.hVel, controler.hTot, ...
+                               controler.hMode, controler.hExec, controler.hPwr};
+                    
+                    for i = 1:length(handles)
+                        if ~isempty(handles{i})
+                            controler.client.DeleteVariableHandle(handles{i});
+                        end
+                    end
+                catch
+                    % Ignor errors (No errors no problems XD)
+                end
                 controler.client.Disconnect();
                 controler.client.Dispose();
                 controler.client = [];
-                disp("PLC disconnected");
+                disp("PLC Disconnected.");
             end
-            
             controler.Connected = false;
         end
     
-    % Read from Plc
+    % Read from Plc 
         function ReadCallback(controler, app)
             % Read struct
-            plcData = controler.client.ReadSymbol('MAIN.stSystemStatus', controler.client.GetType(), true);
-
-            % Save actual state
-            controler.isWorking = plcData.bWorking;
-            
-            % FIFO buffer
-            currentHead = double(plcData.nBufferHead); 
-            buffer = double(plcData.fTenzoBuffer);
+            isWorking_net = controler.client.ReadAny(controler.hWorking, System.Type.GetType('System.Boolean'));
+            controler.isWorking = logical(isWorking_net);
+    
+            head_net = controler.client.ReadAny(controler.hHead, System.Type.GetType('System.Int32'));
+            currentHead = double(head_net);
+    
+            buffer_net = controler.client.ReadAny(controler.hBuffer, System.Type.GetType('System.Single[]'));
+            buffer = double(buffer_net);
             
             % Init vector
             newTenzoData = []; 
@@ -243,14 +264,14 @@ classdef Control < handle
     % Send control data
         function SendCommands(controler,Mode,myData,myVels)
             
-            % 1. Check if PLC is occupied
-            if controler.isWorking
-                disp('PLC is currently working. Commands ignored.');
+            % Check if PLC is occupied
+            if controler.isWorking || ~controler.Connected
+                disp('PLC is currently working or disconnected. Commands ignored.');
                 return;
             end
 
            try
-                % 2. Clean and format arrays
+                % Clean and format arrays
                 maxSteps = 100;
                 distBuffer = zeros(1, maxSteps);
                 velBuffer = zeros(1, maxSteps);
@@ -267,33 +288,17 @@ classdef Control < handle
                     netVelBuffer(i)  = velBuffer(i);
                 end
                 
-                % 3. Create Variable Handles
-                hDist = controler.client.CreateVariableHandle('MAIN.stMoveCommand.fDistancesX');
-                hVel  = controler.client.CreateVariableHandle('MAIN.stMoveCommand.fVelocitiesX');
-                hTot  = controler.client.CreateVariableHandle('MAIN.stMoveCommand.nTotalStepsX');
-                hMode = controler.client.CreateVariableHandle('MAIN.stMoveCommand.nMode');
-                hExec = controler.client.CreateVariableHandle('MAIN.stMoveCommand.bExecute');
-                hPwr  = controler.client.CreateVariableHandle('MAIN.stMoveCommand.bPower');
-
-                % 4. Write data via WriteAny
-                controler.client.WriteAny(hDist, netDistBuffer);
-                controler.client.WriteAny(hVel, netVelBuffer);
+                % Write data via WriteAny
+                controler.client.WriteAny(controler.hDist, netDistBuffer);
+                controler.client.WriteAny(controler.hVel, netVelBuffer);
                 
                 % INT v PLC is int16 in MATLAB
-                controler.client.WriteAny(hTot, int16(length(myData)));
-                controler.client.WriteAny(hMode, int16(Mode));
+                controler.client.WriteAny(controler.hTot, int16(length(myData)));
+                controler.client.WriteAny(controler.hMode, int16(Mode));
                 
                 % BOOL in PLC
-                controler.client.WriteAny(hExec, true);
-                controler.client.WriteAny(hPwr, true);
-                
-                % 5. Delete Handles
-                controler.client.DeleteVariableHandle(hDist);
-                controler.client.DeleteVariableHandle(hVel);
-                controler.client.DeleteVariableHandle(hTot);
-                controler.client.DeleteVariableHandle(hMode);
-                controler.client.DeleteVariableHandle(hExec);
-                controler.client.DeleteVariableHandle(hPwr);
+                controler.client.WriteAny(controler.hExec, true);
+                controler.client.WriteAny(controler.hPwr, true);
                 
                 disp('Commands successfully sent to PLC.');
                 
@@ -303,17 +308,24 @@ classdef Control < handle
            end
         end
 
-        % Power Enable 
-        function powerCallback(controler, btn)
+        % Panic stop when something broke (TODO = how halt works)
+        function panicStop(controler, btn)
+            
+            % Check if PLC is connected
+            if ~controler.Connected
+                disp('PLC is disconnected');
+                return;
+            end
+            
+            % Switch halt on
             if btn.Value
-                btn.Text = 'ON';
+                btn.Text = 'Stop';
                 btn.BackgroundColor = [0.4 1 0.4];
-                % Pošleme príkaz na zapnutie (uprav si SendPower metódu v kontroleri)
-                controler.client.WriteSymbol('MAIN.stMoveCommand.bPower', true);
+                controler.client.WriteSymbol('MAIN.stMoveCommand.bHalt', true);
             else
-                btn.Text = 'OFF';
+                btn.Text = 'Start';
                 btn.BackgroundColor = [1 0.7 0.7];
-                controler.client.WriteSymbol('MAIN.stMoveCommand.bPower', false);
+                controler.client.WriteSymbol('MAIN.stMoveCommand.bHalt', false);
             end
         end
     end

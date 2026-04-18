@@ -224,7 +224,7 @@ classdef View < handle
             switch selectedMode
                 case 'Manual Control'
                     % Create grid
-                    g = uigridlayout(app.dynamicControlGroup, [7 2]);
+                    g = uigridlayout(app.dynamicControlGroup, [8 2]);
                     
                     % X axes control
                     uibutton(g, 'Text', 'Move X +', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,app.posX.Value,app.velX.Value));
@@ -235,39 +235,70 @@ classdef View < handle
                     app.velX = uieditfield(g, 'numeric', 'Value', 10);
                     
                     % Y axes control
-                    uibutton(g, 'Text', 'Move Y +', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,app.posY.Value,app.velY.Value));
-                    uibutton(g, 'Text', 'Move Y -', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,- app.posY.Value,app.velY.Value));
+                    uibutton(g, 'Text', 'Move Y +');
+                    uibutton(g, 'Text', 'Move Y -');
                     uilabel(g, 'Text', 'Distance for Y axis [mm]:');
                     app.posY = uieditfield(g, 'numeric', 'Value', 10);
                     uilabel(g, 'Text', 'Speed of Y axis [m/s]:');
                     app.velY = uieditfield(g, 'numeric', 'Value', 10);
 
-                    % --- POWER / ENABLE SECTION ---
-                    uilabel(g, 'Text', 'Axis Motors:', 'FontWeight', 'bold');
-                    pwrBtn = uibutton(g, 'state', 'Text', 'OFF', 'BackgroundColor', [1 0.7 0.7]);
-                    pwrBtn.ValueChangedFcn = @(s,e) app.controler.powerCallback(app, s);
+                    % XY axes control
+                    uibutton(g, 'Text', 'Move XY +');
+                    uibutton(g, 'Text', 'Move XY -');
+
+                    % Auto-home
+                    uibutton(g, 'Text', 'Auto Home');
+
+                    % Panic stop
+                    pwrBtn = uibutton(g, 'state', 'Text', 'STOP', 'BackgroundColor', [1 0.7 0.7]);
+                    pwrBtn.ValueChangedFcn = @(s,e) app.controler.panicStop(s);
                     
                 case 'Constant Speed'
-                    % Create a 2x2 grid for Manual Buttons
+                    % Create grid for setings
                     g = uigridlayout(app.dynamicControlGroup, [4 2]);
+                    
+                    % X movement
                     uilabel(g, 'Text', 'Distance for X axis [mm]:');
-                    uieditfield(g, 'numeric', 'Value', 10);
+                    app.posX = uieditfield(g, 'numeric', 'Value', 10);
                     uilabel(g, 'Text', 'Speed of X axis [m/s]:');
-                    uieditfield(g, 'numeric', 'Value', 10);
+                    app.velX = uieditfield(g, 'numeric', 'Value', 10);
 
+                    % Y movement
                     uilabel(g, 'Text', 'Distance for Y axis [mm]:');
-                    uieditfield(g, 'numeric', 'Value', 10);
+                    app.posY = uieditfield(g, 'numeric', 'Value', 10);
                     uilabel(g, 'Text', 'Speed of Y axis [m/s]:');
-                    uieditfield(g, 'numeric', 'Value', 10);
+                    app.velY = uieditfield(g, 'numeric', 'Value', 10);
 
-                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,positionY,VelY));
+                    % Start test
+                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,positionX,VelX));
                     
-                case 'Constant Force' % TODO
-                    g = uigridlayout(app.dynamicControlGroup, [2 2]);
-                    uilabel(g, 'Text', 'Target Force (N):');
-                    uieditfield(g, 'numeric', 'Value', 10);
-                    uibutton(g, 'Text', 'Start Test');
+                    % Panic stop
+                    pwrBtn = uibutton(g, 'state', 'Text', 'STOP', 'BackgroundColor', [1 0.7 0.7]);
+                    pwrBtn.ValueChangedFcn = @(s,e) app.controler.panicStop(s);
                     
+                case 'Constant Force' 
+                    % Create Grid
+                    g = uigridlayout(app.dynamicControlGroup, [3 2]);
+                    
+                    % X regulation
+                    uilabel(g, 'Text', 'Distance for X axis [mm]:');
+                    app.posY = uieditfield(g, 'numeric', 'Value', 10);
+                    uilabel(g, 'Text', 'Target Force X (N):');
+                    app.velX = uieditfield(g, 'numeric', 'Value', 10);
+                    
+                    % Y regulation
+                    uilabel(g, 'Text', 'Distance for Y axis [mm]:');
+                    app.posY = uieditfield(g, 'numeric', 'Value', 10);
+                    uilabel(g, 'Text', 'Target Force Y (N):');
+                    app.velY = uieditfield(g, 'numeric', 'Value', 10);
+                    
+                    % Start Test
+                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(2,positionX,VelX));
+                    
+                    % Panic stop
+                    pwrBtn = uibutton(g, 'state', 'Text', 'STOP', 'BackgroundColor', [1 0.7 0.7]);
+                    pwrBtn.ValueChangedFcn = @(s,e) app.controler.panicStop(s);
+
                 case 'G-Code Speed' %TODO
                     g = uigridlayout(app.dynamicControlGroup, [2 1]);
                     uibutton(g, 'Text', 'Load G-Code File');
