@@ -28,6 +28,7 @@ classdef View < handle
         % Tenzo
         tenzoPanel
         FxAxes
+        FxLine
         FyAxes
 
         % Main control
@@ -180,6 +181,7 @@ classdef View < handle
             % Plots
             app.FxAxes = uiaxes(grid);
             title(app.FxAxes,'Fx')
+            app.FxLine = animatedline(app.FxAxes, 'Color', [0.18 0.55 0.85], 'LineWidth', 1.2);
             
             app.FyAxes = uiaxes(grid);
             title(app.FyAxes,'Fy')
@@ -250,7 +252,7 @@ classdef View < handle
                     uibutton(g, 'Text', 'Auto Home');
 
                     % Panic stop
-                    pwrBtn = uibutton(g, 'state', 'Text', 'STOP', 'BackgroundColor', [1 0.7 0.7]);
+                    pwrBtn = uibutton(g, 'state', 'Text', 'Stop', 'BackgroundColor', [1 0.7 0.7]);
                     pwrBtn.ValueChangedFcn = @(s,e) app.controler.panicStop(s);
                     
                 case 'Constant Speed'

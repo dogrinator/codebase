@@ -20,6 +20,7 @@ classdef Control < handle
         hWorking
         hHead
         hBuffer
+        hHalt
         % Handles for sending
         hDist, hVel, hTot, hMode, hExec, hPwr
         Connected = false;
@@ -167,6 +168,7 @@ classdef Control < handle
                     controler.hMode = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.nMode'));
                     controler.hExec = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.bExecute'));
                     controler.hPwr  = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.bPower'));
+                    controler.hHalt = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.bHalt'));
         
                     % Start timer
                     controler.plcTimer = timer('ExecutionMode', 'fixedRate', 'Period', 0.1, ...
@@ -196,7 +198,7 @@ classdef Control < handle
                     % delete all handles
                     handles = {controler.hWorking, controler.hHead, controler.hBuffer, ...
                                controler.hDist, controler.hVel, controler.hTot, ...
-                               controler.hMode, controler.hExec, controler.hPwr};
+                               controler.hMode, controler.hExec, controler.hPwr, controler.hHalt};
                     
                     for i = 1:length(handles)
                         if ~isempty(handles{i})
@@ -216,48 +218,77 @@ classdef Control < handle
     
     % Read from Plc 
         function ReadCallback(controler, app)
-            % Read struct
-            isWorking_net = controler.client.ReadAny(controler.hWorking, System.Type.GetType('System.Boolean'));
-            controler.isWorking = logical(isWorking_net);
-    
-            head_net = controler.client.ReadAny(controler.hHead, System.Type.GetType('System.Int32'));
-            currentHead = double(head_net);
-    
-            buffer_net = controler.client.ReadAny(controler.hBuffer, System.Type.GetType('System.Single[]'));
-            buffer = double(buffer_net);
-            
-            % Init vector
-            newTenzoData = []; 
-            
-            if currentHead > controler.lastPlcHead
-                % Read data from last to head
-                newTenzoData = buffer(controler.lastPlcHead : currentHead - 1);
+            try
+                % Read struct
                 
-            elseif currentHead < controler.lastPlcHead
+                % Check if command is being processed
+                isWorkingOut = controler.client.ReadAny(controler.hWorking, System.Type.GetType('System.Int32'));
+                controler.isWorking = double(isWorkingOut);
 
-                part1 = buffer(controler.lastPlcHead : end);
-                part2 = buffer(1 : currentHead - 1);
-                newTenzoData = [part1, part2];
-            end
-            
-            % Actualization of head
-            controler.lastPlcHead = currentHead;
-            
-            % Plot data
-            if ~isempty(newTenzoData) && isvalid(app.FxAxes)
-                % How many data came
-                numPoints = length(newTenzoData);
-                
-                % Create x 
-                xData = controler.totalSamples + (1:numPoints);
-                
+                % Read where is head
+                head_net = controler.client.ReadAny(controler.hHead, System.Type.GetType('System.Int32'));
+                currentHead = double(head_net);
+        
+                % Prepare to read arrays
+                lengths = NET.createArray('System.Int32', 1); 
+                lengths(1) = 500; 
+        
+                % Read arrays
+                buffer_net = controler.client.ReadAny(controler.hBuffer,System.Type.GetType('System.Single[]'), lengths);
+                buffer = double(buffer_net);
+    
+                % Init vector
+                newTenzoData = []; 
+    
+                if currentHead > controler.lastPlcHead
+                    % Read data from last to head
+                    newTenzoData = buffer(controler.lastPlcHead : currentHead - 1);
+    
+                elseif currentHead < controler.lastPlcHead
+    
+                    part1 = buffer(controler.lastPlcHead : end);
+                    part2 = buffer(1 : currentHead - 1);
+                    newTenzoData = [part1, part2];
+                end
+    
+                % Actualization of head
+                controler.lastPlcHead = currentHead;
+
+                Ts = 0.01; % Time interval of PLC
+
                 % Plot data
-                addpoints(app.FxLine, xData, newTenzoData);
-                
-                % prepare for next data
-                controler.totalSamples = controler.totalSamples + numPoints;
-                
-                drawnow limitrate;
+                if ~isempty(newTenzoData) && isvalid(app.FxAxes)
+                    % How many data came
+                    numPoints = length(newTenzoData);
+    
+                    % Create x 
+                    xData = controler.totalSamples + Ts*(1:numPoints);
+    
+                    % Plot data
+                    addpoints(app.FxLine, xData, newTenzoData);
+
+                    % Limit plots to show only last 500 values for performance
+                    windowSize  = 500 * Ts;
+                    if controler.totalSamples > windowSize
+                        app.FxAxes.XLim = [controler.totalSamples - windowSize, controler.totalSamples];
+                    else
+                        app.FxAxes.XLim = [0, windowSize];
+                    end
+                        
+                    % prepare for next data
+                    controler.totalSamples = controler.totalSamples + Ts*numPoints;
+    
+                    drawnow limitrate;
+                end
+            catch ME
+                % Error
+                stop(controler.plcTimer); 
+                fprintf('--- ADS READ ERROR ---\n');
+                fprintf('Message: %s\n', ME.message);
+                if isa(ME, 'NET.NetException')
+                    fprintf('Inner Exception: %s\n', char(ME.ExceptionObject.Message));
+                end
+                fprintf('----------------------\n');
             end
         end
         
@@ -288,15 +319,16 @@ classdef Control < handle
                     netVelBuffer(i)  = velBuffer(i);
                 end
                 
-                % Write data via WriteAny
+                % 1. Write data to plc
                 controler.client.WriteAny(controler.hDist, netDistBuffer);
                 controler.client.WriteAny(controler.hVel, netVelBuffer);
-                
-                % INT v PLC is int16 in MATLAB
                 controler.client.WriteAny(controler.hTot, int16(length(myData)));
                 controler.client.WriteAny(controler.hMode, int16(Mode));
                 
-                % BOOL in PLC
+                % 2. Reset Execute
+                controler.client.WriteAny(controler.hExec, false); 
+                
+                % 3. Start
                 controler.client.WriteAny(controler.hExec, true);
                 controler.client.WriteAny(controler.hPwr, true);
                 
@@ -319,13 +351,13 @@ classdef Control < handle
             
             % Switch halt on
             if btn.Value
-                btn.Text = 'Stop';
-                btn.BackgroundColor = [0.4 1 0.4];
-                controler.client.WriteSymbol('MAIN.stMoveCommand.bHalt', true);
-            else
                 btn.Text = 'Start';
+                btn.BackgroundColor = [0.4 1 0.4];
+                controler.client.WriteAny(controler.hHalt, true);
+            else
+                btn.Text = 'Stop';
                 btn.BackgroundColor = [1 0.7 0.7];
-                controler.client.WriteSymbol('MAIN.stMoveCommand.bHalt', false);
+                controler.client.WriteAny(controler.hHalt, false);
             end
         end
     end
