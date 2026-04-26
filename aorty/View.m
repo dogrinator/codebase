@@ -312,9 +312,5 @@ classdef View < handle
                     uilistbox(g, 'Items', {'No file loaded...'});
             end
         end
-
-        function cSpeedTest(controler)
-
-        end
     end
 end

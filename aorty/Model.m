@@ -10,32 +10,49 @@ classdef Model < handle
         % Camera
         cameraFrame
         testData                % A pre-allocated 4D array for when "Start Test" is pressed
-        isRecording = false;    % If True = store data to testData
+        isRecording = true;    % If True = store data to testData
         recordIndex = 1;        % number of frames recived
     end
     
     methods
         function model = Model()
-            model.tenzoX = [];
-            model.tenzoY = [];
+            model.tenzoX = 0;
+            model.tenzoY = 0;
             model.cameraFrame = [];
         end
         
         %% save values
         function saveTenzoX(model,actualXval)
-            model.tenzoX(:,end+1) = actualXval;
+            model.tenzoX = sum(actualXval)/length(actualXval);
         end
 
         function saveTenzoY(model,actualYval)
-            model.tenzoY(:,end+1) = actualYval;
+            model.tenzoY = sum(actualYval)/length(actualYval);
         end
 
         function saveCameraFrame(model, frame)
-            model.cameraFrame = frame;  % save 1 frame
-
-            % If a test is running, save to the permanent storage
+            model.cameraFrame = frame; 
+            
             if model.isRecording
-                model.testData(:,:,model.recordIndex) = frame;
+                % 1. Príprava textu
+                txt = sprintf('X: %.2f | Y: %.2f', model.tenzoX, model.tenzoY);
+                
+                % 2. Vloženie textu priamo do pixelov obrazu
+                annotatedFrame = insertText(frame, [20 20], txt, ...
+                    'FontSize', 18, ...
+                    'TextColor', 'white', ...
+                    'BoxOpacity', 0.4);
+        
+                % 3. Uloženie do TIFF súboru
+                filename = "myMultipageFile.tiff";
+                
+                if model.recordIndex == 1 && exist(filename, "file")
+                    delete(filename);
+                end
+    
+                annotatedFrameG = rgb2gray(annotatedFrame);
+                imwrite(annotatedFrameG, filename, "WriteMode", "append","Compression","packbits");
+                
                 model.recordIndex = model.recordIndex + 1;
             end
         end

@@ -24,7 +24,7 @@ classdef Control < handle
         % Handles for sending
         hDist, hVel, hTot, hMode, hExec, hPwr
         Connected = false;
-        lastPlcHead = 1; % This variable remember last head of plc data
+        lastPlcHead = []; % This variable remember last head of plc data
         totalSamples = 0; % Number of samples from one reading
         isWorking = false; % PLC is ocupied
     end
@@ -153,7 +153,7 @@ classdef Control < handle
                     controler.hHalt = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.bHalt'));
         
                     % Start timer
-                    controler.plcTimer = timer('ExecutionMode', 'fixedRate', 'Period', 0.1, ...
+                    controler.plcTimer = timer('ExecutionMode', 'fixedRate', 'Period', 0.5, ...
                         'TimerFcn', @(~,~) controler.ReadCallback(app));
                     start(controler.plcTimer);
                     
@@ -198,8 +198,9 @@ classdef Control < handle
             controler.Connected = false;
         end
     
-    % Read from Plc 
+   % Read from Plc 
         function ReadCallback(controler, app)
+            % tic
             try
                 % Read struct
                 
@@ -249,6 +250,9 @@ classdef Control < handle
                     % Plot data
                     addpoints(app.FxLine, xData, newTenzoData);
 
+                    % Prepare for saving
+                    controler.model.saveTenzoX(newTenzoData)
+
                     % Limit plots to show only last 500 values for performance
                     windowSize  = 500 * Ts;
                     if controler.totalSamples > windowSize
@@ -272,8 +276,10 @@ classdef Control < handle
                 end
                 fprintf('----------------------\n');
             end
+            % toc
         end
-        
+
+
     % Send control data
         function SendCommands(controler,Mode,myData,myVels)
             
@@ -322,7 +328,7 @@ classdef Control < handle
            end
         end
 
-        % Panic stop when something broke (TODO = how halt works)
+        % Panic stop when something broke
         function panicStop(controler, btn)
             
             % Check if PLC is connected
