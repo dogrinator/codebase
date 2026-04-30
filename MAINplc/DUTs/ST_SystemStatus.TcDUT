@@ -1,0 +1,17 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <DUT Name="ST_SystemStatus" Id="{1f1ade43-23d7-4c7e-a80f-ab809b514cde}">
+    <Declaration><![CDATA[TYPE ST_SystemStatus :
+STRUCT
+	// --- Data Buffer pre Tenzometer ---
+    fTenzoBuffer : ARRAY[1..500] OF REAL; // Histórie za posledných 0.5 sekundy (pri 1ms cykle)
+    nBufferHead  : INT := 1;              // Ukazovateľ, kam sa zapíše ĎALŠIA hodnota
+    
+	bWorking : BOOL;   // PLC ocupied. Do not send data to PLC
+	
+    bError     : BOOL; // Systém v chybe(TODO)
+END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>
