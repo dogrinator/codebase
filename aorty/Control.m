@@ -154,7 +154,7 @@ classdef Control < handle
         
                     % Start timer
                     controler.plcTimer = timer('ExecutionMode', 'fixedRate', 'Period', 0.5, ...
-                        'TimerFcn', @(~,~) controler.ReadCallback(app));
+                        'TimerFcn', @(~,~) controler.ReadCallback(app)); % right now aprox time for read is 0.02s, to fix> drift
                     start(controler.plcTimer);
                     
                     controler.Connected = true;
@@ -266,6 +266,12 @@ classdef Control < handle
     
                     drawnow limitrate;
                 end
+                
+                % stop recording after test ended 
+                if isWorkingOut
+                    controler.model.isRecording = false;
+                end
+                
             catch ME
                 % Error
                 stop(controler.plcTimer); 
@@ -319,6 +325,9 @@ classdef Control < handle
                 % 3. Start
                 controler.client.WriteAny(controler.hExec, true);
                 controler.client.WriteAny(controler.hPwr, true);
+
+                % set isWorking so user cannot doublesend data
+                controler.isWorking = true;
                 
                 disp('Commands successfully sent to PLC.');
                 
@@ -347,6 +356,24 @@ classdef Control < handle
                 btn.BackgroundColor = [1 0.7 0.7];
                 controler.client.WriteAny(controler.hHalt, false);
             end
+        end
+        
+        function startTest(controler, mode, x, vx)
+            % choose folder path
+            controler.model.selectedFolder = uigetdir('','Choose path');
+
+            if controler.model.selectedFolder == 0
+                disp('No file choosen')
+                return
+            end
+
+            % send data to PLC
+            controler.SendCommands(mode, x, vx)
+
+            % start recording
+            controler.model.recordIndex = 1;
+            controler.model.isRecording = true;
+            
         end
     end
 end

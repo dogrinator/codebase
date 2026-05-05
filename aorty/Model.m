@@ -4,21 +4,17 @@ classdef Model < handle
     
     properties
         % Tenzo
-        tenzoX
-        tenzoY
+        tenzoX = []
+        tenzoY = []
 
         % Camera
-        cameraFrame
-        testData                % A pre-allocated 4D array for when "Start Test" is pressed
-        isRecording = true;    % If True = store data to testData
+        isRecording = false;     % If True = store data to testData
         recordIndex = 1;        % number of frames recived
+        selectedFolder = 0      % folder in witch fotos will save
     end
     
     methods
         function model = Model()
-            model.tenzoX = 0;
-            model.tenzoY = 0;
-            model.cameraFrame = [];
         end
         
         %% save values
@@ -31,27 +27,20 @@ classdef Model < handle
         end
 
         function saveCameraFrame(model, frame)
-            model.cameraFrame = frame; 
             
             if model.isRecording
-                % 1. Príprava textu
-                txt = sprintf('X: %.2f | Y: %.2f', model.tenzoX, model.tenzoY);
+                % 1. Prepare texts
+                txt = sprintf('X: %.5f | Y: %.5f', model.tenzoX, model.tenzoY);
+                filename = sprintf('/frame%d.tiff', model.recordIndex);
+                fullFileName = fullfile(model.selectedFolder, filename);
                 
                 % 2. Vloženie textu priamo do pixelov obrazu
                 annotatedFrame = insertText(frame, [20 20], txt, ...
-                    'FontSize', 18, ...
-                    'TextColor', 'white', ...
-                    'BoxOpacity', 0.4);
+                                            'FontSize', 18, ...
+                                            'TextColor', 'white');
         
                 % 3. Uloženie do TIFF súboru
-                filename = "myMultipageFile.tiff";
-                
-                if model.recordIndex == 1 && exist(filename, "file")
-                    delete(filename);
-                end
-    
-                annotatedFrameG = rgb2gray(annotatedFrame);
-                imwrite(annotatedFrameG, filename, "WriteMode", "append","Compression","packbits");
+                imwrite(annotatedFrame, fullFileName, "WriteMode", "append","Compression",'jpeg','ColorSpace','cielab','Description','TODO XD timestamp + tenzoData');
                 
                 model.recordIndex = model.recordIndex + 1;
             end
