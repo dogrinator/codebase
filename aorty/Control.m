@@ -268,7 +268,7 @@ classdef Control < handle
                 end
                 
                 % stop recording after test ended 
-                if isWorkingOut
+                if ~controler.isWorking
                     controler.model.isRecording = false;
                 end
                 

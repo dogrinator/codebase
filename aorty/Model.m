@@ -27,22 +27,31 @@ classdef Model < handle
         end
 
         function saveCameraFrame(model, frame)
+            try
+                if model.isRecording
+                    
+                    % 1. Prepare texts
+                    txt = sprintf('X: %.5f | Y: %.5f', model.tenzoX, model.tenzoY);
+                    filename = sprintf('/frame%d.tiff', model.recordIndex);
+                    fullFileName = fullfile(model.selectedFolder, filename);
+
+                    % Save time
+                    timeStamp = datetime('now','Format','HH:mm:ss.SSS');
+                    stimeStamp = string(timeStamp);
+                    txtDesc = 'TimeStamp:' + stimeStamp + txt;
+                    
+                    % 2. Vloženie textu priamo do pixelov obrazu
+                    annotatedFrame = insertText(frame, [20 20], txt, ...
+                                                'FontSize', 18, ...
+                                                'TextColor', 'white');
             
-            if model.isRecording
-                % 1. Prepare texts
-                txt = sprintf('X: %.5f | Y: %.5f', model.tenzoX, model.tenzoY);
-                filename = sprintf('/frame%d.tiff', model.recordIndex);
-                fullFileName = fullfile(model.selectedFolder, filename);
-                
-                % 2. Vloženie textu priamo do pixelov obrazu
-                annotatedFrame = insertText(frame, [20 20], txt, ...
-                                            'FontSize', 18, ...
-                                            'TextColor', 'white');
-        
-                % 3. Uloženie do TIFF súboru
-                imwrite(annotatedFrame, fullFileName, "WriteMode", "append","Compression",'jpeg','ColorSpace','cielab','Description','TODO XD timestamp + tenzoData');
-                
-                model.recordIndex = model.recordIndex + 1;
+                    % 3. Uloženie do TIFF súboru
+                    imwrite(annotatedFrame, fullFileName, "WriteMode", "overwrite",'ColorSpace','grayscale','Description',txtDesc);
+                    
+                    model.recordIndex = model.recordIndex + 1;
+                end
+            catch ME
+                fprintf(app.fig, getReport(ME), 'Camera save frame Error');
             end
         end
     end

@@ -232,7 +232,7 @@ classdef View < handle
           uibutton(g, 'Text', 'Move X +', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,app.posX.Value,app.velX.Value));
           uibutton(g, 'Text', 'Move X -', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,- app.posX.Value,app.velX.Value));
           uilabel(g, 'Text', 'Distance for X axis [mm]:');
-          app.posX = uieditfield(g, 'numeric', 'Value', 10);
+          app.posX = uieditfield(g, 'numeric', 'Value', 100);
           uilabel(g, 'Text', 'Speed of X axis [m/s]:');
           app.velX = uieditfield(g, 'numeric', 'Value', 10, 'Limits', [0, 200]);
 
@@ -240,7 +240,7 @@ classdef View < handle
           uibutton(g, 'Text', 'Move Y +');
           uibutton(g, 'Text', 'Move Y -');
           uilabel(g, 'Text', 'Distance for Y axis [mm]:');
-          app.posY = uieditfield(g, 'numeric', 'Value', 10);
+          app.posY = uieditfield(g, 'numeric', 'Value', 100);
           uilabel(g, 'Text', 'Speed of Y axis [m/s]:');
           app.velY = uieditfield(g, 'numeric', 'Value', 10, 'Limits',[0, 200]);
 
@@ -261,18 +261,18 @@ classdef View < handle
 
           % X movement
           uilabel(g, 'Text', 'Distance for X axis [mm]:');
-          app.posX = uieditfield(g, 'numeric', 'Value', 10);
+          app.posX = uieditfield(g, 'numeric', 'Value', 100);
           uilabel(g, 'Text', 'Speed of X axis [m/s]:');
-          app.velX = uieditfield(g, 'numeric', 'Value', 10, 'Limits',[0, 200]);
+          app.velX = uieditfield(g, 'numeric', 'Value', 10, 'Limits', [0, 200]);
 
           % Y movement
           uilabel(g, 'Text', 'Distance for Y axis [mm]:');
-          app.posY = uieditfield(g, 'numeric', 'Value', 10);
+          app.posY = uieditfield(g, 'numeric', 'Value', 100);
           uilabel(g, 'Text', 'Speed of Y axis [m/s]:');
-          app.velY = uieditfield(g, 'numeric', 'Value', 10,'Limits',[0, 100]);
+          app.velY = uieditfield(g, 'numeric', 'Value', 100,'Limits',[0, 100]);
 
           % Start test
-          uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.startTest(1,app.posX,app.velX));
+          uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.startTest(1,app.posX.Value,app.velX.Value));
 
           % Panic stop
           pwrBtn = uibutton(g, 'state', 'Text', 'Stop', 'BackgroundColor', [1 0.7 0.7]);
@@ -284,7 +284,7 @@ classdef View < handle
 
           % X regulation
           uilabel(g, 'Text', 'time for X axis [s]:');
-          app.posY = uieditfield(g, 'numeric', 'Value', 10, 'Limits',[0, inf]);
+          app.posX = uieditfield(g, 'numeric', 'Value', 10, 'Limits',[0, inf]);
           uilabel(g, 'Text', 'Target Force X (N):');
           app.velX = uieditfield(g, 'numeric', 'Value', 10);
 
@@ -295,7 +295,7 @@ classdef View < handle
           app.velY = uieditfield(g, 'numeric', 'Value', 10);
 
           % Start Test
-          uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.startTest(2,app.posX,app.velX));
+          uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.startTest(2,app.posX.Value,app.velX.Value));
 
           % Panic stop
           pwrBtn = uibutton(g, 'state', 'Text', 'STOP', 'BackgroundColor', [1 0.7 0.7]);
