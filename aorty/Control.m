@@ -54,7 +54,6 @@ classdef Control < handle
                     if isprop(camSource,'PacketSize'),  camSource.PacketSize  = 8000; end
                     if isprop(camSource,'PacketDelay'), camSource.PacketDelay = 500;  end
 
-                    % KEY FIX: bounded buffer
                     controler.cam.FramesPerTrigger      = 1;   % 1 frame per trigger
                     controler.cam.TriggerRepeat         = Inf; % repeat forever
                     triggerconfig(controler.cam, 'immediate');
