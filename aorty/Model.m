@@ -38,7 +38,7 @@ classdef Model < handle
                         model.fid = fopen(fullfile( model.selectedFolder, 'live_tenzoX.csv'), 'a');
                     end
                     % if folder is open save data
-                    if model.fid~= -1
+                    if model.fid ~= -1
                         dataLog = [tString(:), string(actualXval(:))]';
                         % Save to file
                         fprintf(model.fid,'%s,%s,\n', dataLog{:});
@@ -46,6 +46,7 @@ classdef Model < handle
                 end
                 if ~model.isRecording && model.fid ~= -1
                     fclose(model.fid);
+                    model.fid = -1;
                 end
             catch ME
                 fprintf(2, 'Tenzo X save frame Error: %s\n', getReport(ME));
@@ -108,7 +109,7 @@ classdef Model < handle
             disp('Tenzo logs loaded successfully.');
 
             %% 2. Find and Loop through all the TIFF Images
-            % Get a list of all tiff files matching your frame naming pattern
+            % Get a list of all tiff files matching frame naming pattern
             tiffFiles = dir(fullfile(folderPath, 'frame_*.tiff'));
             numFrames = length(tiffFiles);
 
@@ -116,7 +117,7 @@ classdef Model < handle
                 error('No tiff frames found in the specified folder.');
             end
 
-            disp(['Found ', num2size(numFrames), ' frames to process. Synchronizing...']);
+            disp(['Found ', numFrames, ' frames to process. Synchronizing...']);
 
             % Loop through every single frame
             for i = 1:numFrames
@@ -139,7 +140,7 @@ classdef Model < handle
                 %% 4. Time Synchronization: Find the closest Tenzo measurements
                 % Calculate the absolute time difference between this frame and ALL Tenzo X points
                 timeDiffX = abs(dataX.Timestamp - cameraTime);
-                [~ , idxX] = min(timeDiffX); % min returns the lowest difference and its array index
+                [~ , idxX] = min(timeDiffX); 
 
                 % Calculate the absolute time difference for Tenzo Y
                 % timeDiffY = abs(dataY.Timestamp - cameraTime);

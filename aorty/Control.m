@@ -24,8 +24,8 @@ classdef Control < handle
         % Handles for sending
         hDist, hVel, hTot, hMode, hExec, hPwr
         Connected = false;
-        lastPlcHead = []; % This variable remember last head of plc data
-        totalSamples = 0; % Number of samples from one reading
+        lastPlcHead = 1; % This variable remember last head of plc data
+        totalTime = 0; % Number of samples from one reading
         isWorking = false; % PLC is ocupied
     end
 
@@ -78,25 +78,29 @@ classdef Control < handle
         % Process Frame
         function processFrame(controler, app, src)
             try
-                % If buffer built up, skip stale frames
+                % If buffer built up, skip stale frames and disp warning
                 if src.FramesAvailable > 2
+                    dropped = src.FramesAvailable;
                     flushdata(src);
+                    fprintf('WARNING: Dropped %d stale frames\n', dropped);
                     return;
                 end
 
-                frame = getdata(src, 1);
-                controler.frameCount = controler.frameCount + 1;
-                if controler.frameCount > 10000, controler.frameCount = 0; end
+                % Obtain frame
+                raw = getdata(src, 1);
 
+                % Filter impulz noise
+                frame = medfilt2(raw, [3 3]);
+
+                % Save frame
                 controler.model.saveCameraFrame(frame);
 
-                % Display every frame (callback rate is already throttled)
+                % Display every frame
                 if isvalid(app.cameraAxes)
                     app.camImageHandle.CData = frame(1:2:end, 1:2:end);
                     drawnow limitrate;
                 end
             catch
-                % drop frame silently
             end
         end
 
@@ -153,7 +157,7 @@ classdef Control < handle
 
                     % Start timer
                     controler.plcTimer = timer('ExecutionMode', 'fixedRate', 'Period', 0.5, ...
-                        'TimerFcn', @(~,~) controler.ReadCallback(app)); % right now aprox time for read is 0.02s, to fix> drift
+                        'TimerFcn', @(~,~) controler.ReadCallback(app));
                     start(controler.plcTimer);
 
                     controler.Connected = true;
@@ -239,12 +243,12 @@ classdef Control < handle
                 Ts = 0.01; % Time interval of PLC
 
                 % Plot data
-                if ~isempty(newTenzoData) && isvalid(app.FxAxes)
+                if ~isempty(newTenzoData)
                     % How many data came
                     numPoints = length(newTenzoData);
 
                     % Create x
-                    xData = controler.totalSamples + Ts*(1:numPoints);
+                    xData = controler.totalTime + Ts*(1:numPoints);
 
                     % Plot data
                     addpoints(app.FxLine, xData, newTenzoData);
@@ -254,14 +258,14 @@ classdef Control < handle
 
                     % Limit plots to show only last 500 values for performance
                     windowSize  = 500 * Ts;
-                    if controler.totalSamples > windowSize
-                        app.FxAxes.XLim = [controler.totalSamples - windowSize, controler.totalSamples];
+                    if controler.totalTime > windowSize
+                        app.FxAxes.XLim = [controler.totalTime - windowSize, controler.totalTime];
                     else
                         app.FxAxes.XLim = [0, windowSize];
                     end
 
                     % prepare for next data
-                    controler.totalSamples = controler.totalSamples + Ts*numPoints;
+                    controler.totalTime = controler.totalTime + Ts*numPoints;
 
                     drawnow limitrate;
                 end
