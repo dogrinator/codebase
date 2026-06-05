@@ -92,12 +92,15 @@ classdef Control < handle
                 % Filter impulz noise
                 frame = medfilt2(raw, [3 3]);
 
+                % Capture timestamp for this frame
+                timeStamp = datetime('now');
+
                 % Save frame
-                controler.model.saveCameraFrame(frame);
+                controler.model.saveCameraFrame(frame, timeStamp);
 
                 % Display every frame
                 if isvalid(app.cameraAxes)
-                    app.camImageHandle.CData = frame(1:2:end, 1:2:end);
+                    app.camImageHandle.CData = frame(1:3:end, 1:3:end);
                     drawnow limitrate;
                 end
             catch
@@ -271,8 +274,8 @@ classdef Control < handle
                 end
 
                 % stop recording after test ended
-                if ~controler.isWorking
-                    controler.model.isRecording = false;
+                if ~controler.isWorking && controler.model.isRecording
+                    controler.endTest(); % Call the new endTest method
                 end
 
             catch ME
@@ -361,6 +364,22 @@ classdef Control < handle
             end
         end
 
+        function endTest(controler)
+            if controler.model.isRecording % Only run if recording was active
+                disp('--- Ending test and starting post-processing ---');
+                controler.model.isRecording = false; % Ensure flag is off before closing files
+                controler.model.closeFilesRec();
+                controler.model.PostProcessData(controler.model.selectedFolder);
+
+                % Reset model properties for next test
+                controler.model.recordIndex = 1;
+                controler.totalTime = 0; % Reset total PLC time
+                controler.model.cameraFrameWidth = 0; % Reset dimensions
+                controler.model.cameraFrameHeight = 0; % Reset dimensions
+                disp('--- Test End and Post-Processing Complete ---');
+            end
+        end
+
         function startTest(controler, mode, x, vx)
             % choose folder path
             controler.model.selectedFolder = uigetdir('','Choose path');
@@ -370,12 +389,24 @@ classdef Control < handle
                 return
             end
 
+            % Get camera dimensions before opening files for recording
+            if ~isempty(controler.cam) && isvalid(controler.cam)
+                vidRes = controler.cam.VideoResolution; % This property should give [width, height]
+                controler.model.cameraFrameWidth = vidRes(1);
+                controler.model.cameraFrameHeight = vidRes(2);
+            else
+                % In case app is runing without camera. To be able to record data
+                controler.model.cameraFrameWidth = 1024;
+                controler.model.cameraFrameHeight = 1024;
+            end
+
             % send data to PLC
             controler.SendCommands(mode, x, vx)
 
             % start recording
             controler.model.recordIndex = 1;
             controler.model.isRecording = true;
+            controler.model.openFilesRec(); % Open files for recording
 
         end
     end

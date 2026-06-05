@@ -118,7 +118,8 @@ classdef View < handle
 
             app.cameraAxes = uiaxes(grid);
             % Create a dummy image once and store its handle
-            app.camImageHandle = imagesc(app.cameraAxes, zeros(1024, 1024, 'uint8'));
+            app.camImageHandle = image(app.cameraAxes, zeros(1024, 1024, 'uint8'));
+            app.cameraAxes.CLim = [0 255];
             colormap(app.cameraAxes, gray)
             axis(app.cameraAxes, 'off')
             axis(app.cameraAxes, 'image')
