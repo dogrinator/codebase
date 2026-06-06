@@ -186,7 +186,7 @@ classdef Model < handle
             %% 5. Loop through frames, synchronize, and process
             for i = 1:numFrames
                 % Read raw frame data
-                rawFrameData = fread(fid, bytesPerFrame, 'uint8');
+                rawFrameData = fread(fid, bytesPerFrame, '*uint8');
                 if isempty(rawFrameData) || length(rawFrameData) < bytesPerFrame
                     warning(['Reached end of cam.bin unexpectedly or frame ', num2str(i), ' is incomplete. Skipping remaining frames.']);
                     break;

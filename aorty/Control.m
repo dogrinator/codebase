@@ -9,7 +9,9 @@ classdef Control < handle
 
         % camera
         cam
-        frameCount = 0;   % Counter to track frames for plotting
+        frameCounter = 0;   % Counter to track frames for plotting
+        displaySkipN = 1;   % How many frames to skip for display
+        cameraFps = 30; % Default camera FPS, will be updated
 
         % PLC Properties
         plcTimer       % Timer for reading sensors (Tenzos + Temp) and sending data
@@ -63,6 +65,16 @@ classdef Control < handle
                     controler.cam.FramesAcquiredFcn = ...
                         @(s,ev) controler.processFrame(app, s);
 
+                    % Determine display skip based on camera FPS
+                    try
+                        controler.cameraFps = camSource.AcquisitionFrameRateAbs;
+                    catch
+                        controler.cameraFps = 30;
+                    end
+                    targetDisplayFps = 15;
+                    controler.displaySkipN = max(1, round(controler.cameraFps / targetDisplayFps));
+                    controler.frameCounter = 0;
+
                     flushdata(controler.cam);
                     start(controler.cam);
                     disp("Camera connected.");
@@ -87,10 +99,7 @@ classdef Control < handle
                 end
 
                 % Obtain frame
-                raw = getdata(src, 1);
-
-                % Filter impulz noise
-                frame = medfilt2(raw, [3 3]);
+                frame = getdata(src, 1);
 
                 % Capture timestamp for this frame
                 timeStamp = datetime('now');
@@ -98,12 +107,16 @@ classdef Control < handle
                 % Save frame
                 controler.model.saveCameraFrame(frame, timeStamp);
 
-                % Display every frame
-                if isvalid(app.cameraAxes)
-                    app.camImageHandle.CData = frame(1:3:end, 1:3:end);
-                    drawnow limitrate;
+                % Display only every N-th frame to reduce GUI overhead
+                controler.frameCounter = controler.frameCounter + 1;
+                if mod(controler.frameCounter, controler.displaySkipN) == 0
+                    if isvalid(app.cameraAxes)
+                        app.camImageHandle.CData = frame(1:3:end, 1:3:end);
+                        drawnow limitrate;
+                    end
                 end
-            catch
+            catch ME
+                fprintf(2, 'processFrame error: %s\n', getReport(ME));
             end
         end
 
@@ -132,6 +145,15 @@ classdef Control < handle
                 controler.cam = [];
                 disp("Camera disconnected")
             end
+        end
+
+        function updateDisplaySkipN(controler, newFps)
+            controler.cameraFps = newFps;
+            targetDisplayFps = 15;
+            controler.displaySkipN = max(1, round(newFps / targetDisplayFps));
+            controler.frameCounter = 0; % reset so display updates immediately
+            fprintf('Display skip set to every %d frame(s) (camera FPS: %d)\n', ...
+                controler.displaySkipN, newFps);
         end
 
         %% PLC
@@ -369,7 +391,35 @@ classdef Control < handle
                 disp('--- Ending test and starting post-processing ---');
                 controler.model.isRecording = false; % Ensure flag is off before closing files
                 controler.model.closeFilesRec();
+
+                % Pause camera acquisition to prevent buffer overflow
+                % during potentially long post-processing
+                camWasRunning = ~isempty(controler.cam) && isvalid(controler.cam) && ...
+                    strcmp(controler.cam.Running, 'on');
+                if camWasRunning
+                    stop(controler.cam);
+                    flushdata(controler.cam);
+                end
+
+                % Pause PLC timer so it doesn't keep adding data during
+                % post-processing
+                timerWasRunning = ~isempty(controler.plcTimer) && isvalid(controler.plcTimer) && ...
+                    strcmp(controler.plcTimer.Running, 'on');
+                if timerWasRunning
+                    stop(controler.plcTimer);
+                end
+
                 controler.model.PostProcessData(controler.model.selectedFolder);
+
+                % Restart camera for live preview
+                if camWasRunning
+                    start(controler.cam);
+                end
+
+                % Restart PLC timer
+                if timerWasRunning
+                    start(controler.plcTimer);
+                end
 
                 % Reset model properties for next test
                 controler.model.recordIndex = 1;
