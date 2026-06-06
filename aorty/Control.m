@@ -9,7 +9,9 @@ classdef Control < handle
 
         % camera
         cam
-        frameCount = 0;   % Counter to track frames for plotting
+        displayTimer            % Separate timer for GUI updates only
+        latestFrame = [];       % Most recent frame for display
+        camStartTime
 
         % PLC Properties
         plcTimer       % Timer for reading sensors (Tenzos + Temp) and sending data
@@ -24,9 +26,9 @@ classdef Control < handle
         % Handles for sending
         hDist, hVel, hTot, hMode, hExec, hPwr
         Connected = false;
-        lastPlcHead = 1; % This variable remember last head of plc data
-        totalTime = 0; % Number of samples from one reading
-        isWorking = false; % PLC is ocupied
+        lastPlcHead = -1;   
+        totalTime = 0;      % Number of samples from one reading
+        isWorking = false;  % PLC is ocupied
     end
 
     methods
@@ -50,18 +52,26 @@ classdef Control < handle
                         catch, end
                     end
 
-                    % Network — lower delay on dedicated NIC
+                    % Network setup
                     if isprop(camSource,'PacketSize'),  camSource.PacketSize  = 8000; end
                     if isprop(camSource,'PacketDelay'), camSource.PacketDelay = 500;  end
 
-                    controler.cam.FramesPerTrigger      = 1;   % 1 frame per trigger
-                    controler.cam.TriggerRepeat         = Inf; % repeat forever
+                    controler.cam.FramesPerTrigger = 1;   % 1 frame per trigger
+                    controler.cam.TriggerRepeat = Inf; % repeat forever
                     triggerconfig(controler.cam, 'immediate');
 
-                    % Callback every frame
+                    % Save data
+                    controler.camStartTime = datetime('now');
                     controler.cam.FramesAcquiredFcnCount = 1;
-                    controler.cam.FramesAcquiredFcn = ...
-                        @(s,ev) controler.processFrame(app, s);
+                    controler.cam.FramesAcquiredFcn = @(s,ev) controler.acquireFrame(s);
+
+                    % Start display timer at fixed 15 Hz, independent of camera FPS.
+                    controler.latestFrame = [];
+                    controler.displayTimer = timer( ...
+                        'ExecutionMode', 'fixedRate', ...
+                        'Period', 0.067, ...
+                        'TimerFcn', @(~,~) controler.updateDisplay(app));
+                    start(controler.displayTimer);
 
                     flushdata(controler.cam);
                     start(controler.cam);
@@ -75,32 +85,40 @@ classdef Control < handle
             end
         end
 
-        % Process Frame
-        function processFrame(controler, app, src)
+        % Saving frame
+        function acquireFrame(controler, src)
             try
-                % If buffer built up, skip stale frames and disp warning
-                if src.FramesAvailable > 2
-                    dropped = src.FramesAvailable;
-                    flushdata(src);
-                    fprintf('WARNING: Dropped %d stale frames\n', dropped);
+                % Guard against callbacks firing after delete(cam)
+                if isempty(src) || ~isvalid(src), return; end
+                if src.FramesAvailable < 1,        return; end
+
+                [frame, relativeTime] = getdata(src, 1);
+                timeStamp = controler.camStartTime + seconds(relativeTime);
+
+                % Save
+                controler.model.saveCameraFrame(frame, timeStamp);
+
+                % Downsample
+                controler.latestFrame = frame(1:3:end, 1:3:end);
+
+            catch ME
+                if contains(ME.message, 'deleted') || contains(ME.message, 'invalid')
                     return;
                 end
+                fprintf(2, 'acquireFrame error: %s\n', getReport(ME));
+            end
+        end
 
-                % Obtain frame
-                raw = getdata(src, 1);
-
-                % Filter impulz noise
-                frame = medfilt2(raw, [3 3]);
-
-                % Save frame
-                controler.model.saveCameraFrame(frame);
-
-                % Display every frame
-                if isvalid(app.cameraAxes)
-                    app.camImageHandle.CData = frame(1:2:end, 1:2:end);
-                    drawnow limitrate;
-                end
+        % Disp frame
+        function updateDisplay(controler, app)
+            try
+                if isempty(controler.latestFrame), return; end
+                if ~isvalid(app.cameraAxes),       return; end
+                app.camImageHandle.CData = controler.latestFrame;
+                controler.latestFrame = [];   % clear so we don't redraw the same frame twice
+                drawnow limitrate;
             catch
+                % If axes was deleted, just bail
             end
         end
 
@@ -121,13 +139,20 @@ classdef Control < handle
             end
         end
 
-        % Close camera port and erase cam
+        % Closing seq
         function closeCam(controler)
+            if ~isempty(controler.displayTimer) && isvalid(controler.displayTimer)
+                stop(controler.displayTimer);
+                delete(controler.displayTimer);
+                controler.displayTimer = [];
+            end
+            controler.latestFrame = [];
+
             if ~isempty(controler.cam) && isvalid(controler.cam)
                 stop(controler.cam);
                 delete(controler.cam);
                 controler.cam = [];
-                disp("Camera disconnected")
+                disp("Camera disconnected");
             end
         end
 
@@ -205,8 +230,6 @@ classdef Control < handle
         function ReadCallback(controler, app)
             % tic
             try
-                % Read struct
-
                 % Check if command is being processed
                 isWorkingOut = controler.client.ReadAny(controler.hWorking, System.Type.GetType('System.Int32'));
                 controler.isWorking = double(isWorkingOut);
@@ -226,12 +249,17 @@ classdef Control < handle
                 % Init vector
                 newTenzoData = [];
 
+                if controler.lastPlcHead == -1
+                    controler.lastPlcHead = currentHead;
+                    return;
+                end
+
                 if currentHead > controler.lastPlcHead
-                    % Read data from last to head
+                    % Normal case: head advanced forward
                     newTenzoData = buffer(controler.lastPlcHead : currentHead - 1);
 
                 elseif currentHead < controler.lastPlcHead
-
+                    % Ring buffer wrapped around
                     part1 = buffer(controler.lastPlcHead : end);
                     part2 = buffer(1 : currentHead - 1);
                     newTenzoData = [part1, part2];
@@ -271,8 +299,8 @@ classdef Control < handle
                 end
 
                 % stop recording after test ended
-                if ~controler.isWorking
-                    controler.model.isRecording = false;
+                if ~controler.isWorking && controler.model.isRecording
+                    controler.endTest(); % Call the new endTest method
                 end
 
             catch ME
@@ -361,6 +389,51 @@ classdef Control < handle
             end
         end
 
+        function endTest(controler)
+            if controler.model.isRecording % Only run if recording was active
+                disp('--- Ending test and starting post-processing ---');
+                controler.model.isRecording = false; % Ensure flag is off before closing files
+                controler.model.closeFilesRec();
+
+                % Pause camera acquisition to prevent buffer overflow
+                % during potentially long post-processing
+                camWasRunning = ~isempty(controler.cam) && isvalid(controler.cam) && ...
+                    strcmp(controler.cam.Running, 'on');
+                if camWasRunning
+                    stop(controler.cam);
+                    flushdata(controler.cam);
+                end
+
+                % Pause PLC timer so it doesn't keep adding data during
+                % post-processing
+                timerWasRunning = ~isempty(controler.plcTimer) && isvalid(controler.plcTimer) && ...
+                    strcmp(controler.plcTimer.Running, 'on');
+                if timerWasRunning
+                    stop(controler.plcTimer);
+                end
+
+                controler.model.PostProcessData(controler.model.selectedFolder);
+
+                % Restart camera for live preview
+                if camWasRunning
+                    start(controler.cam);
+                end
+
+                % Restart PLC timer
+                if timerWasRunning
+                    start(controler.plcTimer);
+                end
+
+                % Reset model properties for next test
+                controler.model.recordIndex = 1;
+                controler.totalTime = 0;    % Reset total PLC time
+                controler.lastPlcHead = -1; % [FIX 1] Reset sentinel so next test starts clean
+                controler.model.cameraFrameWidth = 0;  % Reset dimensions
+                controler.model.cameraFrameHeight = 0; % Reset dimensions
+                disp('--- Test End and Post-Processing Complete ---');
+            end
+        end
+
         function startTest(controler, mode, x, vx)
             % choose folder path
             controler.model.selectedFolder = uigetdir('','Choose path');
@@ -370,12 +443,24 @@ classdef Control < handle
                 return
             end
 
+            % Get camera dimensions before opening files for recording
+            if ~isempty(controler.cam) && isvalid(controler.cam)
+                vidRes = controler.cam.VideoResolution; % This property should give [width, height]
+                controler.model.cameraFrameWidth = vidRes(1);
+                controler.model.cameraFrameHeight = vidRes(2);
+            else
+                % In case app is runing without camera. To be able to record data
+                controler.model.cameraFrameWidth = 1024;
+                controler.model.cameraFrameHeight = 1024;
+            end
+
             % send data to PLC
             controler.SendCommands(mode, x, vx)
 
             % start recording
             controler.model.recordIndex = 1;
             controler.model.isRecording = true;
+            controler.model.openFilesRec(); % Open files for recording
 
         end
     end

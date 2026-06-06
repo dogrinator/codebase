@@ -118,7 +118,8 @@ classdef View < handle
 
             app.cameraAxes = uiaxes(grid);
             % Create a dummy image once and store its handle
-            app.camImageHandle = imagesc(app.cameraAxes, zeros(1024, 1024, 'uint8'));
+            app.camImageHandle = image(app.cameraAxes, zeros(1024, 1024, 'uint8'));
+            app.cameraAxes.CLim = [0 255];
             colormap(app.cameraAxes, gray)
             axis(app.cameraAxes, 'off')
             axis(app.cameraAxes, 'image')
@@ -158,7 +159,7 @@ classdef View < handle
             % Frame Rate Control
             uilabel(g, 'Text', 'Acquisition Frame Rate:');
             fr = uieditfield(g, 'numeric', 'Value', src.AcquisitionFrameRateAbs);
-            fr.ValueChangedFcn = @(s,e) app.setattr(src, 'AcquisitionFrameRateAbs', s.Value);
+            fr.ValueChangedFcn = @(s,e) app.updateFrameRate(src, s.Value);
         end
 
         % Helper to handle errors if setting is out of range
@@ -167,6 +168,14 @@ classdef View < handle
                 obj.(prop) = val;
             catch
                 % warning (TODO)
+            end
+        end
+
+        function updateFrameRate(app, src, newFps)
+            try
+                app.setattr(src, 'AcquisitionFrameRateAbs', newFps);
+                app.controler.updateDisplaySkipN(newFps);
+            catch
             end
         end
 
