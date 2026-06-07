@@ -396,7 +396,6 @@ classdef Control < handle
                 controler.model.closeFilesRec();
 
                 % Pause camera acquisition to prevent buffer overflow
-                % during potentially long post-processing
                 camWasRunning = ~isempty(controler.cam) && isvalid(controler.cam) && ...
                     strcmp(controler.cam.Running, 'on');
                 if camWasRunning
@@ -404,8 +403,7 @@ classdef Control < handle
                     flushdata(controler.cam);
                 end
 
-                % Pause PLC timer so it doesn't keep adding data during
-                % post-processing
+                % Pause PLC timer so it doesn't keep adding data
                 timerWasRunning = ~isempty(controler.plcTimer) && isvalid(controler.plcTimer) && ...
                     strcmp(controler.plcTimer.Running, 'on');
                 if timerWasRunning
@@ -427,7 +425,7 @@ classdef Control < handle
                 % Reset model properties for next test
                 controler.model.recordIndex = 1;
                 controler.totalTime = 0;    % Reset total PLC time
-                controler.lastPlcHead = -1; % [FIX 1] Reset sentinel so next test starts clean
+                controler.lastPlcHead = -1; % Reset sentinel so next test starts clean
                 controler.model.cameraFrameWidth = 0;  % Reset dimensions
                 controler.model.cameraFrameHeight = 0; % Reset dimensions
                 disp('--- Test End and Post-Processing Complete ---');
@@ -445,7 +443,7 @@ classdef Control < handle
 
             % Get camera dimensions before opening files for recording
             if ~isempty(controler.cam) && isvalid(controler.cam)
-                vidRes = controler.cam.VideoResolution; % This property should give [width, height]
+                vidRes = controler.cam.VideoResolution; % [width, height]
                 controler.model.cameraFrameWidth = vidRes(1);
                 controler.model.cameraFrameHeight = vidRes(2);
             else
