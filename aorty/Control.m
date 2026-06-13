@@ -5,307 +5,56 @@ classdef Control < handle
     % data to model class
 
     properties
-        model             % handle for storage
+        % mandatory classes
+        camera    % handle for camera
+        plc       % handle for plc
+        model     % handle for storage
 
-        % camera
-        cam
+        plcReadTimer       % Timer for reading sensors (Tenzos + Temp) and sending data
         displayTimer            % Separate timer for GUI updates only
-        latestFrame = [];       % Most recent frame for display
-        camStartTime
 
-        % PLC Properties
-        plcTimer       % Timer for reading sensors (Tenzos + Temp) and sending data
-        amsNetID = '5.85.113.174.1.1';
-        dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll';
-        client
-        % Handles for reciving
-        hWorking
-        hHead
-        hBuffer
-        hHalt
-        % Handles for sending
-        hDist, hVel, hTot, hMode, hExec, hPwr
-        Connected = false;
-        lastPlcHead = -1;   
-        totalTime = 0;      % Number of samples from one reading
-        isWorking = false;  % PLC is ocupied
+        xTenzoData = [];
     end
 
     methods
+        %% Init functions
         function controler = Control(model)
             controler.model = model;
+            controler.camera = Camera(model);
+            controler.plc = Plc(model);
         end
 
-        %% Camera
+        function startTimers(controler, app)
+            % Start timer
+            controler.plcReadTimer = timer('ExecutionMode', 'fixedRate', 'Period', 0.5, ...
+                'TimerFcn', @(~,~) controler.ReadCallback());
+            start(controler.plcReadTimer);
 
-        function connectCamera(controler, app, src)
-            if src.Value == "ON"
-                try
-                    controler.cam = videoinput('gige', 1, 'Mono8');
-                    camSource = getselectedsource(controler.cam);
-
-                    % Trigger reset
-                    for sel = {'FrameStart','AcquisitionStart','FrameBurstStart'}
-                        try
-                            camSource.TriggerSelector = sel{1};
-                            camSource.TriggerMode = 'Off';
-                        catch, end
-                    end
-
-                    % Network setup
-                    if isprop(camSource,'PacketSize'),  camSource.PacketSize  = 8000; end
-                    if isprop(camSource,'PacketDelay'), camSource.PacketDelay = 500;  end
-
-                    controler.cam.FramesPerTrigger = 1;   % 1 frame per trigger
-                    controler.cam.TriggerRepeat = Inf; % repeat forever
-                    triggerconfig(controler.cam, 'immediate');
-
-                    % Save data
-                    controler.camStartTime = datetime('now');
-                    controler.cam.FramesAcquiredFcnCount = 1;
-                    controler.cam.FramesAcquiredFcn = @(s,ev) controler.acquireFrame(s);
-
-                    % Start display timer at fixed 15 Hz, independent of camera FPS.
-                    controler.latestFrame = [];
-                    controler.displayTimer = timer( ...
-                        'ExecutionMode', 'fixedRate', ...
-                        'Period', 0.067, ...
-                        'TimerFcn', @(~,~) controler.updateDisplay(app));
-                    start(controler.displayTimer);
-
-                    flushdata(controler.cam);
-                    start(controler.cam);
-                    disp("Camera connected.");
-                catch ME
-                    uialert(app.fig, getReport(ME), 'Camera Error');
-                    src.Value = "OFF";
-                end
-            else
-                controler.closeCam();
-            end
+            controler.displayTimer = timer( ...
+                'ExecutionMode', 'fixedRate', ...
+                'Period', 0.067, ...
+                'TimerFcn', @(~,~) controler.updateDisplay(app));
+            start(controler.displayTimer);
         end
 
-        % Saving frame
-        function acquireFrame(controler, src)
+        %% Main update loops
+        function ReadCallback(controler)
             try
-                % Guard against callbacks firing after delete(cam)
-                if isempty(src) || ~isvalid(src), return; end
-                if src.FramesAvailable < 1,        return; end
+                % read data from plc
+                if controler.plc.connected
+                    % read data and append
+                    newXdata = controler.plc.fifoProcess();
+                    controler.xTenzoData = [controler.xTenzoData, newXdata];
 
-                [frame, relativeTime] = getdata(src, 1);
-                timeStamp = controler.camStartTime + seconds(relativeTime);
-
-                % Save
-                controler.model.saveCameraFrame(frame, timeStamp);
-
-                % Downsample
-                controler.latestFrame = frame(1:3:end, 1:3:end);
-
-            catch ME
-                if contains(ME.message, 'deleted') || contains(ME.message, 'invalid')
-                    return;
-                end
-                fprintf(2, 'acquireFrame error: %s\n', getReport(ME));
-            end
-        end
-
-        % Disp frame
-        function updateDisplay(controler, app)
-            try
-                if isempty(controler.latestFrame), return; end
-                if ~isvalid(app.cameraAxes),       return; end
-                app.camImageHandle.CData = controler.latestFrame;
-                controler.latestFrame = [];   % clear so we don't redraw the same frame twice
-                drawnow limitrate;
-            catch
-                % If axes was deleted, just bail
-            end
-        end
-
-        % Settings Updates
-        function updateExposure(controler, exposureValue)
-            if ~isempty(controler.cam) && isvalid(controler.cam)
-                src = getselectedsource(controler.cam);
-                src.ExposureTimeAbs = exposureValue;
-                disp(['Exposure set to: ', num2str(exposureValue)]);
-            end
-        end
-
-        function updateGain(controler, gainValue)
-            if ~isempty(controler.cam) && isvalid(controler.cam)
-                src = getselectedsource(controler.cam);
-                src.GainRaw = gainValue;
-                disp(['Gain set to: ', num2str(gainValue)]);
-            end
-        end
-
-        % Closing seq
-        function closeCam(controler)
-            if ~isempty(controler.displayTimer) && isvalid(controler.displayTimer)
-                stop(controler.displayTimer);
-                delete(controler.displayTimer);
-                controler.displayTimer = [];
-            end
-            controler.latestFrame = [];
-
-            if ~isempty(controler.cam) && isvalid(controler.cam)
-                stop(controler.cam);
-                delete(controler.cam);
-                controler.cam = [];
-                disp("Camera disconnected");
-            end
-        end
-
-        %% PLC
-        % PLC Connection
-        function connectPLC(controler, app, src)
-            if src.Value == "ON"
-                try
-                    NET.addAssembly(controler.dllPath);
-                    controler.client = TwinCAT.Ads.TcAdsClient();
-                    controler.client.Connect(controler.amsNetID, 851);
-
-                    % --- Create persistent handles ---
-                    % For reading
-                    controler.hWorking = int32(controler.client.CreateVariableHandle('MAIN.stSystemStatus.bWorking'));
-                    controler.hHead    = int32(controler.client.CreateVariableHandle('MAIN.stSystemStatus.nBufferHead'));
-                    controler.hBuffer  = int32(controler.client.CreateVariableHandle('MAIN.stSystemStatus.fTenzoBuffer'));
-
-                    % For writing
-                    controler.hDist = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.fDistancesX'));
-                    controler.hVel  = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.fVelocitiesX'));
-                    controler.hTot  = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.nTotalStepsX'));
-                    controler.hMode = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.nMode'));
-                    controler.hExec = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.bExecute'));
-                    controler.hPwr  = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.bPower'));
-                    controler.hHalt = int32(controler.client.CreateVariableHandle('MAIN.stMoveCommand.bHalt'));
-
-                    % Start timer
-                    controler.plcTimer = timer('ExecutionMode', 'fixedRate', 'Period', 0.5, ...
-                        'TimerFcn', @(~,~) controler.ReadCallback(app));
-                    start(controler.plcTimer);
-
-                    controler.Connected = true;
-                    disp("PLC connected.");
-                catch ME
-                    uialert(app.fig, ME.message, 'PLC Error');
-                    src.Value = "OFF";
-                end
-            else
-                controler.disconnectPLC();
-            end
-        end
-
-        % Disconnect PLC
-        function disconnectPLC(controler)
-            if ~isempty(controler.plcTimer) && isvalid(controler.plcTimer)
-                stop(controler.plcTimer);
-                delete(controler.plcTimer);
-            end
-
-            if ~isempty(controler.client)
-                try
-                    % delete all handles
-                    handles = {controler.hWorking, controler.hHead, controler.hBuffer, ...
-                        controler.hDist, controler.hVel, controler.hTot, ...
-                        controler.hMode, controler.hExec, controler.hPwr, controler.hHalt};
-
-                    for i = 1:length(handles)
-                        if ~isempty(handles{i})
-                            controler.client.DeleteVariableHandle(handles{i});
-                        end
+                    % stop recording after test ended
+                    if ~controler.plc.isWorking && controler.plc.model.isRecording
+                        controler.endTest();
                     end
-                catch
-                    % Ignor errors (No errors no problems XD)
-                end
-                controler.client.Disconnect();
-                controler.client.Dispose();
-                controler.client = [];
-                disp("PLC Disconnected.");
-            end
-            controler.Connected = false;
-        end
-
-        % Read from Plc
-        function ReadCallback(controler, app)
-            % tic
-            try
-                % Check if command is being processed
-                isWorkingOut = controler.client.ReadAny(controler.hWorking, System.Type.GetType('System.Int32'));
-                controler.isWorking = double(isWorkingOut);
-
-                % Read where is head
-                head_net = controler.client.ReadAny(controler.hHead, System.Type.GetType('System.Int32'));
-                currentHead = double(head_net);
-
-                % Prepare to read arrays
-                lengths = NET.createArray('System.Int32', 1);
-                lengths(1) = 500;
-
-                % Read arrays
-                buffer_net = controler.client.ReadAny(controler.hBuffer,System.Type.GetType('System.Single[]'), lengths);
-                buffer = double(buffer_net);
-
-                % Init vector
-                newTenzoData = [];
-
-                if controler.lastPlcHead == -1
-                    controler.lastPlcHead = currentHead;
-                    return;
-                end
-
-                if currentHead > controler.lastPlcHead
-                    % Normal case: head advanced forward
-                    newTenzoData = buffer(controler.lastPlcHead : currentHead - 1);
-
-                elseif currentHead < controler.lastPlcHead
-                    % Ring buffer wrapped around
-                    part1 = buffer(controler.lastPlcHead : end);
-                    part2 = buffer(1 : currentHead - 1);
-                    newTenzoData = [part1, part2];
-                end
-
-                % Actualization of head
-                controler.lastPlcHead = currentHead;
-
-                Ts = 0.01; % Time interval of PLC
-
-                % Plot data
-                if ~isempty(newTenzoData)
-                    % How many data came
-                    numPoints = length(newTenzoData);
-
-                    % Create x
-                    xData = controler.totalTime + Ts*(1:numPoints);
-
-                    % Plot data
-                    addpoints(app.FxLine, xData, newTenzoData);
-
-                    % Prepare for saving
-                    controler.model.saveTenzoX(newTenzoData)
-
-                    % Limit plots to show only last 500 values for performance
-                    windowSize  = 500 * Ts;
-                    if controler.totalTime > windowSize
-                        app.FxAxes.XLim = [controler.totalTime - windowSize, controler.totalTime];
-                    else
-                        app.FxAxes.XLim = [0, windowSize];
-                    end
-
-                    % prepare for next data
-                    controler.totalTime = controler.totalTime + Ts*numPoints;
-
-                    drawnow limitrate;
-                end
-
-                % stop recording after test ended
-                if ~controler.isWorking && controler.model.isRecording
-                    controler.endTest(); % Call the new endTest method
                 end
 
             catch ME
                 % Error
-                stop(controler.plcTimer);
+                stop(controler.plcReadTimer);
                 fprintf('--- ADS READ ERROR ---\n');
                 fprintf('Message: %s\n', ME.message);
                 if isa(ME, 'NET.NetException')
@@ -313,66 +62,54 @@ classdef Control < handle
                 end
                 fprintf('----------------------\n');
             end
-            % toc
         end
 
-
-        % Send control data
-        function SendCommands(controler,Mode,myData,myVels)
-
-            % Check if PLC is occupied
-            if controler.isWorking || ~controler.Connected
-                disp('PLC is currently working or disconnected. Commands ignored.');
-                return;
-            end
-
+        function updateDisplay(controler, app)
             try
-                % Clean and format arrays
-                maxSteps = 100;
-                distBuffer = zeros(1, maxSteps);
-                velBuffer = zeros(1, maxSteps);
-
-                % Add data to buffers
-                distBuffer(1:length(myData)) = myData;
-                velBuffer(1:length(myVels)) = myVels;
-
-                % This is needed to bypas error with datatype
-                netDistBuffer = NET.createArray('System.Double', maxSteps);
-                netVelBuffer  = NET.createArray('System.Double', maxSteps);
-                for i = 1:maxSteps
-                    netDistBuffer(i) = distBuffer(i);
-                    netVelBuffer(i)  = velBuffer(i);
+                % Plot camera frame
+                if controler.camera.connected && isempty(controler.camera.latestFrame) && ~isvalid(app.cameraAxes)
+                    app.camImageHandle.CData = controler.camera.latestFrame;
+                    controler.camera.latestFrame = [];   % clear so we don't redraw the same frame twice
                 end
 
-                % 1. Write data to plc
-                controler.client.WriteAny(controler.hDist, netDistBuffer);
-                controler.client.WriteAny(controler.hVel, netVelBuffer);
-                controler.client.WriteAny(controler.hTot, int16(length(myData)));
-                controler.client.WriteAny(controler.hMode, int16(Mode));
+                % Plot plc data
+                if ~isempty(controler.xTenzoData) && controler.plc.connected
+                    % How many data came
+                    numPoints = length(controler.xTenzoData);
 
-                % 2. Reset Execute
-                controler.client.WriteAny(controler.hExec, false);
+                    % Create x
+                    xData = controler.plc.totalTime + controler.plc.ts*(1:numPoints);
 
-                % 3. Start
-                controler.client.WriteAny(controler.hExec, true);
-                controler.client.WriteAny(controler.hPwr, true);
+                    % Plot data
+                    addpoints(app.fxLine, xData, controler.xTenzoData);
 
-                % set isWorking so user cannot doublesend data
-                controler.isWorking = true;
+                    % Prepare for saving
+                    controler.plc.model.saveTenzoX(controler.xTenzoData)
 
-                disp('Commands successfully sent to PLC.');
+                    % Limit plots
+                    windowSize  = 500 * controler.plc.ts;
+                    if controler.plc.totalTime > windowSize
+                        app.fxAxes.XLim = [controler.plc.totalTime - windowSize, controler.plc.totalTime];
+                    else
+                        app.fxAxes.XLim = [0, windowSize];
+                    end
 
-            catch ME
-                % Error
-                disp(['Write Error: ', ME.message]);
+                    % prepare for next data
+                    controler.plc.totalTime = controler.plc.totalTime + controler.plc.ts*numPoints;
+                    controler.xTenzoData = [];
+                end
+
+                drawnow limitrate;
+            catch
+                % TODO errer
             end
         end
 
-        % Panic stop when something broke
+        %% UI callbacks
         function panicStop(controler, btn)
 
             % Check if PLC is connected
-            if ~controler.Connected
+            if ~controler.plc.connected
                 disp('PLC is disconnected');
                 return;
             end
@@ -381,59 +118,15 @@ classdef Control < handle
             if btn.Value
                 btn.Text = 'Start';
                 btn.BackgroundColor = [0.4 1 0.4];
-                controler.client.WriteAny(controler.hHalt, true);
+                controler.plc.client.WriteAny(controler.plc.hHalt, true);
             else
                 btn.Text = 'Stop';
                 btn.BackgroundColor = [1 0.7 0.7];
-                controler.client.WriteAny(controler.hHalt, false);
+                controler.plc.client.WriteAny(controler.plc.hHalt, false);
             end
         end
 
-        function endTest(controler)
-            if controler.model.isRecording % Only run if recording was active
-                disp('--- Ending test and starting post-processing ---');
-                controler.model.isRecording = false; % Ensure flag is off before closing files
-                controler.model.closeFilesRec();
-
-                % Pause camera acquisition to prevent buffer overflow
-                % during potentially long post-processing
-                camWasRunning = ~isempty(controler.cam) && isvalid(controler.cam) && ...
-                    strcmp(controler.cam.Running, 'on');
-                if camWasRunning
-                    stop(controler.cam);
-                    flushdata(controler.cam);
-                end
-
-                % Pause PLC timer so it doesn't keep adding data during
-                % post-processing
-                timerWasRunning = ~isempty(controler.plcTimer) && isvalid(controler.plcTimer) && ...
-                    strcmp(controler.plcTimer.Running, 'on');
-                if timerWasRunning
-                    stop(controler.plcTimer);
-                end
-
-                controler.model.PostProcessData(controler.model.selectedFolder);
-
-                % Restart camera for live preview
-                if camWasRunning
-                    start(controler.cam);
-                end
-
-                % Restart PLC timer
-                if timerWasRunning
-                    start(controler.plcTimer);
-                end
-
-                % Reset model properties for next test
-                controler.model.recordIndex = 1;
-                controler.totalTime = 0;    % Reset total PLC time
-                controler.lastPlcHead = -1; % [FIX 1] Reset sentinel so next test starts clean
-                controler.model.cameraFrameWidth = 0;  % Reset dimensions
-                controler.model.cameraFrameHeight = 0; % Reset dimensions
-                disp('--- Test End and Post-Processing Complete ---');
-            end
-        end
-
+        %% Test handling
         function startTest(controler, mode, x, vx)
             % choose folder path
             controler.model.selectedFolder = uigetdir('','Choose path');
@@ -444,8 +137,8 @@ classdef Control < handle
             end
 
             % Get camera dimensions before opening files for recording
-            if ~isempty(controler.cam) && isvalid(controler.cam)
-                vidRes = controler.cam.VideoResolution; % This property should give [width, height]
+            if ~isempty(controler.camera.cameraHW) && isvalid(controler.camera.cameraHW)
+                vidRes = controler.camera.cameraHW.VideoResolution; % This property should give [width, height]
                 controler.model.cameraFrameWidth = vidRes(1);
                 controler.model.cameraFrameHeight = vidRes(2);
             else
@@ -454,14 +147,56 @@ classdef Control < handle
                 controler.model.cameraFrameHeight = 1024;
             end
 
-            % send data to PLC
-            controler.SendCommands(mode, x, vx)
-
             % start recording
             controler.model.recordIndex = 1;
             controler.model.isRecording = true;
             controler.model.openFilesRec(); % Open files for recording
 
+            % send data to PLC
+            controler.plc.SendCommands(mode, x, vx)
+        end
+
+        function endTest(controler)
+            if controler.model.isRecording % Only run if recording was active
+                disp('--- Ending test and starting post-processing ---');
+                controler.model.isRecording = false; % Ensure flag is off before closing files
+                controler.model.closeFilesRec();
+
+                % Pause camera acquisition to prevent buffer overflow
+                camWasRunning = ~isempty(controler.camera.cameraHW) && isvalid(controler.camera.cameraHW) && ...
+                    strcmp(controler.camera.cameraHW.Running, 'on');
+                if camWasRunning
+                    stop(controler.camera.cameraHW);
+                    flushdata(controler.camera.cameraHW);
+                end
+
+                % Pause PLC timer so it doesn't keep adding data
+                timerWasRunning = ~isempty(controler.plcReadTimer) && isvalid(controler.plcReadTimer) && ...
+                    strcmp(controler.plcReadTimer.Running, 'on');
+                if timerWasRunning
+                    stop(controler.plcReadTimer);
+                end
+
+                controler.model.PostProcessData(controler.model.selectedFolder);
+
+                % Restart camera for live preview
+                if camWasRunning
+                    start(controler.camera.cameraHW);
+                end
+
+                % Restart PLC timer
+                if timerWasRunning
+                    start(controler.plcReadTimer);
+                end
+
+                % Reset model properties for next test
+                controler.model.recordIndex = 1;
+                controler.plc.totalTime = 0;    % Reset total PLC time
+                controler.plc.lastPlcHead = -1; % Reset sentinel so next test starts clean
+                controler.model.cameraFrameWidth = 0;  % Reset dimensions
+                controler.model.cameraFrameHeight = 0; % Reset dimensions
+                disp('--- Test End and Post-Processing Complete ---');
+            end
         end
     end
 end

@@ -27,9 +27,9 @@ classdef View < handle
 
         % Tenzo
         tenzoPanel
-        FxAxes
-        FxLine
-        FyAxes
+        fxAxes
+        fxLine
+        fyAxes
 
         % Main control
         posX
@@ -72,8 +72,8 @@ classdef View < handle
 
             try
                 % Try to close hardware com
-                app.controler.disconnectPLC();
-                app.controler.closeCam();
+                app.controler.plc.disconnectPLC();
+                app.controler.camera.closeCam();
             catch
                 % If fail objects dont exist anymore
             end
@@ -136,9 +136,10 @@ classdef View < handle
         end
 
         function connectCameraCallback(app,src)
-            app.controler.connectCamera(app,src)
+            app.controler.camera.connectCamera(app,src)
         end
 
+        % TODO later
         function cameraSettingsCallback(app)
             if isempty(app.controler.cam), return; end
             src = getselectedsource(app.controler.cam);
@@ -188,12 +189,12 @@ classdef View < handle
             grid = uigridlayout(app.tenzoPanel,[1 2]);
 
             % Plots
-            app.FxAxes = uiaxes(grid);
-            title(app.FxAxes,'Fx')
-            app.FxLine = animatedline(app.FxAxes, 'Color', [0.18 0.55 0.85], 'LineWidth', 1.2);
+            app.fxAxes = uiaxes(grid);
+            title(app.fxAxes,'Fx')
+            app.fxLine = animatedline(app.fxAxes, 'Color', [0.18 0.55 0.85], 'LineWidth', 1.2);
 
-            app.FyAxes = uiaxes(grid);
-            title(app.FyAxes,'Fy')
+            app.fyAxes = uiaxes(grid);
+            title(app.fyAxes,'Fy')
 
         end
 
@@ -216,7 +217,7 @@ classdef View < handle
 
             % Connect switch
             app.plcSwitch = uiswitch(topGrid, 'slider', 'Items', {'OFF','ON'});
-            app.plcSwitch.ValueChangedFcn = @(src,event) app.controler.connectPLC(app,src);
+            app.plcSwitch.ValueChangedFcn = @(src,event) app.controler.plc.connectPLC(app,src);
 
             % --- 3. THE DYNAMIC AREA ---
             app.dynamicControlGroup = uigridlayout(outerGrid, [1 1]);
@@ -238,8 +239,8 @@ classdef View < handle
                     g = uigridlayout(app.dynamicControlGroup, [8 2]);
 
                     % X axes control
-                    uibutton(g, 'Text', 'Move X +', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,app.posX.Value,app.velX.Value));
-                    uibutton(g, 'Text', 'Move X -', 'ButtonPushedFcn', @(s,e) app.controler.SendCommands(1,- app.posX.Value,app.velX.Value));
+                    uibutton(g, 'Text', 'Move X +', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1,app.posX.Value,app.velX.Value));
+                    uibutton(g, 'Text', 'Move X -', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1,- app.posX.Value,app.velX.Value));
                     uilabel(g, 'Text', 'Distance for X axis [mm]:');
                     app.posX = uieditfield(g, 'numeric', 'Value', 100);
                     uilabel(g, 'Text', 'Speed of X axis [m/s]:');

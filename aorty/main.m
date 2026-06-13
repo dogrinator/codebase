@@ -11,3 +11,4 @@ toc
 tic
 view = View(controler);
 toc
+controler.startTimers(view);
