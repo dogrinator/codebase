@@ -1,0 +1,376 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <POU Name="fb_MovementControler" Id="{adebd811-6102-4c84-8e3c-51cf0446b06f}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK fb_MovementControler
+VAR_INPUT
+	nRawTenzo     : DINT;
+	bPowerState   : BOOL; // Actual power on state
+	bHaltDone     : BOOL; // Motor stopped
+	stSettings    : ST_settings;
+END_VAR
+
+VAR_OUTPUT
+	stateHalt : BOOL; // Stop movement
+	bBusy     : BOOL; // Sys is working
+    bError    : BOOL; // Sys in error (TODO)
+END_VAR
+
+VAR
+	// Movement FBs
+	fbMC_MoveRelative1 : MC_MoveRelative;
+    fbMC_MoveRelative2 : MC_MoveRelative;
+	fbMC_MoveVelocity  : MC_MoveVelocity;
+	
+	// Shared help vars
+	nCurrentStep : INT; // Witch movement is processed
+	nSeqState    : INT; // Modes actual state
+	
+	// mode 1
+    bExecuteMove : BOOL;
+    fTargetDist  : LREAL;
+    fTargetVel   : LREAL;
+    fTargetDist2 : LREAL;
+    fTargetVel2  : LREAL;
+	
+	// mode 2/3 vel movement
+	bExecuteVelMove : BOOL;
+    fCmdVelocity    : LREAL;
+    mcDirection     : MC_Direction;
+	
+	// mode 2/3 help vars
+	fTargetForce          : LREAL; // Wanted F
+    fCurrentForce         : LREAL; // Actual F
+    fForceError           : LREAL; // Regulation error
+    fForceErrorIntegral   : LREAL; // Integ of error
+    tStepDuration         : TIME;  // Force time
+    fbTimerForce          : TON;   // Start timer
+	
+	// Internal constants
+	CYCLE_TIME : LREAL := 0.01; // dt of plc
+END_VAR
+
+VAR_IN_OUT
+	Axis          : AXIS_REF;
+	stMoveCommand : ST_MoveCommand;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[// =========================================================
+//                      Mode switcher
+// =========================================================
+
+CASE stMoveCommand.nMode OF
+	1: // Mode 1: Constant speed
+	mode1();
+
+	2: // Mode 2: Constant Force
+	mode2();
+	
+	3: // Mode 3: Force threshold stepping
+	mode3();
+	
+END_CASE
+
+// =========================================================
+//                      Motion call
+// =========================================================
+
+// Call motion mode 1
+fbMC_MoveRelative1(Axis := Axis, 
+	Distance := fTargetDist, 
+	Velocity := fTargetVel, 
+	BufferMode := MC_BlendingNext);
+fbMC_MoveRelative2(Axis := Axis, 
+	Distance := fTargetDist2, 
+	Velocity := fTargetVel2, 
+	BufferMode := MC_BlendingNext);
+	
+// call motion mode 2/3
+fbMC_MoveVelocity(
+	Axis      := Axis,
+	Execute   := bExecuteVelMove,
+	Velocity  := ABS(fCmdVelocity),
+	Direction := mcDirection,
+	BufferMode:= MC_Aborting
+);
+
+// =========================================================
+//                      Outputs
+// =========================================================
+
+// sys is working
+bBusy := nSeqState > 0;
+
+// error id (TODO)
+
+
+]]></ST>
+    </Implementation>
+    <Action Name="mode1" Id="{9f5e891b-7338-499f-a6ff-b23d9513b1e7}">
+      <Implementation>
+        <ST><![CDATA[
+// =========================================================
+//                  Mode 1: Constant speed
+// =========================================================
+// pos ==> pos
+// vel ==> vel
+
+CASE nSeqState OF
+	0: // Wait for Matlab
+		fbMC_MoveRelative1.Execute := FALSE;
+		fbMC_MoveRelative2.Execute := FALSE;
+		IF stMoveCommand.bExecute AND bPowerState THEN
+			nCurrentStep := 1;
+			nSeqState := 1;
+			stMoveCommand.bExecute := FALSE;
+		END_IF
+		
+	1: // Start: buffer FB1
+		fTargetDist := stMoveCommand.fDistances[nCurrentStep];
+		fTargetVel  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+		fbMC_MoveRelative1.Execute := TRUE;
+		nSeqState := 2;
+
+	2: // Wait for Busy FB1 and buffer FB2
+		IF fbMC_MoveRelative1.Busy THEN
+			nCurrentStep := nCurrentStep + 1;
+			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+				fTargetDist2 := stMoveCommand.fDistances[nCurrentStep];
+				fTargetVel2  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+				fbMC_MoveRelative2.Execute := TRUE; 
+				nSeqState := 3;
+			ELSE
+				nSeqState := 10;
+			END_IF
+		ELSIF fbMC_MoveRelative1.Error THEN
+			nSeqState := 99; // ERROR
+		END_IF
+		
+	3: // FB1 running, FB2 active
+		IF fbMC_MoveRelative2.Active THEN 
+			fbMC_MoveRelative1.Execute := FALSE; // Reset FB1
+			nCurrentStep := nCurrentStep + 1;
+			
+			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+				fTargetDist := stMoveCommand.fDistances[nCurrentStep];
+				fTargetVel  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+				nSeqState := 31;
+			ELSE
+				nSeqState := 20; // Finish with FB2
+			END_IF
+		ELSIF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
+			nSeqState := 99;
+		END_IF
+	
+	31: // One scan delay 
+		fbMC_MoveRelative1.Execute := TRUE; // Now safe to re-trigger
+		nSeqState := 4;
+	
+	4: // FB2 running, FB1 buffered. Wait for FB1 to go Active.
+		IF fbMC_MoveRelative1.Active THEN
+			fbMC_MoveRelative2.Execute := FALSE; // Reset FB2
+			nCurrentStep := nCurrentStep + 1;
+			
+			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+				fTargetDist2 := stMoveCommand.fDistances[nCurrentStep];
+				fTargetVel2  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+				nSeqState := 41; 
+			ELSE
+				nSeqState := 10; // Finish with FB1
+			END_IF
+		ELSIF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
+			nSeqState := 99;
+		END_IF
+	
+	41: // One scan delay for FB2
+		fbMC_MoveRelative2.Execute := TRUE;
+		nSeqState := 3;
+
+	10: // Wait for Done FB1
+		IF fbMC_MoveRelative1.Done THEN nSeqState := 0; 
+		ELSIF fbMC_MoveRelative1.Error THEN nSeqState := 99; END_IF
+		
+	20: // Wait for Done FB2
+		IF fbMC_MoveRelative2.Done THEN nSeqState := 0; 
+		ELSIF fbMC_MoveRelative2.Error THEN nSeqState := 99; END_IF
+
+	99: // ERROR STATE
+		fbMC_MoveRelative1.Execute := FALSE;
+		fbMC_MoveRelative2.Execute := FALSE;
+		nSeqState := 0; 
+END_CASE]]></ST>
+      </Implementation>
+    </Action>
+    <Action Name="mode2" Id="{ded14cb6-371b-4b09-9032-7eebcff2db06}">
+      <Implementation>
+        <ST><![CDATA[
+
+// =========================================================
+//                  Mode 2: Constant Force
+// =========================================================
+// pos ==> force
+// vel ==> time
+
+CASE nSeqState OF
+	0: // Wait for command
+		bExecuteVelMove := FALSE;
+		fCmdVelocity := 0.0;
+		fForceErrorIntegral := 0.0;
+		IF stMoveCommand.bExecute AND bPowerState THEN
+			nCurrentStep := 1;
+			stMoveCommand.bExecute := FALSE;
+			nSeqState := 1;
+		END_IF
+		
+	1: // Init Step
+		IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+			// load new values
+			fTargetForce := stMoveCommand.fVelocities[nCurrentStep];
+			tStepDuration := LREAL_TO_TIME(stMoveCommand.fDistances[nCurrentStep] * 1000.0);
+			
+			// reset int and timer
+			fForceErrorIntegral := 0.0;
+			fbTimerForce(IN := FALSE);
+			
+			// next seq
+			nSeqState := 2;
+		ELSE
+			nSeqState := 0;
+		END_IF
+		
+   2: // Force Regulation Loop (PI Regulator)
+		fCurrentForce := DINT_TO_LREAL(nRawTenzo) * stSettings.fTenzoCons;
+		fForceError := fTargetForce - fCurrentForce;
+		
+		fForceErrorIntegral := fForceErrorIntegral + (fForceError * CYCLE_TIME);
+		fForceErrorIntegral := LIMIT(-stSettings.fIntegralLimit, fForceErrorIntegral, stSettings.fIntegralLimit);
+		
+		// Calc final wanted value
+		fCmdVelocity := (fForceError * stSettings.fKp) + (fForceErrorIntegral * stSettings.fKi);
+		fCmdVelocity := LIMIT(-stSettings.fMaxVelocity, fCmdVelocity, stSettings.fMaxVelocity);
+		
+		// Direction of movement
+		IF fCmdVelocity >= 0.0 THEN
+			mcDirection := MC_Positive_Direction;
+		ELSE
+			mcDirection := MC_Negative_Direction;
+		END_IF
+		
+		// edge for execution
+		bExecuteVelMove := NOT bExecuteVelMove;
+		
+		// timer handling
+		fbTimerForce(IN := TRUE, PT := tStepDuration);
+		
+		IF fbTimerForce.Q THEN
+			nCurrentStep := nCurrentStep + 1;
+			nSeqState := 1;
+		END_IF
+		
+	3: // stop axis
+		IF bHaltDone OR ABS(Axis.NcToPlc.ActVelo) < 0.1 THEN
+			nSeqState := 0;
+			stateHalt := FALSE;
+		END_IF
+END_CASE]]></ST>
+      </Implementation>
+    </Action>
+    <Action Name="mode3" Id="{91b9dfb8-a151-4a2f-a1d9-cceccc9ea242}">
+      <Implementation>
+        <ST><![CDATA[
+// =========================================================
+//                  Mode 3: Force threshold stepping
+// =========================================================
+// pos ==> force target
+// vel ==> approach speed
+
+CASE nSeqState OF
+	0: // Wait for command
+		bExecuteVelMove := FALSE;
+		fCmdVelocity := 0.0;
+
+		IF stMoveCommand.bExecute AND bPowerState THEN
+			nCurrentStep := 1;
+			stMoveCommand.bExecute := FALSE;
+			nSeqState := 1;
+		END_IF
+
+	1: // Load next target force + speed
+		IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+			fTargetForce := stMoveCommand.fDistances[nCurrentStep];
+			fCmdVelocity  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+
+			// Choose direction from target force sign
+			IF fTargetForce >= 0.0 THEN
+				mcDirection := MC_Positive_Direction;
+			ELSE
+				mcDirection := MC_Negative_Direction;
+			END_IF
+
+			bExecuteVelMove := FALSE;   // prepare trigger
+			nSeqState := 11;
+		ELSE
+			nSeqState := 0; // finished
+		END_IF
+
+	11: // One scan delay / trigger move
+		bExecuteVelMove := TRUE;
+		nSeqState := 2;
+
+	2: // Move until force threshold is reached
+		fCurrentForce := DINT_TO_LREAL(nRawTenzo) * stSettings.fTenzoCons;
+
+		// Sign-aware threshold check
+		IF (fTargetForce >= 0.0 AND fCurrentForce >= (fTargetForce - stSettings.fForceTolerance)) OR 
+			(fTargetForce < 0.0 AND fCurrentForce <= (fTargetForce + stSettings.fForceTolerance)) THEN
+			
+			nCurrentStep := nCurrentStep + 1;
+			
+			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+				// go to next step
+				bExecuteVelMove := FALSE; 
+				nSeqState := 1; 
+			ELSE
+				// end of test
+				stateHalt := TRUE;
+				bExecuteVelMove := FALSE;
+				nSeqState := 3;
+			END_IF
+		END_IF
+
+	3: // stop axis
+		IF bHaltDone OR ABS(Axis.NcToPlc.ActVelo) < 0.1 THEN
+			nSeqState := 0;
+			stateHalt := FALSE;
+		END_IF
+END_CASE]]></ST>
+      </Implementation>
+    </Action>
+    <LineIds Name="fb_MovementControler">
+      <LineId Id="1684" Count="48" />
+      <LineId Id="1422" Count="0" />
+    </LineIds>
+    <LineIds Name="fb_MovementControler.mode1">
+      <LineId Id="2" Count="0" />
+      <LineId Id="87" Count="3" />
+      <LineId Id="3" Count="0" />
+      <LineId Id="91" Count="0" />
+      <LineId Id="4" Count="82" />
+      <LineId Id="1" Count="0" />
+    </LineIds>
+    <LineIds Name="fb_MovementControler.mode2">
+      <LineId Id="64" Count="5" />
+      <LineId Id="2" Count="0" />
+      <LineId Id="70" Count="0" />
+      <LineId Id="3" Count="60" />
+      <LineId Id="1" Count="0" />
+    </LineIds>
+    <LineIds Name="fb_MovementControler.mode3">
+      <LineId Id="62" Count="4" />
+      <LineId Id="61" Count="0" />
+      <LineId Id="67" Count="0" />
+      <LineId Id="2" Count="58" />
+      <LineId Id="1" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

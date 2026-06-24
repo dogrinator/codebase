@@ -17,6 +17,9 @@
     <LibraryReferences>{13cac7e7-4110-46df-820b-016b8cd20f33}</LibraryReferences>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="DUTs\ST_settings.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="DUTs\ST_MoveCommand.TcDUT">
       <SubType>Code</SubType>
     </Compile>
@@ -28,6 +31,15 @@
       <LinkAlways>true</LinkAlways>
     </Compile>
     <Compile Include="PlcTask.TcTTO">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="POUs\fb_MovementControler.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="POUs\fb_safety.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="POUs\fb_tenzoBuffer.TcPOU">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="POUs\MAIN.TcPOU">

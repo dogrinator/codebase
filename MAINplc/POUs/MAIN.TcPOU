@@ -4,298 +4,91 @@
     <Declaration><![CDATA[PROGRAM MAIN
 
 VAR
-	// FB declaration
-    fbMC_Power1    : MC_Power;
-    fbMC_Reset1    : MC_Reset;
-	fbMC_Halt1: MC_Halt;
-	fbMC_MoveRelative1 : MC_MoveRelative;
-    fbMC_MoveRelative2 : MC_MoveRelative;
+	fbSafetyX      : fb_safety;
+	fbSafetyY      : fb_safety;
+	fbTenzoBufferX : fb_tenzoBuffer;
+	fbTenzoBufferY : fb_tenzoBuffer;
+	fbMovementControlerX: fb_MovementControler;
+	fbMovementControlerY: fb_MovementControler;
 	
-	// Edge detection for triggers
-    rtMoveTrigger       : R_TRIG;
-    rtResetTrigger      : R_TRIG;
+	// DUTs import
+	stMoveCommandX  : ST_MoveCommand;
+	stMoveCommandY  : ST_MoveCommand; 
 	
-	// From Matlab DUT
-	stMoveCommand : ST_MoveCommand;
-	// To Matlab DUT
-	stSystemStatus : ST_SystemStatus;
+	stSystemStatusX : ST_SystemStatus;
+	stSystemStatusY : ST_SystemStatus;
+	
+	stSettingsX     : ST_settings;
+	stSettingsY     : ST_settings;
 	
 	// Readings from Tenzo
     nRawTenzoX AT %I* : DINT;
-	
-	// Variables to go throught vector
-    nSeqState      : INT := 0;
-    nCurrentStep   : INT := 1;
-	
-	// Help vars
-	bExecuteMove : BOOL;
-    fTargetDist  : LREAL;
-    fTargetVel   : LREAL;
-	fTargetDist2  : LREAL;
-    fTargetVel2   : LREAL;
-	
-	// Pre Mode 2 (Force Control)
-    fbMC_MoveVelocity : MC_MoveVelocity;
-    fbTimerForce      : TON; // Časovač pre udržanie sily
-    
-    // Premenné regulátora
-    fCurrentForce    : LREAL;
-    fTargetForce     : LREAL;
-    fForceError      : LREAL;
-    fKp              : LREAL := 1.5; // P-konštanta (TOTO BUDEŠ MUSIEŤ VYLADIŤ)
-	fKi              : LREAL := 0.1;
-    fCmdVelocity     : LREAL;
-    bExecuteVelMove  : BOOL;
-		
-	fForceErrorIntegral   : LREAL := 0.0;
-	tStepDuration         : TIME := T#0S;
-	CYCLE_TIME            : LREAL := 0.001;
-	fIntegralLimit        : LREAL := 20.0;
-	fMaxVelocity          : LREAL := 100.0;
-	mcDirection: MC_Direction;
-	bVelMovePulse: BOOL;
+	nRawTenzoY AT %I* : DINT;
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[////////////////////////////////
+//////////   safety   //////////
+////////////////////////////////
+
+fbSafetyX(
+    stAxis := GVL_Axis.xAxis,
+    bPower := stMoveCommandX.bPower,
+    bReset := stMoveCommandX.bReset,
+    bHalt := stMoveCommandX.bHalt,
+    bSeqHalt := fbMovementControlerX.stateHalt,
+    bHome := FALSE,
+    bEndStop := FALSE // TODO endstop
+);
+
+fbSafetyY(
+    stAxis := GVL_Axis.yAxis,
+    bPower := stMoveCommandY.bPower,
+    bReset := stMoveCommandY.bReset,
+    bHalt := stMoveCommandY.bHalt,
+    bSeqHalt := fbMovementControlerY.stateHalt,
+    bHome := FALSE,
+    bEndStop := FALSE
+);
+
+////////////////////////////////
 ////////// Update data /////////
 ////////////////////////////////
 
-// Write TO FIFO buffer
-stSystemStatus.fTenzoBuffer[stSystemStatus.nBufferHead] := DINT_TO_REAL(nRawTenzoX) * 0.001; 
-stSystemStatus.nBufferHead := stSystemStatus.nBufferHead + 1;
-IF stSystemStatus.nBufferHead > 500 THEN
-    stSystemStatus.nBufferHead := 1; // Go back to begining
-END_IF
+fbTenzoBufferX(
+	fTenzoCons:=stSettingsX.fTenzoCons,
+	nRawTenzo:= nRawTenzoX,
+	stSystemStatus:= stSystemStatusX);
+	
+fbTenzoBufferY(
+	fTenzoCons:=stSettingsY.fTenzoCons,
+	nRawTenzo:= nRawTenzoY,
+	stSystemStatus:= stSystemStatusY);
 
 //Read status of axis
-GVL_Axis.Axis1.ReadStatus();
-
-// If automat is in other state than 0 the plc is ocupied
-stSystemStatus.bWorking := (nSeqState > 0);
+GVL_Axis.xAxis.ReadStatus();
+GVL_Axis.yAxis.ReadStatus();
 
 /////////////////////////////////////
 ////////// Main Move Logic //////////
 /////////////////////////////////////
 
-// Power on axis (Mimo CASE - Správne)
-fbMC_Power1(
-    Axis:= GVL_Axis.Axis1,
-    Enable:= stMoveCommand.bPower,
-    Enable_Positive:= stMoveCommand.bPower,
-    Enable_Negative:= stMoveCommand.bPower,
-    Override:= 100.0);
+fbMovementControlerX(
+    nRawTenzo := nRawTenzoX,
+    bPowerState := fbSafetyX.bPowerStatus,
+    bHaltDone := fbSafetyX.bHaltDone,
+    stMoveCommand := stMoveCommandX,
+    stSettings := stSettingsX,
+    Axis := GVL_Axis.xAxis,
+	bBusy => stSystemStatusY.bWorking);
 
-// Reset and Panic stop
-rtResetTrigger(CLK := stMoveCommand.bReset);
-fbMC_Reset1(Axis := GVL_Axis.Axis1, Execute := rtResetTrigger.Q);
-fbMC_Halt1(Axis := GVL_Axis.Axis1, Execute := stMoveCommand.bHalt);
-
-// Mode 1 Constant Speed
-IF stMoveCommand.nMode = 1 THEN 
-   CASE nSeqState OF
-        0: // Wait for Matlab
-            fbMC_MoveRelative1.Execute := FALSE;
-            fbMC_MoveRelative2.Execute := FALSE;
-            IF stMoveCommand.bExecute AND fbMC_Power1.Status THEN
-                nCurrentStep := 1;
-                nSeqState := 1;
-                stMoveCommand.bExecute := FALSE;
-            END_IF
-            
-        1: // ŠTART: Spustenie FB1
-            fTargetDist := stMoveCommand.fDistancesX[nCurrentStep];
-            fTargetVel  := ABS(stMoveCommand.fVelocitiesX[nCurrentStep]);
-            fbMC_MoveRelative1.Execute := TRUE;
-            nSeqState := 2;
-    
-        2: // Čakáme na Busy FB1 a hneď nabíjame FB2
-            IF fbMC_MoveRelative1.Busy THEN
-                nCurrentStep := nCurrentStep + 1;
-                IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-                    fTargetDist2 := stMoveCommand.fDistancesX[nCurrentStep];
-                    fTargetVel2  := ABS(stMoveCommand.fVelocitiesX[nCurrentStep]);
-                    fbMC_MoveRelative2.Execute := TRUE; // FB2 ide do buffra
-                    nSeqState := 3;
-                ELSE
-                    nSeqState := 10; // Iba jeden príkaz
-                END_IF
-            ELSIF fbMC_MoveRelative1.Error THEN
-                nSeqState := 99; // CHYBA
-            END_IF
-            
-        3: // FB1 running, FB2 active. Wait for FB2 to take control.
-			IF fbMC_MoveRelative2.Active THEN 
-				fbMC_MoveRelative1.Execute := FALSE; // Reset FB1
-				nCurrentStep := nCurrentStep + 1;
-				
-				IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-					fTargetDist := stMoveCommand.fDistancesX[nCurrentStep];
-					fTargetVel  := ABS(stMoveCommand.fVelocitiesX[nCurrentStep]);
-					nSeqState := 31; // <<< Go to intermediate reset state
-				ELSE
-					nSeqState := 20; // Finish with FB2
-				END_IF
-			ELSIF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
-				nSeqState := 99;
-			END_IF
-		
-		31: // One scan delay - wait for FB1.Execute = FALSE to register
-			fbMC_MoveRelative1.Execute := TRUE; // Now safe to re-trigger
-			nSeqState := 4;
-		
-		4: // FB2 running, FB1 buffered. Wait for FB1 to go Active.
-			IF fbMC_MoveRelative1.Active THEN
-				fbMC_MoveRelative2.Execute := FALSE; // Reset FB2
-				nCurrentStep := nCurrentStep + 1;
-				
-				IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-					fTargetDist2 := stMoveCommand.fDistancesX[nCurrentStep];
-					fTargetVel2  := ABS(stMoveCommand.fVelocitiesX[nCurrentStep]);
-					nSeqState := 41; // <<< Same pattern for symmetry
-				ELSE
-					nSeqState := 10; // Finish with FB1
-				END_IF
-			ELSIF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
-				nSeqState := 99;
-			END_IF
-		
-		41: // One scan delay for FB2
-			fbMC_MoveRelative2.Execute := TRUE;
-			nSeqState := 3;
-    
-        10: // Čakanie na úplný Done FB1
-            IF fbMC_MoveRelative1.Done THEN nSeqState := 0; 
-            ELSIF fbMC_MoveRelative1.Error THEN nSeqState := 99; END_IF
-            
-        20: // Čakanie na úplný Done FB2
-            IF fbMC_MoveRelative2.Done THEN nSeqState := 0; 
-            ELSIF fbMC_MoveRelative2.Error THEN nSeqState := 99; END_IF
-
-        99: // ERROR STATE
-            fbMC_MoveRelative1.Execute := FALSE;
-            fbMC_MoveRelative2.Execute := FALSE;
-            // Tu môžeš pridať reset osi ak chceš automatiku
-            nSeqState := 0; 
-    END_CASE
-    
-    // Volanie blokov
-    fbMC_MoveRelative1(Axis := GVL_Axis.Axis1, Distance := fTargetDist, Velocity := fTargetVel, BufferMode := MC_BlendingNext);
-    fbMC_MoveRelative2(Axis := GVL_Axis.Axis1, Distance := fTargetDist2, Velocity := fTargetVel2, BufferMode := MC_BlendingNext);
-	
-	
-
-// =========================================================
-//                  Mode 2: Constant Force
-// =========================================================
-ELSIF stMoveCommand.nMode = 2 THEN
-    CASE nSeqState OF
-    
-		0: // Wait for command
-            bExecuteVelMove := FALSE;
-            fCmdVelocity := 0.0;
-            fForceErrorIntegral := 0.0;
-            stMoveCommand.bHalt := FALSE; // *** Make sure Halt is clear before starting ***
-            IF stMoveCommand.bExecute AND fbMC_Power1.Status THEN
-                nCurrentStep := 1;
-                stMoveCommand.bExecute := FALSE;
-                nSeqState := 1;
-            END_IF
-            
-		1: // Init Force Step
-            IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-                fTargetForce := stMoveCommand.fVelocitiesX[nCurrentStep];
-                tStepDuration := LREAL_TO_TIME(stMoveCommand.fDistancesX[nCurrentStep] * 1000.0);
-                fForceErrorIntegral := 0.0;
-                fbTimerForce(IN := FALSE);
-                bExecuteVelMove := FALSE;
-                fCmdVelocity := 0.001;
-                nSeqState := 11;
-            ELSE
-                // *** Just stop cleanly, no Halt ***
-                bExecuteVelMove := FALSE;
-                fCmdVelocity := 0.0;
-                nSeqState := 0;
-            END_IF
-
-       11: // One scan delay - Execute was FALSE last scan, now raise it
-            bExecuteVelMove := TRUE; // Rising edge happens cleanly here
-            nSeqState := 2;
-            
-       2: // Force Regulation Loop (PI Regulator)
-            fCurrentForce := DINT_TO_LREAL(nRawTenzoX) * 0.001;
-            fForceError := fTargetForce - fCurrentForce;
-            
-            fForceErrorIntegral := fForceErrorIntegral + (fForceError * CYCLE_TIME);
-            fForceErrorIntegral := LIMIT(-fIntegralLimit, fForceErrorIntegral, fIntegralLimit);
-            
-            fCmdVelocity := (fForceError * fKp) + (fForceErrorIntegral * fKi);
-            fCmdVelocity := LIMIT(-fMaxVelocity, fCmdVelocity, fMaxVelocity);
-            
-            IF ABS(fCmdVelocity) < 0.5 THEN
-                fCmdVelocity := 0.001;
-            END_IF
-            
-            fbTimerForce(IN := TRUE, PT := tStepDuration);
-            
-            IF fbTimerForce.Q THEN
-                // *** NO HALT - just drop velocity to zero and move to stop state ***
-                fCmdVelocity := 0.0;
-                bExecuteVelMove := FALSE;
-                nSeqState := 3;
-            END_IF
-            
-        3: // Wait for motor to physically stop
-            // *** NO HALT HERE EITHER ***
-            bExecuteVelMove := FALSE;
-            fCmdVelocity := 0.0;
-            
-            IF ABS(GVL_Axis.Axis1.NcToPlc.ActVelo) < 0.1 THEN
-                nCurrentStep := nCurrentStep + 1;
-                fForceErrorIntegral := 0.0;
-                nSeqState := 1;
-            END_IF
-            
-    END_CASE
-    
-    // -------------------------------------------------------
-    // MoveVelocity FB call - runs every scan
-    // Execute is only toggled in State 1 (rising edge)
-    // Velocity is updated continuously in State 2
-    // -------------------------------------------------------
-	// Resolve direction before FB call
-	IF fCmdVelocity >= 0.0 THEN
-		mcDirection := MC_Positive_Direction;
-	ELSE
-		mcDirection := MC_Negative_Direction;
-	END_IF
-	
-	IF nSeqState = 2 THEN
-		bVelMovePulse := TRUE;  // This scan Execute = TRUE  → rising edge → FB accepts new velocity
-	ELSE
-		bVelMovePulse := FALSE;
-	END_IF
-
-	// Reset to FALSE immediately after call using a flag
-	// Actually simplest - just call it twice per scan:
-	fbMC_MoveVelocity(
-		Axis      := GVL_Axis.Axis1,
-		Execute   := FALSE,         // First call - falling edge
-		Velocity  := ABS(fCmdVelocity),
-		Direction := mcDirection,
-		BufferMode:= MC_Aborting
-	);
-	fbMC_MoveVelocity(
-		Axis      := GVL_Axis.Axis1,
-		Execute   := TRUE,          // Second call same scan - rising edge with NEW velocity
-		Velocity  := ABS(fCmdVelocity),
-		Direction := mcDirection,
-		BufferMode:= MC_Aborting
-	);
-
-END_IF
-
-
-
+fbMovementControlerY(
+    nRawTenzo := nRawTenzoY,
+    bPowerState := fbSafetyY.bPowerStatus,
+    bHaltDone := fbSafetyY.bHaltDone,
+    stMoveCommand := stMoveCommandY,
+    stSettings := stSettingsY,
+    Axis := GVL_Axis.yAxis,
+	bBusy => stSystemStatusY.bWorking );
 
 
 
@@ -309,41 +102,15 @@ END_IF
 ]]></ST>
     </Implementation>
     <LineIds Name="MAIN">
-      <LineId Id="874" Count="1" />
-      <LineId Id="872" Count="0" />
-      <LineId Id="882" Count="2" />
-      <LineId Id="887" Count="0" />
-      <LineId Id="889" Count="1" />
-      <LineId Id="878" Count="0" />
-      <LineId Id="873" Count="0" />
-      <LineId Id="322" Count="1" />
-      <LineId Id="866" Count="1" />
-      <LineId Id="865" Count="0" />
-      <LineId Id="868" Count="0" />
-      <LineId Id="1149" Count="3" />
-      <LineId Id="1210" Count="11" />
-      <LineId Id="1282" Count="0" />
-      <LineId Id="1988" Count="1" />
-      <LineId Id="2120" Count="30" />
-      <LineId Id="2204" Count="37" />
-      <LineId Id="2183" Count="20" />
-      <LineId Id="2242" Count="0" />
-      <LineId Id="2033" Count="0" />
-      <LineId Id="2328" Count="5" />
-      <LineId Id="2526" Count="8" />
-      <LineId Id="2342" Count="1" />
-      <LineId Id="2512" Count="13" />
-      <LineId Id="2468" Count="3" />
-      <LineId Id="2364" Count="1" />
-      <LineId Id="2480" Count="31" />
-      <LineId Id="2408" Count="8" />
-      <LineId Id="2438" Count="6" />
-      <LineId Id="2560" Count="20" />
-      <LineId Id="2549" Count="0" />
-      <LineId Id="2424" Count="0" />
-      <LineId Id="404" Count="0" />
-      <LineId Id="369" Count="1" />
-      <LineId Id="69" Count="10" />
+      <LineId Id="6491" Count="3" />
+      <LineId Id="6588" Count="17" />
+      <LineId Id="6511" Count="23" />
+      <LineId Id="6615" Count="6" />
+      <LineId Id="6664" Count="0" />
+      <LineId Id="6624" Count="0" />
+      <LineId Id="6633" Count="6" />
+      <LineId Id="6663" Count="0" />
+      <LineId Id="6554" Count="9" />
       <LineId Id="65" Count="0" />
     </LineIds>
   </POU>

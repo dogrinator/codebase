@@ -5,10 +5,6 @@ classdef Model < handle
     properties
         % Tenzo
         dt = 0.01;  % time interval of measurement
-        tenzoX
-        timeX
-        fTenzoX
-        tenzoY
 
         % Camera
         isRecording = false;     % If True = store data to testData
@@ -17,7 +13,7 @@ classdef Model < handle
         cameraTimeStamps
 
         % File mamagement
-        tenzoxFid = -1;
+        tenzoxFid, tenzoyFid = -1;
         camBinFid = -1;
         timestampsFid = -1;
         filesOpen = false;
@@ -34,6 +30,7 @@ classdef Model < handle
         function openFilesRec(model)
             if model.isRecording && ~model.filesOpen
                 model.tenzoxFid = fopen(fullfile( model.selectedFolder, 'live_tenzoX.csv'), 'w');
+                model.tenzoyFid = fopen(fullfile( model.selectedFolder, 'live_tenzoY.csv'), 'w');
                 model.camBinFid = fopen(fullfile( model.selectedFolder, 'cam.bin'), 'wb');
                 model.timestampsFid = fopen(fullfile( model.selectedFolder, 'camTimestamps.csv'), 'w');
 
@@ -53,10 +50,12 @@ classdef Model < handle
         function closeFilesRec(model)
             if ~model.isRecording && model.filesOpen
                 if model.tenzoxFid ~= -1, fclose(model.tenzoxFid); end
+                if model.tenzoyFid ~= -1, fclose(model.tenzoyFid); end
                 if model.camBinFid ~= -1, fclose(model.camBinFid); end
                 if model.timestampsFid ~= -1, fclose(model.timestampsFid); end
 
                 model.tenzoxFid = -1;
+                model.tenzoyFid = -1;
                 model.camBinFid = -1;
                 model.timestampsFid = -1;
                 model.filesOpen = false;
@@ -83,8 +82,21 @@ classdef Model < handle
         end
 
         function saveTenzoY(model,actualYval)
-            % TODO later
-            % model.tenzoY = sum(actualYval)/length(actualYval);
+            try
+                % Save data if recording is on
+                if model.isRecording
+                    % calculate time stamps
+                    timeStamp = datetime('now');
+                    timeVec = timeStamp - seconds(length(actualYval) -1:-1:0) * model.dt;
+
+                    % save
+                    tString = string(timeVec, 'HH:mm:ss.SSS');
+                    dataLog = [tString(:), string(actualYval(:))]';
+                    fprintf(model.tenzoyFid,'%s,%s,\n', dataLog{:});
+                end
+            catch ME
+                fprintf(2, 'Tenzo Y save frame Error: %s\n', getReport(ME));
+            end
         end
 
         function saveCameraFrame(model, frame, timeStamp)
@@ -110,9 +122,13 @@ classdef Model < handle
 
             %% 1. Load the Live Tenzo Data Files
             fileX = fullfile(folderPath, 'live_tenzoX.csv');
+            fileY = fullfile(folderPath, 'live_tenzoY.csv');
 
             if ~exist(fileX, 'file')
                 error('Could not find live_tenzoX.csv in the specified folder.');
+            end
+            if ~exist(fileY, 'file')
+                error('Could not find live_tenzoY.csv in the specified folder.');
             end
 
             % Read CSV files as MATLAB tables
@@ -122,7 +138,13 @@ classdef Model < handle
             optsX.VariableOptions(1).InputFormat = 'HH:mm:ss.SSS';
             dataX = readtable(fileX, optsX);
 
-            disp('Tenzo logs loaded successfully.');
+            optsY = detectImportOptions(fileY);
+            optsY.VariableNames = {'Timestamp', 'ValueY'};
+            optsY.VariableTypes{1} = 'datetime';
+            optsY.VariableOptions(1).InputFormat = 'HH:mm:ss.SSS';
+            dataY = readtable(fileY, optsY);
+
+            disp('Tenzo logs (X and Y) loaded successfully.');
 
             %% 2. Load Camera Timestamps
             camTimestampsFile = fullfile(folderPath, 'camTimestamps.csv');
@@ -199,11 +221,16 @@ classdef Model < handle
                 cameraTime = camTimestamps.Timestamp(i);
                 camTimeStr = string(cameraTime, 'HH:mm:ss.SSS');
 
-                %% 6. Time Synchronization: Find the closest Tenzo measurements
+                %% 6. Time Synchronization: Find the closest Tenzo measurements for X and Y
+                % For X
                 timeDiffX = abs(dataX.Timestamp - cameraTime);
-                [~ , idxX] = min(timeDiffX);
+                [~, idxX] = min(timeDiffX);
                 matchedX = dataX.ValueX(idxX);
-                matchedY = 0; % Placeholder as Y is commented out in original
+
+                % For Y
+                timeDiffY = abs(dataY.Timestamp - cameraTime);
+                [~, idxY] = min(timeDiffY);
+                matchedY = dataY.ValueY(idxY);
 
                 %% 7. Process and Save the Image
                 txtOverlay = sprintf('X: %.5f | Y: %.5f', matchedX, matchedY);

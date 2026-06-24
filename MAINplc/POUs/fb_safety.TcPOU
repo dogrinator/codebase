@@ -1,0 +1,90 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <POU Name="fb_safety" Id="{2b1a91eb-6451-41aa-b214-38ff110b08ec}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK fb_safety
+VAR_INPUT
+	bPower   : BOOL; // Turn on motor
+	bReset   : BOOL; // Error reset
+	bHalt    : BOOL; // Halt button pressed
+	bSeqHalt : BOOL; // Halt from movement controler
+	bHome    : BOOL; // Start homing seq
+	bEndStop : BOOL; // Physical endstop
+END_VAR
+
+VAR_OUTPUT
+	bPowerStatus : BOOL; // Power on 
+	bHaltDone    : BOOL; // Motor stopped
+END_VAR
+
+VAR
+	// Safety FBs
+    fbMC_Power  : MC_Power;
+    fbMC_Reset	: MC_Reset;
+	fbMC_Halt	: MC_Halt;
+	
+	// Homing
+	fbMC_Homing : MC_Home;
+
+	// Edge detection for reset
+	rtResetTrigger : R_TRIG;
+END_VAR
+
+VAR_IN_OUT
+	stAxis   : Axis_REF; 
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+// Power on axis
+fbMC_Power(
+    Axis:= stAxis,
+    Enable:= bPower,
+    Enable_Positive:= bPower,
+    Enable_Negative:= bPower,
+    Override:= 100.0);
+// Power on sucsessfuly
+bPowerStatus := fbMC_Power.Status;
+
+// Start homing sequence
+fbMC_Homing(
+	Axis:= stAxis, 
+	Execute:= bHome, 
+	Position:= 0, 
+	HomingMode:= MC_DefaultHoming, 
+	bCalibrationCam:= bEndStop);
+
+// Reset
+rtResetTrigger(CLK := bReset);
+fbMC_Reset( 
+	Axis := stAxis,
+	Execute := rtResetTrigger.Q);
+	
+// Stop movement
+fbMC_Halt(
+	Axis := stAxis, 
+	Execute := bHalt OR bSeqHalt);
+// Check if motor stoped
+bHaltDone := fbMC_Halt.Done;
+	
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="fb_safety">
+      <LineId Id="176" Count="0" />
+      <LineId Id="125" Count="6" />
+      <LineId Id="212" Count="0" />
+      <LineId Id="211" Count="0" />
+      <LineId Id="177" Count="0" />
+      <LineId Id="132" Count="10" />
+      <LineId Id="179" Count="0" />
+      <LineId Id="178" Count="0" />
+      <LineId Id="206" Count="0" />
+      <LineId Id="143" Count="1" />
+      <LineId Id="180" Count="1" />
+      <LineId Id="213" Count="1" />
+      <LineId Id="208" Count="0" />
+      <LineId Id="9" Count="0" />
+      <LineId Id="175" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>

@@ -10,10 +10,11 @@ classdef Control < handle
         plc       % handle for plc
         model     % handle for storage
 
-        plcReadTimer       % Timer for reading sensors (Tenzos + Temp) and sending data
-        displayTimer            % Separate timer for GUI updates only
+        plcReadTimer % Timer for reading sensors (Tenzos + Temp) and sending data
+        displayTimer % Separate timer for GUI updates only
 
         xTenzoData = [];
+        yTenzoData = [];
     end
 
     methods
@@ -26,7 +27,9 @@ classdef Control < handle
 
         function startTimers(controler, app)
             % Start timer
-            controler.plcReadTimer = timer('ExecutionMode', 'fixedRate', 'Period', 0.5, ...
+            controler.plcReadTimer = timer( ...
+                'ExecutionMode', 'fixedRate', ...
+                'Period', 0.5, ...
                 'TimerFcn', @(~,~) controler.ReadCallback());
             start(controler.plcReadTimer);
 
@@ -43,8 +46,9 @@ classdef Control < handle
                 % read data from plc
                 if controler.plc.connected
                     % read data and append
-                    newXdata = controler.plc.fifoProcess();
+                    [newXdata, newYdata] = controler.plc.fifoProcess();
                     controler.xTenzoData = [controler.xTenzoData, newXdata];
+                    controler.yTenzoData = [controler.yTenzoData, newYdata];
 
                     % stop recording after test ended
                     if ~controler.plc.isWorking && controler.plc.model.isRecording
@@ -67,7 +71,7 @@ classdef Control < handle
         function updateDisplay(controler, app)
             try
                 % Plot camera frame
-                if controler.camera.connected && isempty(controler.camera.latestFrame) && ~isvalid(app.cameraAxes)
+                if controler.camera.connected && ~isempty(controler.camera.latestFrame) && isvalid(app.cameraAxes)
                     app.camImageHandle.CData = controler.camera.latestFrame;
                     controler.camera.latestFrame = [];   % clear so we don't redraw the same frame twice
                 end
@@ -75,10 +79,10 @@ classdef Control < handle
                 % Plot plc data
                 if ~isempty(controler.xTenzoData) && controler.plc.connected
                     % How many data came
-                    numPoints = length(controler.xTenzoData);
+                    numPointsX = length(controler.xTenzoData);
 
                     % Create x
-                    xData = controler.plc.totalTime + controler.plc.ts*(1:numPoints);
+                    xData = controler.plc.totalTimeX + controler.plc.ts*(1:numPointsX);
 
                     % Plot data
                     addpoints(app.fxLine, xData, controler.xTenzoData);
@@ -88,15 +92,41 @@ classdef Control < handle
 
                     % Limit plots
                     windowSize  = 500 * controler.plc.ts;
-                    if controler.plc.totalTime > windowSize
-                        app.fxAxes.XLim = [controler.plc.totalTime - windowSize, controler.plc.totalTime];
+                    if controler.plc.totalTimeX > windowSize
+                        app.fxAxes.XLim = [controler.plc.totalTimeX - windowSize, controler.plc.totalTimeX];
                     else
                         app.fxAxes.XLim = [0, windowSize];
                     end
 
                     % prepare for next data
-                    controler.plc.totalTime = controler.plc.totalTime + controler.plc.ts*numPoints;
+                    controler.plc.totalTimeX = controler.plc.totalTimeX + controler.plc.ts*numPointsX;
                     controler.xTenzoData = [];
+                end
+
+                if ~isempty(controler.yTenzoData) && controler.plc.connected
+                    % How many data came
+                    numPointsY = length(controler.yTenzoData);
+
+                    % Create y (time) for y data
+                    yData = controler.plc.totalTimeY + controler.plc.ts*(1:numPointsY);
+
+                    % Plot data (use fyLine and fyAxes for Y channel)
+                    addpoints(app.fyLine, yData, controler.yTenzoData);
+
+                    % Prepare for saving
+                    controler.plc.model.saveTenzoY(controler.yTenzoData)
+
+                    % Limit plots
+                    windowSize  = 500 * controler.plc.ts;
+                    if controler.plc.totalTimeY > windowSize
+                        app.fyAxes.XLim = [controler.plc.totalTimeY - windowSize, controler.plc.totalTimeY];
+                    else
+                        app.fyAxes.XLim = [0, windowSize];
+                    end
+
+                    % prepare for next data
+                    controler.plc.totalTimeY = controler.plc.totalTimeY + controler.plc.ts*numPointsY;
+                    controler.yTenzoData = [];
                 end
 
                 drawnow limitrate;
@@ -118,16 +148,18 @@ classdef Control < handle
             if btn.Value
                 btn.Text = 'Start';
                 btn.BackgroundColor = [0.4 1 0.4];
-                controler.plc.client.WriteAny(controler.plc.hHalt, true);
+                controler.plc.client.WriteAny(controler.plc.hHaltX, true);
+                controler.plc.client.WriteAny(controler.plc.hHaltY, true);
             else
                 btn.Text = 'Stop';
                 btn.BackgroundColor = [1 0.7 0.7];
-                controler.plc.client.WriteAny(controler.plc.hHalt, false);
+                controler.plc.client.WriteAny(controler.plc.hHaltX, false);
+                controler.plc.client.WriteAny(controler.plc.hHaltY, false);
             end
         end
 
         %% Test handling
-        function startTest(controler, mode, x, vx)
+        function startTest(controler, mode, x, vx, y, vy)
             % choose folder path
             controler.model.selectedFolder = uigetdir('','Choose path');
 
@@ -153,7 +185,7 @@ classdef Control < handle
             controler.model.openFilesRec(); % Open files for recording
 
             % send data to PLC
-            controler.plc.SendCommands(mode, x, vx)
+            controler.plc.SendCommands(mode, x, vx, y, vy)
         end
 
         function endTest(controler)
@@ -191,8 +223,6 @@ classdef Control < handle
 
                 % Reset model properties for next test
                 controler.model.recordIndex = 1;
-                controler.plc.totalTime = 0;    % Reset total PLC time
-                controler.plc.lastPlcHead = -1; % Reset sentinel so next test starts clean
                 controler.model.cameraFrameWidth = 0;  % Reset dimensions
                 controler.model.cameraFrameHeight = 0; % Reset dimensions
                 disp('--- Test End and Post-Processing Complete ---');

@@ -30,6 +30,7 @@ classdef View < handle
         fxAxes
         fxLine
         fyAxes
+        fyLine
 
         % Main control
         posX
@@ -195,6 +196,7 @@ classdef View < handle
 
             app.fyAxes = uiaxes(grid);
             title(app.fyAxes,'Fy')
+            app.fyLine = animatedline(app.fyAxes, 'Color', [0.18 0.55 0.85], 'LineWidth', 1.2);
 
         end
 
@@ -239,24 +241,24 @@ classdef View < handle
                     g = uigridlayout(app.dynamicControlGroup, [8 2]);
 
                     % X axes control
-                    uibutton(g, 'Text', 'Move X +', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1,app.posX.Value,app.velX.Value));
-                    uibutton(g, 'Text', 'Move X -', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1,- app.posX.Value,app.velX.Value));
+                    uibutton(g, 'Text', 'Move X +', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1,  app.posX.Value, app.velX.Value, 0, 0));
+                    uibutton(g, 'Text', 'Move X -', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1, -app.posX.Value, app.velX.Value, 0, 0));
                     uilabel(g, 'Text', 'Distance for X axis [mm]:');
                     app.posX = uieditfield(g, 'numeric', 'Value', 100);
                     uilabel(g, 'Text', 'Speed of X axis [m/s]:');
                     app.velX = uieditfield(g, 'numeric', 'Value', 10, 'Limits', [0, 200]);
 
                     % Y axes control TODO
-                    uibutton(g, 'Text', 'Move Y +');
-                    uibutton(g, 'Text', 'Move Y -');
+                    uibutton(g, 'Text', 'Move Y +', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1, 0, 0,  app.posY.Value, app.velY.Value));
+                    uibutton(g, 'Text', 'Move Y -', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1, 0, 0, -app.posY.Value, app.velY.Value));
                     uilabel(g, 'Text', 'Distance for Y axis [mm]:');
                     app.posY = uieditfield(g, 'numeric', 'Value', 100);
                     uilabel(g, 'Text', 'Speed of Y axis [m/s]:');
                     app.velY = uieditfield(g, 'numeric', 'Value', 10, 'Limits',[0, 200]);
 
                     % XY axes control TODO
-                    uibutton(g, 'Text', 'Move XY +');
-                    uibutton(g, 'Text', 'Move XY -');
+                    uibutton(g, 'Text', 'Move XY +', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1,  app.posX.Value,app.velX.Value,  app.posY.Value, app.velY.Value));
+                    uibutton(g, 'Text', 'Move XY -', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1, -app.posX.Value,app.velX.Value, -app.posY.Value, app.velY.Value));
 
                     % Auto-home TODO
                     uibutton(g, 'Text', 'Auto Home');
@@ -282,7 +284,7 @@ classdef View < handle
                     app.velY = uieditfield(g, 'numeric', 'Value', 100,'Limits',[0, 100]);
 
                     % Start test
-                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.startTest(1,app.posX.Value,app.velX.Value));
+                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1, app.posX.Value,app.velX.Value, app.posY.Value, app.velY.Value));
 
                     % Panic stop
                     pwrBtn = uibutton(g, 'state', 'Text', 'Stop', 'BackgroundColor', [1 0.7 0.7]);
@@ -305,7 +307,7 @@ classdef View < handle
                     app.velY = uieditfield(g, 'numeric', 'Value', 10);
 
                     % Start Test
-                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.startTest(2,app.posX.Value,app.velX.Value));
+                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(2, app.posX.Value,app.velX.Value, app.posY.Value, app.velY.Value));
 
                     % Panic stop
                     pwrBtn = uibutton(g, 'state', 'Text', 'STOP', 'BackgroundColor', [1 0.7 0.7]);

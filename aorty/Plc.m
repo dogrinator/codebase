@@ -12,14 +12,16 @@ classdef Plc <handle
         client
 
         % Handles for reciving
-        hWorking, hHead, hBuffer, hHalt
+        hWorkingX, hHeadX, hBufferX, hHaltX
+        hWorkingY, hHeadY, hBufferY, hHaltY
         % Handles for sending
-        hDist, hVel, hTot, hMode, hExec, hPwr
+        hDistX, hVelX, hTotX, hModeX, hExecX, hPwrX
+        hDistY, hVelY, hTotY, hModeY, hExecY, hPwrY
 
         % Mandatory variables
         connected = false;
-        lastPlcHead = -1;   % plc init head for reciving data
-        totalTime = 0;      % Number of samples from one reading
+        lastPlcHeadX, lastPlcHeadY = -1;   % plc init head for reciving data
+        totalTimeX, totalTimeY = 0;      % Number of samples from one reading
         isWorking = false;  % PLC is ocupied
         ts = 0.01           % plc dt for 1 loop
 
@@ -40,21 +42,35 @@ classdef Plc <handle
                     plc.client.Connect(plc.amsNetID, 851);
 
                     % --- Create persistent handles ---
-                    % For reading
-                    plc.hWorking = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatus.bWorking'));
-                    plc.hHead    = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatus.nBufferHead'));
-                    plc.hBuffer  = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatus.fTenzoBuffer'));
+                    % For reading X axis
+                    plc.hWorkingX = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatusX.bWorking'));
+                    plc.hHeadX    = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatusX.nBufferHead'));
+                    plc.hBufferX  = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatusX.fTenzoBuffer'));
 
-                    % For writing
-                    plc.hDist = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommand.fDistancesX'));
-                    plc.hVel  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommand.fVelocitiesX'));
-                    plc.hTot  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommand.nTotalStepsX'));
-                    plc.hMode = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommand.nMode'));
-                    plc.hExec = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommand.bExecute'));
-                    plc.hPwr  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommand.bPower'));
-                    plc.hHalt = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommand.bHalt'));
+                    % For writing X axis
+                    plc.hDistX = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandX.fDistances'));
+                    plc.hVelX  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandX.fVelocities'));
+                    plc.hTotX  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandX.nTotalSteps'));
+                    plc.hModeX = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandX.nMode'));
+                    plc.hExecX = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandX.bExecute'));
+                    plc.hPwrX  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandX.bPower'));
+                    plc.hHaltX = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandX.bHalt'));
 
+                    % For reading Y axis
+                    plc.hWorkingY = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatusY.bWorking'));
+                    plc.hHeadY    = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatusY.nBufferHead'));
+                    plc.hBufferY  = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatusY.fTenzoBuffer'));
 
+                    % For writing Y axis
+                    plc.hDistY = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.fDistances'));
+                    plc.hVelY  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.fVelocities'));
+                    plc.hTotY  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.nTotalSteps'));
+                    plc.hModeY = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.nMode'));
+                    plc.hExecY = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.bExecute'));
+                    plc.hPwrY  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.bPower'));
+                    plc.hHaltY = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.bHalt'));
+
+                    % Plc connected flags
                     plc.connected = true;
                     disp("PLC connected.");
                 catch ME
@@ -71,9 +87,12 @@ classdef Plc <handle
             if ~isempty(plc.client)
                 try
                     % delete all handles
-                    handles = {plc.hWorking, plc.hHead, plc.hBuffer, ...
-                        plc.hDist, plc.hVel, plc.hTot, ...
-                        plc.hMode, plc.hExec, plc.hPwr, plc.hHalt};
+                    handles = {plc.hWorkingX, plc.hHeadX, plc.hBufferX, ...
+                        plc.hDistX, plc.hVelX, plc.hTotX, ...
+                        plc.hModeX, plc.hExecX, plc.hPwrX, plc.hHaltX, ...
+                        plc.hWorkingY, plc.hHeadY, plc.hBufferY, ...
+                        plc.hDistY, plc.hVelY, plc.hTotY, ...
+                        plc.hModeY, plc.hExecY, plc.hPwrY, plc.hHaltY};
 
                     for i = 1:length(handles)
                         if ~isempty(handles{i})
@@ -91,49 +110,69 @@ classdef Plc <handle
             plc.connected = false;
         end
 
-        function tenzoData = fifoProcess(plc)
+        function [tenzoDataX, tenzoDataY] = fifoProcess(plc)
             % Check if command is being processed
-            isWorkingOut = plc.client.ReadAny(plc.hWorking, System.Type.GetType('System.Int32'));
-            plc.isWorking = double(isWorkingOut);
+            isWorkingOutX = plc.client.ReadAny(plc.hWorkingX, System.Type.GetType('System.Int32'));
+            isWorkingOutY = plc.client.ReadAny(plc.hWorkingY, System.Type.GetType('System.Int32'));
+            plc.isWorking = double(isWorkingOutX) || double(isWorkingOutY);
 
             % Read where is head
-            head_net = plc.client.ReadAny(plc.hHead, System.Type.GetType('System.Int32'));
-            currentHead = double(head_net);
+            head_netX = plc.client.ReadAny(plc.hHeadX, System.Type.GetType('System.Int32'));
+            currentHeadX = double(head_netX);
+            head_netY = plc.client.ReadAny(plc.hHeadY, System.Type.GetType('System.Int32'));
+            currentHeadY = double(head_netY);
 
             % Prepare to read arrays
             lengths = NET.createArray('System.Int32', 1);
-            lengths(1) = 500;
+            lengths(1) = 150;
 
             % Read arrays
-            buffer_net = plc.client.ReadAny(plc.hBuffer,System.Type.GetType('System.Single[]'), lengths);
-            buffer = double(buffer_net);
+            buffer_netX = plc.client.ReadAny(plc.hBufferX,System.Type.GetType('System.Single[]'), lengths);
+            bufferX = double(buffer_netX);
+            buffer_netY = plc.client.ReadAny(plc.hBufferY,System.Type.GetType('System.Single[]'), lengths);
+            bufferY = double(buffer_netY);
 
             % Init vector
-            tenzoData = [];
+            tenzoDataX = [];
+            tenzoDataY = [];
 
-            if plc.lastPlcHead == -1
-                plc.lastPlcHead = currentHead;
-                return;
+            if plc.lastPlcHeadX == -1
+                plc.lastPlcHeadX = currentHeadX;
+            else
+                if currentHeadX > plc.lastPlcHeadX
+                    % Normal case: head advanced forward
+                    tenzoDataX = bufferX(plc.lastPlcHeadX : currentHeadX - 1);
+                elseif currentHeadX < plc.lastPlcHeadX
+                    % Ring buffer wrapped around
+                    part1 = bufferX(plc.lastPlcHeadX : end);
+                    part2 = bufferX(1 : currentHeadX - 1);
+                    tenzoDataX = [part1, part2];
+                end
+                % Actualization of head
+                plc.lastPlcHeadX = currentHeadX;
             end
 
-            if currentHead > plc.lastPlcHead
-                % Normal case: head advanced forward
-                tenzoData = buffer(plc.lastPlcHead : currentHead - 1);
-
-            elseif currentHead < plc.lastPlcHead
-                % Ring buffer wrapped around
-                part1 = buffer(plc.lastPlcHead : end);
-                part2 = buffer(1 : currentHead - 1);
-                tenzoData = [part1, part2];
+            % Y axis handling
+            if plc.lastPlcHeadY == -1
+                plc.lastPlcHeadY = currentHeadY;
+            else
+                if currentHeadY > plc.lastPlcHeadY
+                    % Normal case: head advanced forward
+                    tenzoDataY = bufferY(plc.lastPlcHeadY : currentHeadY - 1);
+                elseif currentHeadY < plc.lastPlcHeadY
+                    % Ring buffer wrapped around
+                    part1 = bufferY(plc.lastPlcHeadY : end);
+                    part2 = bufferY(1 : currentHeadY - 1);
+                    tenzoDataY = [part1, part2];
+                end
+                % Actualization of head
+                plc.lastPlcHeadY = currentHeadY;
             end
-
-            % Actualization of head
-            plc.lastPlcHead = currentHead;
-
         end
 
+
         % Send control data
-        function SendCommands(plc,mode,xPos,xVel)
+        function SendCommands(plc,mode,xPos,xVel,yPos,yVel)
 
             % Check if PLC is occupied
             if plc.isWorking || ~plc.connected
@@ -142,37 +181,59 @@ classdef Plc <handle
             end
 
             try
-                % Clean and format arrays
+                % Clean and format arrays for X and Y
                 maxSteps = 100;
-                distBuffer = zeros(1, maxSteps);
-                velBuffer = zeros(1, maxSteps);
+                distBufferX = zeros(1, maxSteps);
+                velBufferX  = zeros(1, maxSteps);
+                distBufferY = zeros(1, maxSteps);
+                velBufferY  = zeros(1, maxSteps);
 
-                % Add data to buffers
-                distBuffer(1:length(xPos)) = xPos;
-                velBuffer(1:length(xVel)) = xVel;
+                % Add data to buffers (ensure lengths do not exceed maxSteps)
+                nX = min(length(xPos), maxSteps);
+                mX = min(length(xVel), maxSteps);
+                nY = min(length(yPos), maxSteps);
+                mY = min(length(yVel), maxSteps);
 
-                % This is needed to bypas error with datatype
-                netDistBuffer = NET.createArray('System.Double', maxSteps);
-                netVelBuffer  = NET.createArray('System.Double', maxSteps);
+                distBufferX(1:nX) = xPos(1:nX);
+                velBufferX(1:mX)  = xVel(1:mX);
+                distBufferY(1:nY) = yPos(1:nY);
+                velBufferY(1:mY)  = yVel(1:mY);
+
+                % Create .NET arrays (System.Double) and copy data
+                netDistBufferX = NET.createArray('System.Double', maxSteps);
+                netVelBufferX  = NET.createArray('System.Double', maxSteps);
+                netDistBufferY = NET.createArray('System.Double', maxSteps);
+                netVelBufferY  = NET.createArray('System.Double', maxSteps);
                 for i = 1:maxSteps
-                    netDistBuffer(i) = distBuffer(i);
-                    netVelBuffer(i)  = velBuffer(i);
+                    netDistBufferX(i) = distBufferX(i);
+                    netVelBufferX(i)  = velBufferX(i);
+                    netDistBufferY(i) = distBufferY(i);
+                    netVelBufferY(i)  = velBufferY(i);
                 end
 
-                % 1. Write data to plc
-                plc.client.WriteAny(plc.hDist, netDistBuffer);
-                plc.client.WriteAny(plc.hVel, netVelBuffer);
-                plc.client.WriteAny(plc.hTot, int16(length(xPos)));
-                plc.client.WriteAny(plc.hMode, int16(mode));
+                % 1. Write data to PLC for X axis
+                plc.client.WriteAny(plc.hDistX, netDistBufferX);
+                plc.client.WriteAny(plc.hVelX, netVelBufferX);
+                plc.client.WriteAny(plc.hTotX, int16(nX));
+                plc.client.WriteAny(plc.hModeX, int16(mode));
 
-                % 2. Reset Execute
-                plc.client.WriteAny(plc.hExec, false);
+                % 1b. Write data to PLC for Y axis
+                plc.client.WriteAny(plc.hDistY, netDistBufferY);
+                plc.client.WriteAny(plc.hVelY, netVelBufferY);
+                plc.client.WriteAny(plc.hTotY, int16(nY));
+                plc.client.WriteAny(plc.hModeY, int16(mode));
 
-                % 3. Start
-                plc.client.WriteAny(plc.hExec, true);
-                plc.client.WriteAny(plc.hPwr, true);
+                % 2. Reset Execute for both axes
+                plc.client.WriteAny(plc.hExecX, false);
+                plc.client.WriteAny(plc.hExecY, false);
 
-                % set isWorking so user cannot doublesend data
+                % 3. Start both axes
+                plc.client.WriteAny(plc.hExecX, true);
+                plc.client.WriteAny(plc.hPwrX, true);
+                plc.client.WriteAny(plc.hExecY, true);
+                plc.client.WriteAny(plc.hPwrY, true);
+
+                % set isWorking so user cannot double-send data
                 plc.isWorking = true;
 
                 disp('Commands successfully sent to PLC.');

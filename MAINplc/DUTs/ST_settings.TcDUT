@@ -1,0 +1,23 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <DUT Name="ST_settings" Id="{4c7494d5-7e0d-4afe-afc6-07f6109539eb}">
+    <Declaration><![CDATA[TYPE ST_Settings :
+	STRUCT
+		// Tenzo
+		fTenzoCons : LREAL;
+	
+		// Force control
+		fKp : LREAL;
+		fKi : LREAL;
+		fIntegralLimit : LREAL;
+		fForceTolerance : LREAL;
+		fMaxVelocity : LREAL;
+	
+		// Motion safety
+		fMaxForce : LREAL;
+		fMaxPosition : LREAL;
+	END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>
