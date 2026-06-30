@@ -1,0 +1,29 @@
+{
+    "plc": {
+        "xAxis": {
+            "fTenzoCons": 0.01,
+            "fKp": 10,
+            "fKi": 0.1,
+            "fIntegralLimit": 10,
+            "fForceTolerance": 0.1,
+            "fMaxVelocity": 100,
+            "fMaxForce": 10,
+            "fMaxPosition": 0.1
+        },
+        "yAxis": {
+            "fTenzoCons": 0.01,
+            "fKp": 10,
+            "fKi": 0.1,
+            "fIntegralLimit": 10,
+            "fForceTolerance": 0.1,
+            "fMaxVelocity": 100,
+            "fMaxForce": 10,
+            "fMaxPosition": 0.1
+        }
+    },
+    "camera": {
+        "exposureTimeAbs": 5000,
+        "gainRaw": 0,
+        "acquisitionFrameRateAbs": 15
+    }
+}

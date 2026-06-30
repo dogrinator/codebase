@@ -11,6 +11,7 @@ classdef Plc <handle
         dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll';
         client
 
+        %% Movement ctr
         % Handles for reciving
         hWorkingX, hHeadX, hBufferX, hHaltX
         hWorkingY, hHeadY, hBufferY, hHaltY
@@ -18,14 +19,22 @@ classdef Plc <handle
         hDistX, hVelX, hTotX, hModeX, hExecX, hPwrX
         hDistY, hVelY, hTotY, hModeY, hExecY, hPwrY
 
+        % Arrays
+        netDistBufferX, netVelBufferX, netDistBufferY, netVelBufferY, lengths
+
         % Mandatory variables
         connected = false;
-        lastPlcHeadX, lastPlcHeadY = -1;   % plc init head for reciving data
-        totalTimeX, totalTimeY = 0;      % Number of samples from one reading
-        isWorking = false;  % PLC is ocupied
-        ts = 0.01           % plc dt for 1 loop
+        lastPlcHeadX = -1;
+        lastPlcHeadY = -1;   % plc init head for reciving data
+        totalTimeX = 0;
+        totalTimeY = 0;      % Number of samples from one reading
+        isWorking = false;   % PLC is ocupied
+        ts = 0.01            % plc dt for 1 loop
 
-        % Settings variables TODO
+        % Settings handles
+        TenzoKonsX, kpX, kiX, intLimitX, fTolX, maxVelX, maxFX, maxPosX;
+        TenzoKonsY, kpY, kiY, intLimitY, fTolY, maxVelY, maxFY, maxPosY;
+        
     end
 
     methods
@@ -56,6 +65,16 @@ classdef Plc <handle
                     plc.hPwrX  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandX.bPower'));
                     plc.hHaltX = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandX.bHalt'));
 
+                    % For settings X axis
+                    plc.TenzoKonsX = int32(plc.client.CreateVariableHandle('MAIN.stSettingsX.fTenzoCons'));
+                    plc.kpX        = int32(plc.client.CreateVariableHandle('MAIN.stSettingsX.fKp'));
+                    plc.kiX        = int32(plc.client.CreateVariableHandle('MAIN.stSettingsX.fKi'));
+                    plc.intLimitX  = int32(plc.client.CreateVariableHandle('MAIN.stSettingsX.fIntegralLimit'));
+                    plc.fTolX      = int32(plc.client.CreateVariableHandle('MAIN.stSettingsX.fForceTolerance'));
+                    plc.maxVelX    = int32(plc.client.CreateVariableHandle('MAIN.stSettingsX.fMaxVelocity'));
+                    plc.maxFX      = int32(plc.client.CreateVariableHandle('MAIN.stSettingsX.fMaxForce'));
+                    plc.maxPosX    = int32(plc.client.CreateVariableHandle('MAIN.stSettingsX.fMaxPosition'));
+
                     % For reading Y axis
                     plc.hWorkingY = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatusY.bWorking'));
                     plc.hHeadY    = int32(plc.client.CreateVariableHandle('MAIN.stSystemStatusY.nBufferHead'));
@@ -69,6 +88,26 @@ classdef Plc <handle
                     plc.hExecY = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.bExecute'));
                     plc.hPwrY  = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.bPower'));
                     plc.hHaltY = int32(plc.client.CreateVariableHandle('MAIN.stMoveCommandY.bHalt'));
+
+                    % For settings Y axis
+                    plc.TenzoKonsY = int32(plc.client.CreateVariableHandle('MAIN.stSettingsY.fTenzoCons'));
+                    plc.kpY        = int32(plc.client.CreateVariableHandle('MAIN.stSettingsY.fKp'));
+                    plc.kiY        = int32(plc.client.CreateVariableHandle('MAIN.stSettingsY.fKi'));
+                    plc.intLimitY  = int32(plc.client.CreateVariableHandle('MAIN.stSettingsY.fIntegralLimit'));
+                    plc.fTolY      = int32(plc.client.CreateVariableHandle('MAIN.stSettingsY.fForceTolerance'));
+                    plc.maxVelY    = int32(plc.client.CreateVariableHandle('MAIN.stSettingsY.fMaxVelocity'));
+                    plc.maxFY      = int32(plc.client.CreateVariableHandle('MAIN.stSettingsY.fMaxForce'));
+                    plc.maxPosY    = int32(plc.client.CreateVariableHandle('MAIN.stSettingsY.fMaxPosition'));
+
+                    % Create .NET arrays for writing
+                    maxSteps = 100;
+                    plc.netDistBufferX = NET.createArray('System.Double', maxSteps);
+                    plc.netVelBufferX  = NET.createArray('System.Double', maxSteps);
+                    plc.netDistBufferY = NET.createArray('System.Double', maxSteps);
+                    plc.netVelBufferY  = NET.createArray('System.Double', maxSteps);
+                    % Prepare to read arrays
+                    plc.lengths = NET.createArray('System.Int32', 1);
+                    plc.lengths(1) = 150;
 
                     % Plc connected flags
                     plc.connected = true;
@@ -90,9 +129,13 @@ classdef Plc <handle
                     handles = {plc.hWorkingX, plc.hHeadX, plc.hBufferX, ...
                         plc.hDistX, plc.hVelX, plc.hTotX, ...
                         plc.hModeX, plc.hExecX, plc.hPwrX, plc.hHaltX, ...
+                        plc.TenzoKonsX, plc.maxPosX, plc.kpX, plc.kiX , ... 
+                        plc.intLimitX, plc.fTolX, plc.maxVelX, plc.maxFX, ...
                         plc.hWorkingY, plc.hHeadY, plc.hBufferY, ...
                         plc.hDistY, plc.hVelY, plc.hTotY, ...
-                        plc.hModeY, plc.hExecY, plc.hPwrY, plc.hHaltY};
+                        plc.hModeY, plc.hExecY, plc.hPwrY, plc.hHaltY, ...
+                        plc.TenzoKonsY, plc.maxPosY, plc.kpY, plc.kiY , ... 
+                        plc.intLimitY, plc.fTolY, plc.maxVelY, plc.maxFY};
 
                     for i = 1:length(handles)
                         if ~isempty(handles{i})
@@ -114,7 +157,7 @@ classdef Plc <handle
             % Check if command is being processed
             isWorkingOutX = plc.client.ReadAny(plc.hWorkingX, System.Type.GetType('System.Int32'));
             isWorkingOutY = plc.client.ReadAny(plc.hWorkingY, System.Type.GetType('System.Int32'));
-            plc.isWorking = double(isWorkingOutX) || double(isWorkingOutY);
+            plc.isWorking = logical(isWorkingOutX) || logical(isWorkingOutY);
 
             % Read where is head
             head_netX = plc.client.ReadAny(plc.hHeadX, System.Type.GetType('System.Int32'));
@@ -122,14 +165,10 @@ classdef Plc <handle
             head_netY = plc.client.ReadAny(plc.hHeadY, System.Type.GetType('System.Int32'));
             currentHeadY = double(head_netY);
 
-            % Prepare to read arrays
-            lengths = NET.createArray('System.Int32', 1);
-            lengths(1) = 150;
-
             % Read arrays
-            buffer_netX = plc.client.ReadAny(plc.hBufferX,System.Type.GetType('System.Single[]'), lengths);
+            buffer_netX = plc.client.ReadAny(plc.hBufferX,System.Type.GetType('System.Double[]'), plc.lengths);
             bufferX = double(buffer_netX);
-            buffer_netY = plc.client.ReadAny(plc.hBufferY,System.Type.GetType('System.Single[]'), lengths);
+            buffer_netY = plc.client.ReadAny(plc.hBufferY,System.Type.GetType('System.Double[]'), plc.lengths);
             bufferY = double(buffer_netY);
 
             % Init vector
@@ -199,27 +238,23 @@ classdef Plc <handle
                 distBufferY(1:nY) = yPos(1:nY);
                 velBufferY(1:mY)  = yVel(1:mY);
 
-                % Create .NET arrays (System.Double) and copy data
-                netDistBufferX = NET.createArray('System.Double', maxSteps);
-                netVelBufferX  = NET.createArray('System.Double', maxSteps);
-                netDistBufferY = NET.createArray('System.Double', maxSteps);
-                netVelBufferY  = NET.createArray('System.Double', maxSteps);
+                % Write data
                 for i = 1:maxSteps
-                    netDistBufferX(i) = distBufferX(i);
-                    netVelBufferX(i)  = velBufferX(i);
-                    netDistBufferY(i) = distBufferY(i);
-                    netVelBufferY(i)  = velBufferY(i);
+                    plc.netDistBufferX(i) = distBufferX(i);
+                    plc.netVelBufferX(i)  = velBufferX(i);
+                    plc.netDistBufferY(i) = distBufferY(i);
+                    plc.netVelBufferY(i)  = velBufferY(i);
                 end
 
                 % 1. Write data to PLC for X axis
-                plc.client.WriteAny(plc.hDistX, netDistBufferX);
-                plc.client.WriteAny(plc.hVelX, netVelBufferX);
+                plc.client.WriteAny(plc.hDistX, plc.netDistBufferX);
+                plc.client.WriteAny(plc.hVelX, plc.netVelBufferX);
                 plc.client.WriteAny(plc.hTotX, int16(nX));
                 plc.client.WriteAny(plc.hModeX, int16(mode));
 
                 % 1b. Write data to PLC for Y axis
-                plc.client.WriteAny(plc.hDistY, netDistBufferY);
-                plc.client.WriteAny(plc.hVelY, netVelBufferY);
+                plc.client.WriteAny(plc.hDistY, plc.netDistBufferY);
+                plc.client.WriteAny(plc.hVelY, plc.netVelBufferY);
                 plc.client.WriteAny(plc.hTotY, int16(nY));
                 plc.client.WriteAny(plc.hModeY, int16(mode));
 
@@ -242,6 +277,17 @@ classdef Plc <handle
                 % Error
                 disp(['Write Error: ', ME.message]);
             end
+        end
+
+        function writeAxisConfig(plc, axisCfg, axis)
+            plc.client.WriteAny(plc.("TenzoKons" + axis), axisCfg.fTenzoCons);
+            plc.client.WriteAny(plc.("kp" + axis),        axisCfg.fKp);
+            plc.client.WriteAny(plc.("ki" + axis),        axisCfg.fKi);
+            plc.client.WriteAny(plc.("intLimit" + axis),  axisCfg.fIntegralLimit);
+            plc.client.WriteAny(plc.("fTol" + axis),      axisCfg.fForceTolerance);
+            plc.client.WriteAny(plc.("maxVel" + axis),    axisCfg.fMaxVelocity);
+            plc.client.WriteAny(plc.("maxF" + axis),      axisCfg.fMaxForce);
+            plc.client.WriteAny(plc.("maxPos" + axis),    axisCfg.fMaxPosition);
         end
     end
 end

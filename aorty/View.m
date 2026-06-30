@@ -284,7 +284,7 @@ classdef View < handle
                     app.velY = uieditfield(g, 'numeric', 'Value', 100,'Limits',[0, 100]);
 
                     % Start test
-                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(1, app.posX.Value,app.velX.Value, app.posY.Value, app.velY.Value));
+                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.startTest(1, app.posX.Value,app.velX.Value, app.posY.Value, app.velY.Value));
 
                     % Panic stop
                     pwrBtn = uibutton(g, 'state', 'Text', 'Stop', 'BackgroundColor', [1 0.7 0.7]);
@@ -307,7 +307,7 @@ classdef View < handle
                     app.velY = uieditfield(g, 'numeric', 'Value', 10);
 
                     % Start Test
-                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.plc.SendCommands(2, app.posX.Value,app.velX.Value, app.posY.Value, app.velY.Value));
+                    uibutton(g, 'Text', 'Start Test', 'ButtonPushedFcn', @(s,e) app.controler.plc.startTest(2, app.posX.Value,app.velX.Value, app.posY.Value, app.velY.Value));
 
                     % Panic stop
                     pwrBtn = uibutton(g, 'state', 'Text', 'STOP', 'BackgroundColor', [1 0.7 0.7]);

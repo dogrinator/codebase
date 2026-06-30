@@ -73,65 +73,61 @@ classdef Control < handle
                 % Plot camera frame
                 if controler.camera.connected && ~isempty(controler.camera.latestFrame) && isvalid(app.cameraAxes)
                     app.camImageHandle.CData = controler.camera.latestFrame;
-                    controler.camera.latestFrame = [];   % clear so we don't redraw the same frame twice
+                    controler.camera.latestFrame = [];
                 end
-
-                % Plot plc data
+        
+                % --- X channel ---
                 if ~isempty(controler.xTenzoData) && controler.plc.connected
-                    % How many data came
-                    numPointsX = length(controler.xTenzoData);
-
-                    % Create x
-                    xData = controler.plc.totalTimeX + controler.plc.ts*(1:numPointsX);
-
-                    % Plot data
-                    addpoints(app.fxLine, xData, controler.xTenzoData);
-
-                    % Prepare for saving
-                    controler.plc.model.saveTenzoX(controler.xTenzoData)
-
-                    % Limit plots
-                    windowSize  = 500 * controler.plc.ts;
+                    batch = controler.xTenzoData;        % snapshot the batch
+                    controler.xTenzoData = [];           % drain immediately
+        
+                    numPts  = length(batch);
+                    xData   = controler.plc.totalTimeX + controler.plc.ts * (1:numPts);
+        
+                    addpoints(app.fxLine, xData, batch);
+                    controler.plc.model.saveTenzoX(batch);
+        
+                    controler.plc.totalTimeX = controler.plc.totalTimeX + controler.plc.ts * numPts; % advance FIRST
+        
+                    windowSize = 500 * controler.plc.ts;
                     if controler.plc.totalTimeX > windowSize
                         app.fxAxes.XLim = [controler.plc.totalTimeX - windowSize, controler.plc.totalTimeX];
                     else
                         app.fxAxes.XLim = [0, windowSize];
                     end
-
-                    % prepare for next data
-                    controler.plc.totalTimeX = controler.plc.totalTimeX + controler.plc.ts*numPointsX;
-                    controler.xTenzoData = [];
                 end
-
+        
+                % --- Y channel ---
                 if ~isempty(controler.yTenzoData) && controler.plc.connected
-                    % How many data came
-                    numPointsY = length(controler.yTenzoData);
-
-                    % Create y (time) for y data
-                    yData = controler.plc.totalTimeY + controler.plc.ts*(1:numPointsY);
-
-                    % Plot data (use fyLine and fyAxes for Y channel)
-                    addpoints(app.fyLine, yData, controler.yTenzoData);
-
-                    % Prepare for saving
-                    controler.plc.model.saveTenzoY(controler.yTenzoData)
-
-                    % Limit plots
-                    windowSize  = 500 * controler.plc.ts;
+                    batch = controler.yTenzoData;        % snapshot the batch
+                    controler.yTenzoData = [];           % drain immediately
+        
+                    numPts  = length(batch);
+                    yData   = controler.plc.totalTimeY + controler.plc.ts * (1:numPts);
+        
+                    addpoints(app.fyLine, yData, batch);
+                    controler.plc.model.saveTenzoY(batch);
+        
+                    controler.plc.totalTimeY = controler.plc.totalTimeY + controler.plc.ts * numPts; % advance FIRST
+        
+                    windowSize = 500 * controler.plc.ts;
                     if controler.plc.totalTimeY > windowSize
                         app.fyAxes.XLim = [controler.plc.totalTimeY - windowSize, controler.plc.totalTimeY];
                     else
                         app.fyAxes.XLim = [0, windowSize];
                     end
-
-                    % prepare for next data
-                    controler.plc.totalTimeY = controler.plc.totalTimeY + controler.plc.ts*numPointsY;
-                    controler.yTenzoData = [];
                 end
-
+        
                 drawnow limitrate;
-            catch
-                % TODO errer
+            catch ME
+                % Error
+                stop(controler.plcReadTimer);
+                fprintf('--- Plot ERROR ---\n');
+                fprintf('Message: %s\n', ME.message);
+                if isa(ME, 'NET.NetException')
+                    fprintf('Inner Exception: %s\n', char(ME.ExceptionObject.Message));
+                end
+                fprintf('----------------------\n');
             end
         end
 

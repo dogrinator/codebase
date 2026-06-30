@@ -86,23 +86,6 @@ classdef Camera < handle
             end
         end
 
-        % Settings Updates
-        function updateExposure(camera, exposureValue)
-            if ~isempty(camera.cameraHW) && isvalid(camera.cameraHW)
-                src = getselectedsource(camera.cameraHW);
-                src.ExposureTimeAbs = exposureValue;
-                disp(['Exposure set to: ', num2str(exposureValue)]);
-            end
-        end
-
-        function updateGain(camera, gainValue)
-            if ~isempty(camera.cameraHW) && isvalid(camera.cameraHW)
-                src = getselectedsource(camera.cameraHW);
-                src.GainRaw = gainValue;
-                disp(['Gain set to: ', num2str(gainValue)]);
-            end
-        end
-
         % Closing seq
         function closeCam(camera)
             camera.latestFrame = [];
