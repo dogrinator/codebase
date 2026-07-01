@@ -7,9 +7,11 @@ classdef Camera < handle
         model                  % model for saving frames
 
         % camera
-        cameraHW
-        latestFrame = [];       % Most recent frame for display
-        camStartTime            % Start timer for visualization
+        cameraHW               % videoinput obj
+        cameraSrc                    % camera settings
+
+        latestFrame = [];      % Most recent frame for display
+        camStartTime           % Start timer for visualization
         connected = false;
     end
 
@@ -22,20 +24,20 @@ classdef Camera < handle
             if src.Value == "ON"
                 try
                     camera.cameraHW = videoinput('gige', 1, 'Mono8');
-                    camSource = getselectedsource(camera.cameraHW);
+                    camera.cameraSrc = getselectedsource(camera.cameraHW);
 
                     % Trigger reset
                     for sel = {'FrameStart','AcquisitionStart','FrameBurstStart'}
                         try
-                            camSource.TriggerSelector = sel{1};
-                            camSource.TriggerMode = 'Off';
+                            camera.cameraSrc.TriggerSelector = sel{1};
+                            camera.cameraSrc.TriggerMode = 'Off';
                         catch
                         end
                     end
 
                     % Network setup
-                    if isprop(camSource,'PacketSize'),  camSource.PacketSize  = 8000; end
-                    if isprop(camSource,'PacketDelay'), camSource.PacketDelay = 500;  end
+                    if isprop(camera.cameraSrc,'PacketSize'),  camera.cameraSrc.PacketSize  = 8000; end
+                    if isprop(camera.cameraSrc,'PacketDelay'), camera.cameraSrc.PacketDelay = 500;  end
 
                     camera.cameraHW.FramesPerTrigger = 1;   % 1 frame per trigger
                     camera.cameraHW.TriggerRepeat = Inf; % repeat forever

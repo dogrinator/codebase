@@ -22,8 +22,8 @@
         }
     },
     "camera": {
-        "exposureTimeAbs": 5000,
-        "gainRaw": 0,
-        "acquisitionFrameRateAbs": 15
+        "exposureTimeAbs": 10000,
+        "gainRaw": 300,
+        "acquisitionFrameRateAbs": 5
     }
 }

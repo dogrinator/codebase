@@ -280,6 +280,7 @@ classdef Plc <handle
         end
 
         function writeAxisConfig(plc, axisCfg, axis)
+            disp(class(plc))
             plc.client.WriteAny(plc.("TenzoKons" + axis), axisCfg.fTenzoCons);
             plc.client.WriteAny(plc.("kp" + axis),        axisCfg.fKp);
             plc.client.WriteAny(plc.("ki" + axis),        axisCfg.fKi);

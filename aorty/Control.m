@@ -9,6 +9,7 @@ classdef Control < handle
         camera    % handle for camera
         plc       % handle for plc
         model     % handle for storage
+        settings  % class for config
 
         plcReadTimer % Timer for reading sensors (Tenzos + Temp) and sending data
         displayTimer % Separate timer for GUI updates only
@@ -23,6 +24,7 @@ classdef Control < handle
             controler.model = model;
             controler.camera = Camera(model);
             controler.plc = Plc(model);
+            controler.settings = Settings(controler.plc, controler.camera);
         end
 
         function startTimers(controler, app)

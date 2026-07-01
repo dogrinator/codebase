@@ -6,8 +6,8 @@ classdef Settings < handle
         camera
 
         % help variables
-        hwPath  = '/.config/hwConfig'  % relative path to hardware config folder
-        appPath = '/.config/appConfig' % relative path to tests configs
+        hwPath  = '.config/hwConfig'  % relative path to hardware config folder
+        appPath = '.config/appConfig' % relative path to tests configs
 
         hwConfig  = []; % loaded hw config
         appConfig = []; % loaded test config
@@ -49,19 +49,22 @@ classdef Settings < handle
 
         function applyCameraConfig(settings)
            % Settings Updates
-            if ~isempty(settings.camera.cameraHW) && isvalid(settings.camera.cameraHW) && ~isempty(settings.hwConfig)
-                settings.camera.cameraHW.ExposureTimeAbs = settings.hwConfig.camera.exposureTimeAbs;
-                settings.camera.cameraHW.GainRaw = settings.hwConfig.camera.gainRaw;
-                settings.camera.cameraHW.AcquisitionFrameRateAbs = settings.hwConfig.camera.acquisitionFrameRateAbs;
+            if ~isempty(settings.camera.cameraSrc) && isvalid(settings.camera.cameraSrc) && ~isempty(settings.hwConfig)
+                settings.camera.cameraSrc.ExposureTimeAbs = settings.hwConfig.camera.exposureTimeAbs;
+                settings.camera.cameraSrc.GainRaw = settings.hwConfig.camera.gainRaw;
+                settings.camera.cameraSrc.AcquisitionFrameRateAbs = settings.hwConfig.camera.acquisitionFrameRateAbs;
                 disp('Camera settings aplied');
+            else
+                disp('Camera disconnected or config not loaded');
             end
         end
 
         function applyPlcConfig(settings)
             settings.plc.writeAxisConfig(settings.hwConfig.plc.xAxis, 'X')
-            settings.plc.writeAxisConfig(settings.hwConfig.plc.yAxis, 'Y')
+            settings.plc.writeAxisConfig(settings.hwConfig.plc.yAxis, "Y")
         end
 
+        %% App settings
         function configList = listAppConfigs(settings)
             pattern = fullfile(settings.appPath, "*.json");
 
@@ -70,7 +73,6 @@ classdef Settings < handle
             configList = {files.name};
         end
 
-        %% App settings
         function loadAppConfig(settings, filename)
             fullFilename = fullfile( settings.appPath, filename);
             txt = fileread(fullFilename);
