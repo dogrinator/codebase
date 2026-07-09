@@ -4,7 +4,7 @@ classdef View < handle
 
     properties
         % control and model class
-        controler
+        controler Control
 
         % UI
         fig
@@ -38,6 +38,13 @@ classdef View < handle
         velX
         velY
 
+        % Settings tab UI handles
+        settingsFig
+        configDrop
+        camUI       % Struct to hold camera UI fields
+        plcXUI      % Struct to hold PLC X UI fields
+        plcYUI      % Struct to hold PLC Y UI fields
+
     end
 
     methods
@@ -48,8 +55,7 @@ classdef View < handle
             app.controler = controler;
 
             % Init creation of main app
-            app.fig = uifigure('Name','Aorty +++ premium',...
-                'Position',[200 200 1000 600]);
+            app.fig = uifigure('Name','Aorty +++ premium', 'Position',[200 200 1000 600]);
 
             % Create grid
             app.mainGrid = uigridlayout(app.fig,[1 2]);
@@ -103,8 +109,7 @@ classdef View < handle
             topGrid = uigridlayout(grid,[1 3]);
             topGrid.ColumnWidth = {'fit','1x','fit'};
 
-            app.settingsCamBtn = uibutton(topGrid,'Text','Camera',...
-                'ButtonPushedFcn',@(src,event)app.cameraSettingsCallback());
+            app.settingsCamBtn = uibutton(topGrid,'Text','HW settings', 'ButtonPushedFcn',@(src, event) app.openSettingsWindow());
 
             app.settingsCamBtn.Layout.Column = 2;
 
@@ -138,47 +143,6 @@ classdef View < handle
 
         function connectCameraCallback(app,src)
             app.controler.camera.connectCamera(app,src)
-        end
-
-        % TODO later
-        function cameraSettingsCallback(app)
-            if isempty(app.controler.cam), return; end
-            src = getselectedsource(app.controler.cam);
-
-            settingsFig = uifigure('Name', 'Camera Hardware Settings', 'Position', [500 500 350 200]);
-            g = uigridlayout(settingsFig, [3 2]);
-
-            % Exposure - Most important for motion blur
-            uilabel(g, 'Text', 'Exposure (us):');
-            ef = uieditfield(g, 'numeric', 'Value', src.ExposureTimeAbs);
-            ef.ValueChangedFcn = @(s,e) app.setattr(src, 'ExposureTimeAbs', s.Value);
-
-            % Gain - Use if the image is too dark even with high exposure
-            uilabel(g, 'Text', 'Gain:');
-            gn = uieditfield(g, 'numeric', 'Value', src.GainRaw);
-            gn.ValueChangedFcn = @(s,e) app.setattr(src, 'GainRaw', s.Value);
-
-            % Frame Rate Control
-            uilabel(g, 'Text', 'Acquisition Frame Rate:');
-            fr = uieditfield(g, 'numeric', 'Value', src.AcquisitionFrameRateAbs);
-            fr.ValueChangedFcn = @(s,e) app.updateFrameRate(src, s.Value);
-        end
-
-        % Helper to handle errors if setting is out of range
-        function setattr(obj, prop, val)
-            try
-                obj.(prop) = val;
-            catch
-                % warning (TODO)
-            end
-        end
-
-        function updateFrameRate(app, src, newFps)
-            try
-                app.setattr(src, 'AcquisitionFrameRateAbs', newFps);
-                app.controler.updateDisplaySkipN(newFps);
-            catch
-            end
         end
 
         %% Tenzo
@@ -326,5 +290,198 @@ classdef View < handle
                     uilistbox(g, 'Items', {'No file loaded...'});
             end
         end
+
+%% Settings Window
+        function openSettingsWindow(app)
+            % Prevent opening multiple copies of the window
+            if ~isempty(app.settingsFig) && isvalid(app.settingsFig)
+                figure(app.settingsFig);
+                return;
+            end
+
+            % Try loading 'default' settings at startup using your Settings class
+            try
+                app.controler.settings.loadHwConfig('default');
+            catch
+                disp('Could not load default.json automatically. Initializing fallback structure.');
+                % Exact structure match fallback based on your default.json
+                app.controler.settings.hwConfig = struct(...
+                    'plc', struct(...
+                        'xAxis', struct('fTenzoCons',0.01, 'fKp',10, 'fKi',0.1, 'fIntegralLimit',10, 'fForceTolerance',0.1, 'fMaxVelocity',100, 'fMaxForce',10, 'fMaxPosition',0.1), ...
+                        'yAxis', struct('fTenzoCons',0.01, 'fKp',10, 'fKi',0.1, 'fIntegralLimit',10, 'fForceTolerance',0.1, 'fMaxVelocity',100, 'fMaxForce',10, 'fMaxPosition',0.1)), ...
+                    'camera', struct('exposureTimeAbs',10000, 'gainRaw',300, 'acquisitionFrameRateAbs',15));
+            end
+
+            % Create floating window centered on screen
+            app.settingsFig = uifigure('Name', 'Hardware Configuration Manager', 'Position', [350, 200, 460, 520], 'WindowStyle', 'normal');
+            
+            % Main vertical layout
+            mainGridSettings = uigridlayout(app.settingsFig, [3, 1]);
+            mainGridSettings.RowHeight = {50, '1x', 45};
+
+            % --- Top Bar: Configuration File Switching / Creating ---
+            topGrid = uigridlayout(mainGridSettings, [1, 4]);
+            topGrid.ColumnWidth = {'1x', 65, 65, 80};
+
+            % Configuration Dropdown populated from your class method
+            app.configDrop = uidropdown(topGrid, 'Items', app.controler.settings.listHwConfigs());
+            if ismember('default', app.configDrop.Items)
+                app.configDrop.Value = 'default';
+            end
+
+            uibutton(topGrid, 'Text', 'Load', 'ButtonPushedFcn', @(~,~) loadSelectedConfig());
+            uibutton(topGrid, 'Text', 'Save', 'ButtonPushedFcn', @(~,~) saveCurrentConfig());
+            uibutton(topGrid, 'Text', 'Save As', 'ButtonPushedFcn', @(~,~) saveAsNewConfig());
+
+            % --- Middle Tab Group ---
+            tabGroup = uitabgroup(mainGridSettings);
+            
+            % 1. Camera Settings Tab
+            camTab = uitab(tabGroup, 'Title', 'Camera Settings');
+            camGrid = uigridlayout(camTab, [4, 2]);
+            camGrid.RowHeight = {30, 30, 30, '1x'};
+            app.camUI.exposure               = createField(camGrid, 'Exposure Time (us):');
+            app.camUI.gainRaw                = createField(camGrid, 'Gain Raw:');
+            app.camUI.acquisitionFrameRateAbs = createField(camGrid, 'Acquisition Frame Rate (FPS):');
+
+            % 2. PLC X-Axis Tab
+            plcxTab = uitab(tabGroup, 'Title', 'PLC X-Axis');
+            plcxGrid = uigridlayout(plcxTab, [9, 2]);
+            app.plcXUI = createPlcFields(plcxGrid);
+
+            % 3. PLC Y-Axis Tab
+            plcyTab = uitab(tabGroup, 'Title', 'PLC Y-Axis');
+            plcyGrid = uigridlayout(plcyTab, [9, 2]);
+            app.plcYUI = createPlcFields(plcyGrid);
+
+            % --- Bottom Layout Action Buttons ---
+            botGrid = uigridlayout(mainGridSettings, [1, 2]);
+            botGrid.ColumnWidth = {'1x', '1x'};
+            uibutton(botGrid, 'Text', 'Apply Settings', 'BackgroundColor', [0.4 0.9 0.4], 'FontWeight', 'bold', 'ButtonPushedFcn', @(~,~) applyAllSettings());
+            uibutton(botGrid, 'Text', 'Close Window', 'ButtonPushedFcn', @(~,~) delete(app.settingsFig));
+
+            % Pre-populate UI fields with data from loaded JSON
+            refreshUI();
+
+            %% --- Internal Framework UI Utilities ---
+
+            function fieldMap = createPlcFields(parentGrid)
+                parentGrid.RowHeight = repmat({30}, 1, 9);
+                fieldMap.fTenzoCons      = createField(parentGrid, 'Tenzo Constant:');
+                fieldMap.fKp             = createField(parentGrid, 'Kp (Proportional):');
+                fieldMap.fKi             = createField(parentGrid, 'Ki (Integral):');
+                fieldMap.fIntegralLimit  = createField(parentGrid, 'Integral Limit:');
+                fieldMap.fForceTolerance = createField(parentGrid, 'Force Tolerance:');
+                fieldMap.fMaxVelocity    = createField(parentGrid, 'Max Velocity:');
+                fieldMap.fMaxForce       = createField(parentGrid, 'Max Force:');
+                fieldMap.fMaxPosition    = createField(parentGrid, 'Max Position:');
+            end
+
+            function editFld = createField(parent, labelText)
+                uilabel(parent, 'Text', labelText, 'HorizontalAlignment', 'right');
+                editFld = uieditfield(parent, 'numeric', 'Value', 0);
+            end
+
+            function refreshUI()
+                % Pulls structural data from config class variable and populates UI fields
+                cfg = app.controler.settings.hwConfig;
+                if isempty(cfg), return; end
+                
+                app.camUI.exposure.Value               = cfg.camera.exposureTimeAbs;
+                app.camUI.gainRaw.Value                = cfg.camera.gainRaw;
+                app.camUI.acquisitionFrameRateAbs.Value = cfg.camera.acquisitionFrameRateAbs;
+
+                pushPlcFields(app.plcXUI, cfg.plc.xAxis);
+                pushPlcFields(app.plcYUI, cfg.plc.yAxis);
+            end
+
+            function pushPlcFields(uiStruct, dataStruct)
+                uiStruct.fTenzoCons.Value      = dataStruct.fTenzoCons;
+                uiStruct.fKp.Value             = dataStruct.fKp;
+                uiStruct.fKi.Value             = dataStruct.fKi;
+                uiStruct.fIntegralLimit.Value  = dataStruct.fIntegralLimit;
+                uiStruct.fForceTolerance.Value = dataStruct.fForceTolerance;
+                uiStruct.fMaxVelocity.Value    = dataStruct.fMaxVelocity;
+                uiStruct.fMaxForce.Value       = dataStruct.fMaxForce;
+                uiStruct.fMaxPosition.Value    = dataStruct.fMaxPosition;
+            end
+
+            function gatherUIValuesToStruct()
+                % Captures input values written in the UI textfields back to the settings class memory
+                cfg = app.controler.settings.hwConfig;
+                
+                cfg.camera.exposureTimeAbs         = app.camUI.exposure.Value;
+                cfg.camera.gainRaw                 = app.camUI.gainRaw.Value;
+                cfg.camera.acquisitionFrameRateAbs = app.camUI.acquisitionFrameRateAbs.Value;
+
+                cfg.plc.xAxis = pullPlcFields(app.plcXUI);
+                cfg.plc.yAxis = pullPlcFields(app.plcYUI);
+                
+                app.controler.settings.hwConfig = cfg;
+            end
+
+            function outPlcStruct = pullPlcFields(uiStruct)
+                outPlcStruct.fTenzoCons      = uiStruct.fTenzoCons.Value;
+                outPlcStruct.fKp             = uiStruct.fKp.Value;
+                outPlcStruct.fKi             = uiStruct.fKi.Value;
+                outPlcStruct.fIntegralLimit  = uiStruct.fIntegralLimit.Value;
+                outPlcStruct.fForceTolerance = uiStruct.fForceTolerance.Value;
+                outPlcStruct.fMaxVelocity    = uiStruct.fMaxVelocity.Value;
+                outPlcStruct.fMaxForce       = uiStruct.fMaxForce.Value;
+                outPlcStruct.fMaxPosition    = uiStruct.fMaxPosition.Value;
+            end
+
+            %% --- Action Callbacks ---
+
+            function loadSelectedConfig()
+                filename = app.configDrop.Value;
+                try
+                    app.controler.settings.loadHwConfig(filename);
+                    refreshUI();
+                    disp(['Configuration [', filename, '] successfully loaded.']);
+                catch ME
+                    uialert(app.settingsFig, ME.message, 'Configuration Load Error');
+                end
+            end
+
+            function saveCurrentConfig()
+                gatherUIValuesToStruct();
+                filename = app.configDrop.Value;
+                try
+                    app.controler.settings.saveHwConfig(filename);
+                    disp(['Configuration [', filename, '] updated and saved.']);
+                catch ME
+                    uialert(app.settingsFig, ME.message, 'Configuration Save Error');
+                end
+            end
+
+            function saveAsNewConfig()
+                gatherUIValuesToStruct();
+                answer = inputdlg('Enter new configuration filename:', 'Create New Config File', [1 50], {'custom_config'});
+                if isempty(answer) || isempty(answer{1}), return; end 
+                
+                filename = answer{1};
+                try
+                    app.controler.settings.saveHwConfig(filename);
+                    % Re-fetch filesystem contents to populate new file inside dropdown selection
+                    app.configDrop.Items = app.controler.settings.listHwConfigs();
+                    app.configDrop.Value = filename;
+                    disp(['New configuration file [', filename, '.json] created.']);
+                catch ME
+                    uialert(app.settingsFig, ME.message, 'Create Config Error');
+                end
+            end
+
+            function applyAllSettings()
+                gatherUIValuesToStruct();
+                
+                % Call underlying system implementation framework engines
+                app.controler.settings.applyCameraConfig();
+                app.controler.settings.applyPlcConfig();
+                
+                uialert(app.settingsFig, 'All system configuration values applied successfully!', 'Success', 'Icon', 'success');
+            end
+        end
+
     end
 end

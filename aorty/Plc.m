@@ -4,7 +4,7 @@ classdef Plc <handle
 
     properties
         % mandatory class
-        model
+        model Model
 
         % PLC inicialization
         amsNetID = '5.85.113.174.1.1';

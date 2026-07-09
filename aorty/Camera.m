@@ -4,11 +4,11 @@ classdef Camera < handle
 
     properties
         % mandatory classes
-        model                  % model for saving frames
+        model Model            % model for saving frames
 
         % camera
         cameraHW               % videoinput obj
-        cameraSrc                    % camera settings
+        cameraSrc              % camera settings
 
         latestFrame = [];      % Most recent frame for display
         camStartTime           % Start timer for visualization
@@ -71,6 +71,7 @@ classdef Camera < handle
                 if isempty(src) || ~isvalid(src), return; end
                 if src.FramesAvailable < 1,        return; end
 
+                % get new frame
                 [frame, relativeTime] = getdata(src, 1);
                 timeStamp = camera.camStartTime + seconds(relativeTime);
 

@@ -6,10 +6,10 @@ classdef Control < handle
 
     properties
         % mandatory classes
-        camera    % handle for camera
-        plc       % handle for plc
-        model     % handle for storage
-        settings  % class for config
+        camera   Camera    % handle for camera
+        plc      Plc       % handle for plc
+        model    Model     % handle for storage
+        settings Settings  % class for config
 
         plcReadTimer % Timer for reading sensors (Tenzos + Temp) and sending data
         displayTimer % Separate timer for GUI updates only

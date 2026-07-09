@@ -1,7 +1,7 @@
 {
   "plc": {
     "xAxis": {
-      "fTenzoCons": 0.0002023,
+      "fTenzoCons": 0.01,
       "fKp": 10,
       "fKi": 0.1,
       "fIntegralLimit": 10,
@@ -11,7 +11,7 @@
       "fMaxPosition": 0.1
     },
     "yAxis": {
-      "fTenzoCons": 0.000204,
+      "fTenzoCons": 0.1,
       "fKp": 10,
       "fKi": 0.1,
       "fIntegralLimit": 10,
@@ -22,8 +22,8 @@
     }
   },
   "camera": {
-    "exposureTimeAbs": 5000,
-    "gainRaw": 0,
+    "exposureTimeAbs": 10000,
+    "gainRaw": 300,
     "acquisitionFrameRateAbs": 15
   }
 }
