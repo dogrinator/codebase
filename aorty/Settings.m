@@ -1,5 +1,6 @@
 classdef Settings < handle
 
+    %SETTINGS Application component.
     properties
         % load mandatory structs for settings send/recive
         plc    Plc 
@@ -14,6 +15,7 @@ classdef Settings < handle
     end
 
     methods
+        % Settings handles this operation.
         function settings = Settings(plc, camera)
             settings.plc = plc;
             settings.camera = camera;
@@ -27,6 +29,7 @@ classdef Settings < handle
             configList = erase({files.name}, ".json");
         end
 
+        % loadHwConfig handles this operation.
         function loadHwConfig(settings, filename)
             filename = filename + ".json";
             fullFilename = fullfile( settings.hwPath, filename);
@@ -34,6 +37,7 @@ classdef Settings < handle
             settings.hwConfig = jsondecode(txt);
         end
 
+        % saveHwConfig handles this operation.
         function saveHwConfig(settings, filename)
             filename = filename + ".json";
             fullFilename = fullfile( settings.hwPath, filename);
@@ -48,6 +52,7 @@ classdef Settings < handle
             fclose(fid);
         end
 
+        % applyCameraConfig handles this operation.
         function applyCameraConfig(settings)
            % Settings Updates
             if ~isempty(settings.camera.cameraSrc) && isvalid(settings.camera.cameraSrc) && ~isempty(settings.hwConfig)
@@ -61,6 +66,7 @@ classdef Settings < handle
             end
         end
 
+        % applyPlcConfig handles this operation.
         function applyPlcConfig(settings)
             if settings.plc.connected && ~isempty(settings.hwConfig)
                 settings.plc.writeAxisConfig(settings.hwConfig.plc.xAxis, 'X')
@@ -78,6 +84,7 @@ classdef Settings < handle
             configList = erase({files.name}, ".json");
         end
 
+        % loadAppConfig handles this operation.
         function loadAppConfig(settings, filename)
             filename = filename + ".json";
             fullFilename = fullfile( settings.appPath, filename);
@@ -85,6 +92,7 @@ classdef Settings < handle
             settings.appConfig = jsondecode(txt);
         end
 
+        % saveAppConfig handles this operation.
         function saveAppConfig(settings, filename)
             filename = filename + ".json";
             fullFilename = fullfile(settings.appPath, filename);

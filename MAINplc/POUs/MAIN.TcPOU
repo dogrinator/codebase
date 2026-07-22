@@ -4,26 +4,33 @@
     <Declaration><![CDATA[PROGRAM MAIN
 
 VAR
-	fbSafetyX      : fb_safety;
-	fbSafetyY      : fb_safety;
-	fbTenzoBufferX : fb_tenzoBuffer;
-	fbTenzoBufferY : fb_tenzoBuffer;
-	fbMovementControlerX: fb_MovementControler;
-	fbMovementControlerY: fb_MovementControler;
+	fbSafetyX : fb_safety;
+	fbSafetyY : fb_safety;
+	fbSystemBufferX : fb_StatusBuffer;
+	fbSystemBufferY : fb_StatusBuffer;
+	fbMovementControlerX : fb_MovementControler;
+	fbMovementControlerY : fb_MovementControler;
 	
 	// DUTs import
-	stMoveCommandX  : ST_MoveCommand;
-	stMoveCommandY  : ST_MoveCommand; 
+	stMoveCommandX : ST_MoveCommand;
+	stMoveCommandY : ST_MoveCommand; 
 	
 	stSystemStatusX : ST_SystemStatus;
 	stSystemStatusY : ST_SystemStatus;
 	
-	stSettingsX     : ST_settings;
-	stSettingsY     : ST_settings;
+	stSettingsX : ST_settings;
+	stSettingsY : ST_settings;
 	
-	// Readings from Tenzo
+	// IO Links
     nRawTenzoX AT %I* : DINT;
 	nRawTenzoY AT %I* : DINT;
+	
+	nEndStopLx AT %I* : BOOL;
+	nEndStopHx AT %I* : BOOL;
+	
+	nEndStopLy AT %I* : BOOL;
+	nEndStopHy AT %I* : BOOL;
+	
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[////////////////////////////////
@@ -36,8 +43,9 @@ fbSafetyX(
     bReset := stMoveCommandX.bReset,
     bHalt := stMoveCommandX.bHalt,
     bSeqHalt := fbMovementControlerX.stateHalt,
-    bHome := FALSE,
-    bEndStop := FALSE // TODO endstop
+    bHome := stMoveCommandX.bHome,
+    bEndStopL := nEndStopLx,
+	bEndStopH := nEndStopHx
 );
 
 fbSafetyY(
@@ -46,50 +54,59 @@ fbSafetyY(
     bReset := stMoveCommandY.bReset,
     bHalt := stMoveCommandY.bHalt,
     bSeqHalt := fbMovementControlerY.stateHalt,
-    bHome := FALSE,
-    bEndStop := FALSE
+    bHome := stMoveCommandY.bHome,
+   	bEndStopL := nEndStopLy,
+	bEndStopH := nEndStopHy
 );
 
 ////////////////////////////////
 ////////// Update data /////////
 ////////////////////////////////
 
-fbTenzoBufferX(
-	fTenzoCons:=stSettingsX.fTenzoCons,
-	nRawTenzo:= nRawTenzoX,
-	stSystemStatus:= stSystemStatusX);
-	
-fbTenzoBufferY(
-	fTenzoCons:=stSettingsY.fTenzoCons,
-	nRawTenzo:= nRawTenzoY,
-	stSystemStatus:= stSystemStatusY);
-
-//Read status of axis
+// Read status of axis
 GVL_Axis.xAxis.ReadStatus();
 GVL_Axis.yAxis.ReadStatus();
+
+// Save actual sys data
+fbSystemBufferX(
+	stSystemStatus:= stSystemStatusX,
+	nRawTenzo:= nRawTenzoX,
+	fTenzoCons:=stSettingsX.fTenzoCons,
+	fTenzoOffset:= stSettingsX.fTenzoOffset,
+	bStartTar:= stMoveCommandX.bStartTar,
+	fActPosition:= GVL_Axis.xAxis.NcToPlc.ActPos,
+	fStartPosition:= fbMovementControlerX.fTestStartPos);
+	
+fbSystemBufferY(
+	stSystemStatus:= stSystemStatusY,
+	nRawTenzo:= nRawTenzoY,
+	fTenzoCons:=stSettingsY.fTenzoCons,
+	fTenzoOffset:= stSettingsY.fTenzoOffset,
+	bStartTar:= stMoveCommandY.bStartTar,
+	fActPosition:= GVL_Axis.yAxis.NcToPlc.ActPos,
+	fStartPosition:= fbMovementControlerY.fTestStartPos);
 
 /////////////////////////////////////
 ////////// Main Move Logic //////////
 /////////////////////////////////////
 
 fbMovementControlerX(
-    nRawTenzo := nRawTenzoX,
+	Axis := GVL_Axis.xAxis,
+	stMoveCommand := stMoveCommandX,
+	stSettings := stSettingsX,
     bPowerState := fbSafetyX.bPowerStatus,
     bHaltDone := fbSafetyX.bHaltDone,
-    stMoveCommand := stMoveCommandX,
-    stSettings := stSettingsX,
-    Axis := GVL_Axis.xAxis,
-	bBusy => stSystemStatusY.bWorking);
+    fForce := stSystemStatusX.fTenzoBuffer[stSystemStatusX.nBufferHead]);
+stSystemStatusX.bWorking := fbMovementControlerX.bBusy;
 
 fbMovementControlerY(
-    nRawTenzo := nRawTenzoY,
+	Axis := GVL_Axis.yAxis,
+	stMoveCommand := stMoveCommandY,
+	stSettings := stSettingsY,
     bPowerState := fbSafetyY.bPowerStatus,
     bHaltDone := fbSafetyY.bHaltDone,
-    stMoveCommand := stMoveCommandY,
-    stSettings := stSettingsY,
-    Axis := GVL_Axis.yAxis,
-	bBusy => stSystemStatusY.bWorking );
-
+	fForce := stSystemStatusY.fTenzoBuffer[stSystemStatusY.nBufferHead]);
+stSystemStatusY.bWorking := fbMovementControlerY.bBusy;
 
 
 
@@ -102,15 +119,19 @@ fbMovementControlerY(
 ]]></ST>
     </Implementation>
     <LineIds Name="MAIN">
-      <LineId Id="6491" Count="3" />
-      <LineId Id="6588" Count="17" />
-      <LineId Id="6511" Count="23" />
-      <LineId Id="6615" Count="6" />
-      <LineId Id="6664" Count="0" />
-      <LineId Id="6624" Count="0" />
-      <LineId Id="6633" Count="6" />
-      <LineId Id="6663" Count="0" />
-      <LineId Id="6554" Count="9" />
+      <LineId Id="6943" Count="57" />
+      <LineId Id="7035" Count="0" />
+      <LineId Id="7037" Count="0" />
+      <LineId Id="7030" Count="0" />
+      <LineId Id="7002" Count="1" />
+      <LineId Id="7036" Count="0" />
+      <LineId Id="7007" Count="2" />
+      <LineId Id="7034" Count="0" />
+      <LineId Id="7039" Count="0" />
+      <LineId Id="7032" Count="0" />
+      <LineId Id="7011" Count="1" />
+      <LineId Id="7038" Count="0" />
+      <LineId Id="7016" Count="9" />
       <LineId Id="65" Count="0" />
     </LineIds>
   </POU>

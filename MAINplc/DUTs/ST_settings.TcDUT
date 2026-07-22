@@ -4,18 +4,19 @@
     <Declaration><![CDATA[TYPE ST_Settings :
 	STRUCT
 		// Tenzo
-		fTenzoCons : LREAL;
+		fTenzoCons   : LREAL := 0.01;
+		fTenzoOffset : LREAL := 0.0; 
 	
 		// Force control
-		fKp : LREAL;
-		fKi : LREAL;
-		fIntegralLimit : LREAL;
-		fForceTolerance : LREAL;
-		fMaxVelocity : LREAL;
+		fKp : LREAL := 10;
+		fKi : LREAL := 0.1;
+		fIntegralLimit  : LREAL := 10;
+		fForceTolerance : LREAL := 0.1;
+		fMaxVelocity    : LREAL := 100;
 	
 		// Motion safety
-		fMaxForce : LREAL;
-		fMaxPosition : LREAL;
+		fMaxForce    : LREAL := 10;
+		fMaxPosition : LREAL := 0.1;
 	END_STRUCT
 END_TYPE
 ]]></Declaration>

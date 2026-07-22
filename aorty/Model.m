@@ -14,25 +14,49 @@ classdef Model < handle
 
         % File mamagement
         tenzoxFid, tenzoyFid = -1;
+        untaredTenzoxFid, untaredTenzoyFid = -1;
+        posxFid, posyFid = -1;
         camBinFid = -1;
         timestampsFid = -1;
         filesOpen = false;
+        recordingStatus = 'idle';
+        recordingReason = '';
         cameraFrameWidth = 0; % To store the width of the frames
         cameraFrameHeight = 0; % To store the height of the frames
 
     end
 
     methods
+        % Model handles this operation.
         function model = Model()
         end
 
         %% File management
         function openFilesRec(model)
             if model.isRecording && ~model.filesOpen
-                model.tenzoxFid = fopen(fullfile( model.selectedFolder, 'live_tenzoX.csv'), 'w');
-                model.tenzoyFid = fopen(fullfile( model.selectedFolder, 'live_tenzoY.csv'), 'w');
-                model.camBinFid = fopen(fullfile( model.selectedFolder, 'cam.bin'), 'wb');
-                model.timestampsFid = fopen(fullfile( model.selectedFolder, 'camTimestamps.csv'), 'w');
+                fids = [fopen(fullfile(model.selectedFolder, 'live_tenzoX.csv'), 'w'), ...
+                    fopen(fullfile(model.selectedFolder, 'live_tenzoY.csv'), 'w'), ...
+                    fopen(fullfile(model.selectedFolder, 'live_tenzoX_untared.csv'), 'w'), ...
+                    fopen(fullfile(model.selectedFolder, 'live_tenzoY_untared.csv'), 'w'), ...
+                    fopen(fullfile(model.selectedFolder, 'live_positionX.csv'), 'w'), ...
+                    fopen(fullfile(model.selectedFolder, 'live_positionY.csv'), 'w'), ...
+                    fopen(fullfile(model.selectedFolder, 'cam.bin'), 'wb'), ...
+                    fopen(fullfile(model.selectedFolder, 'camTimestamps.csv'), 'w')];
+                if any(fids == -1)
+                    for fid = fids(fids ~= -1)
+                        fclose(fid);
+                    end
+                    error('Model:RecordingOpenFailed', ...
+                        'Could not open one or more recording files in %s.', model.selectedFolder);
+                end
+                model.tenzoxFid = fids(1);
+                model.tenzoyFid = fids(2);
+                model.untaredTenzoxFid = fids(3);
+                model.untaredTenzoyFid = fids(4);
+                model.posxFid = fids(5);
+                model.posyFid = fids(6);
+                model.camBinFid = fids(7);
+                model.timestampsFid = fids(8);
 
                 % Open camera_info.txt and save dimensions
                 infoFid = fopen(fullfile(model.selectedFolder, 'camera_info.txt'), 'w');
@@ -41,28 +65,92 @@ classdef Model < handle
                     fprintf(infoFid, 'Height: %d\n', model.cameraFrameHeight);
                     fclose(infoFid);
                 else
-                    warning('Could not open camera_info.txt for writing.');
+                    model.isRecording = false;
+                    model.closeFilesRec();
+                    error('Model:RecordingOpenFailed', ...
+                        'Could not open camera_info.txt in %s.', model.selectedFolder);
                 end
+                model.isRecording = true;
                 model.filesOpen = true;
+                model.recordingStatus = 'recording';
+                model.recordingReason = '';
             end
         end
 
+        % closeFilesRec handles this operation.
         function closeFilesRec(model)
             if ~model.isRecording && model.filesOpen
                 if model.tenzoxFid ~= -1, fclose(model.tenzoxFid); end
                 if model.tenzoyFid ~= -1, fclose(model.tenzoyFid); end
+                if model.untaredTenzoxFid ~= -1, fclose(model.untaredTenzoxFid); end
+                if model.untaredTenzoyFid ~= -1, fclose(model.untaredTenzoyFid); end
+                if model.posxFid ~= -1, fclose(model.posxFid); end
+                if model.posyFid ~= -1, fclose(model.posyFid); end
                 if model.camBinFid ~= -1, fclose(model.camBinFid); end
                 if model.timestampsFid ~= -1, fclose(model.timestampsFid); end
 
                 model.tenzoxFid = -1;
                 model.tenzoyFid = -1;
+                model.untaredTenzoxFid = -1;
+                model.untaredTenzoyFid = -1;
+                model.posxFid = -1;
+                model.posyFid = -1;
                 model.camBinFid = -1;
                 model.timestampsFid = -1;
                 model.filesOpen = false;
             end
         end
 
+        % writeRecordingStatus handles this operation.
+        function writeRecordingStatus(model)
+            if isempty(model.selectedFolder) || isequal(model.selectedFolder, 0) || ...
+                    ~ischar(model.selectedFolder) && ~isstring(model.selectedFolder)
+                return;
+            end
+            filename = fullfile(model.selectedFolder, 'recording_status.txt');
+            fid = fopen(filename, 'w');
+            if fid == -1
+                warning('Model:StatusWriteFailed', 'Could not write %s.', filename);
+                return;
+            end
+            cleanup = onCleanup(@() fclose(fid)); %#ok<NASGU>
+            fprintf(fid, 'Status: %s\nReason: %s\n', ...
+                model.recordingStatus, model.recordingReason);
+        end
+
         %% save values
+        function saveAxisSamples(model, axisName, forceValues, untaredForceValues, positionValues)
+            if ~model.isRecording
+                return;
+            end
+            count = min([numel(forceValues), numel(untaredForceValues), numel(positionValues)]);
+            if count == 0
+                return;
+            end
+            forceValues = forceValues(end-count+1:end);
+            untaredForceValues = untaredForceValues(end-count+1:end);
+            positionValues = positionValues(end-count+1:end);
+            timeStamp = datetime('now');
+            timeVec = timeStamp - seconds(count-1:-1:0) * model.dt;
+            timeStrings = string(timeVec, 'HH:mm:ss.SSS');
+            if strcmpi(axisName, 'X')
+                forceFid = model.tenzoxFid;
+                untaredForceFid = model.untaredTenzoxFid;
+                positionFid = model.posxFid;
+            else
+                forceFid = model.tenzoyFid;
+                untaredForceFid = model.untaredTenzoyFid;
+                positionFid = model.posyFid;
+            end
+            forceLog = [timeStrings(:), string(forceValues(:))]';
+            untaredForceLog = [timeStrings(:), string(untaredForceValues(:))]';
+            positionLog = [timeStrings(:), string(positionValues(:))]';
+            fprintf(forceFid, '%s,%s,\n', forceLog{:});
+            fprintf(untaredForceFid, '%s,%s,\n', untaredForceLog{:});
+            fprintf(positionFid, '%s,%s,\n', positionLog{:});
+        end
+
+        % saveTenzoX handles this operation.
         function saveTenzoX(model,actualXval)
             try
                 % Save data if recording is on
@@ -81,6 +169,7 @@ classdef Model < handle
             end
         end
 
+        % saveTenzoY handles this operation.
         function saveTenzoY(model,actualYval)
             try
                 % Save data if recording is on
@@ -99,6 +188,7 @@ classdef Model < handle
             end
         end
 
+        % saveCameraFrame handles this operation.
         function saveCameraFrame(model, frame, timeStamp)
             try
                 if model.isRecording
@@ -115,143 +205,10 @@ classdef Model < handle
             end
         end
 
-        function PostProcessData(model, folderPath)
-            % folderPath: The string path to the folder where the test files are saved.
-
-            disp('--- Starting Offline Synchronization and Post-Processing ---');
-
-            %% 1. Load the Live Tenzo Data Files
-            fileX = fullfile(folderPath, 'live_tenzoX.csv');
-            fileY = fullfile(folderPath, 'live_tenzoY.csv');
-
-            if ~exist(fileX, 'file')
-                error('Could not find live_tenzoX.csv in the specified folder.');
-            end
-            if ~exist(fileY, 'file')
-                error('Could not find live_tenzoY.csv in the specified folder.');
-            end
-
-            % Read CSV files as MATLAB tables
-            optsX = detectImportOptions(fileX);
-            optsX.VariableNames = {'Timestamp', 'ValueX'};
-            optsX.VariableTypes{1} = 'datetime';
-            optsX.VariableOptions(1).InputFormat = 'HH:mm:ss.SSS';
-            dataX = readtable(fileX, optsX);
-
-            optsY = detectImportOptions(fileY);
-            optsY.VariableNames = {'Timestamp', 'ValueY'};
-            optsY.VariableTypes{1} = 'datetime';
-            optsY.VariableOptions(1).InputFormat = 'HH:mm:ss.SSS';
-            dataY = readtable(fileY, optsY);
-
-            disp('Tenzo logs (X and Y) loaded successfully.');
-
-            %% 2. Load Camera Timestamps
-            camTimestampsFile = fullfile(folderPath, 'camTimestamps.csv');
-            if ~exist(camTimestampsFile, 'file')
-                error('Could not find camTimestamps.csv in the specified folder.');
-            end
-            optsCam = detectImportOptions(camTimestampsFile);
-            optsCam.VariableNames = {'Index', 'Timestamp'};
-            optsCam.VariableTypes{2} = 'datetime';
-            optsCam.VariableOptions(2).InputFormat = 'HH:mm:ss.SSS';
-            camTimestamps = readtable(camTimestampsFile, optsCam);
-
-            numFrames = height(camTimestamps);
-            if numFrames == 0
-                warning('No camera frames recorded. Skipping camera post-processing.');
-                return;
-            end
-
-            disp(['Found ', num2str(numFrames), ' frames to process. Synchronizing...']);
-
-            %% 3. Get Camera Frame Dimensions
-            cameraInfoFile = fullfile(folderPath, 'camera_info.txt');
-            if ~exist(cameraInfoFile, 'file')
-                error('Camera frame dimensions not found. Missing camera_info.txt.');
-            end
-
-            fidInfo = fopen(cameraInfoFile, 'r');
-            if fidInfo == -1
-                error(['Could not open camera_info.txt for reading: ', cameraInfoFile]);
-            end
-
-            widthLine = fgetl(fidInfo);
-            heightLine = fgetl(fidInfo);
-            fclose(fidInfo);
-
-            frameWidth = sscanf(widthLine, 'Width: %d');
-            frameHeight = sscanf(heightLine, 'Height: %d');
-
-            if isempty(frameWidth) || isempty(frameHeight) || ~isscalar(frameWidth) || ~isscalar(frameHeight)
-                error('Could not parse camera frame dimensions from camera_info.txt.');
-            end
-
-            %% 4. Open Binary Camera File
-            camBinFile = fullfile(folderPath, 'cam.bin');
-            if ~exist(camBinFile, 'file')
-                error('Could not find cam.bin in the specified folder.');
-            end
-            fid = fopen(camBinFile, 'rb');
-            if fid == -1
-                error(['Could not open cam.bin for reading: ', camBinFile]);
-            end
-
-            bytesPerFrame = frameWidth * frameHeight; % For Mono8
-
-            % Create output folder for processed images
-            processedFramesFolder = fullfile(folderPath, 'processed_frames');
-            if ~exist(processedFramesFolder, 'dir')
-                mkdir(processedFramesFolder);
-            end
-
-            %% 5. Loop through frames, synchronize, and process
-            for i = 1:numFrames
-                % Read raw frame data
-                rawFrameData = fread(fid, bytesPerFrame, '*uint8');
-                if isempty(rawFrameData) || length(rawFrameData) < bytesPerFrame
-                    warning(['Reached end of cam.bin unexpectedly or frame ', num2str(i), ' is incomplete. Skipping remaining frames.']);
-                    break;
-                end
-
-                % Reshape to image matrix
-                imgFrame = reshape(rawFrameData, frameHeight, frameWidth);
-
-                % Get camera timestamp for the current frame
-                cameraTime = camTimestamps.Timestamp(i);
-                camTimeStr = string(cameraTime, 'HH:mm:ss.SSS');
-
-                %% 6. Time Synchronization: Find the closest Tenzo measurements for X and Y
-                % For X
-                timeDiffX = abs(dataX.Timestamp - cameraTime);
-                [~, idxX] = min(timeDiffX);
-                matchedX = dataX.ValueX(idxX);
-
-                % For Y
-                timeDiffY = abs(dataY.Timestamp - cameraTime);
-                [~, idxY] = min(timeDiffY);
-                matchedY = dataY.ValueY(idxY);
-
-                %% 7. Process and Save the Image
-                txtOverlay = sprintf('X: %.5f | Y: %.5f', matchedX, matchedY);
-                newTxtDesc = sprintf('TimeStamp: %s | X: %.5f | Y: %.5f', camTimeStr, matchedX, matchedY);
-
-                annotatedFrame = insertText(imgFrame, [20 20], txtOverlay, ...
-                    'FontSize', 18, ...
-                    'TextColor', 'white', ...
-                    'BoxOpacity', 0.5);
-
-                % Save annotated frame as TIFF in the processed_frames folder
-                outputFileName = fullfile(processedFramesFolder, ['processed_frame_', num2str(i, '%04d'), '.tiff']);
-                imwrite(annotatedFrame, outputFileName, 'Description', newTxtDesc);
-
-                if mod(i, 50) == 0
-                    fprintf('Processed %d / %d frames...\n', i, numFrames);
-                end
-            end
-
-            fclose(fid); % Close binary file after processing all frames
-            disp('--- Post-Processing Complete! All data is perfectly synced. ---');
+        % Post-process recorded data through the dedicated processor.
+        function PostProcessData(~, folderPath)
+            PostProcessor.processData(folderPath);
         end
+
     end
 end

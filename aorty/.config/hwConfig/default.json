@@ -1,6 +1,7 @@
 {
   "plc": {
     "xAxis": {
+      "fTenzoOffset": 0.01,
       "fTenzoCons": 0.0002023,
       "fKp": 10,
       "fKi": 0.1,
@@ -11,6 +12,7 @@
       "fMaxPosition": 0.1
     },
     "yAxis": {
+      "fTenzoOffset": 0.01,
       "fTenzoCons": 0.000204,
       "fKp": 10,
       "fKi": 0.1,

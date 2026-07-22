@@ -3,12 +3,13 @@
   <POU Name="fb_safety" Id="{2b1a91eb-6451-41aa-b214-38ff110b08ec}" SpecialFunc="None">
     <Declaration><![CDATA[FUNCTION_BLOCK fb_safety
 VAR_INPUT
-	bPower   : BOOL; // Turn on motor
-	bReset   : BOOL; // Error reset
-	bHalt    : BOOL; // Halt button pressed
-	bSeqHalt : BOOL; // Halt from movement controler
-	bHome    : BOOL; // Start homing seq
-	bEndStop : BOOL; // Physical endstop
+	bPower    : BOOL; // Turn on motor
+	bReset    : BOOL; // Error reset
+	bHalt     : BOOL; // Halt button pressed
+	bSeqHalt  : BOOL; // Halt from movement controler
+	bHome     : BOOL; // Start homing seq
+	bEndStopH : BOOL; // Physical endstop max
+	bEndStopL : BOOL; // Physical endstop 0
 END_VAR
 
 VAR_OUTPUT
@@ -25,8 +26,19 @@ VAR
 	// Homing
 	fbMC_Homing : MC_Home;
 
-	// Edge detection for reset
+	// Edge detection
 	rtResetTrigger : R_TRIG;
+	rtHome         : R_TRIG;
+	
+	// Halt help variable
+	bMainHalt     : BOOL;
+	
+	// Power help variables
+	bPowerBusy    : BOOL;
+	bPowerError   : BOOL;
+	nPowerErrorID : UDINT;
+	bPowerPos     : BOOL;
+	bPowerNeg     : BOOL;
 END_VAR
 
 VAR_IN_OUT
@@ -35,55 +47,102 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[
+///////////////////////
+// Main safety logic //
+///////////////////////
+
+// Start homing sequence
+rtHome(CLK := bHome);
+
+fbMC_Homing(
+	Axis:= stAxis, 
+	Execute:= rtHome.Q, 
+	Position:= 0.0, 
+	HomingMode:= MC_DefaultHoming, 
+	bCalibrationCam:= bEndStopL);
+	
+// endstops logic
+IF fbMC_Homing.Busy THEN
+    bPowerPos := bPower;
+    bPowerNeg := bPower;
+ELSE
+    bPowerPos := bPower AND NOT bEndStopH;
+    bPowerNeg := bPower AND NOT bEndStopL;
+END_IF
+
 // Power on axis
 fbMC_Power(
     Axis:= stAxis,
     Enable:= bPower,
-    Enable_Positive:= bPower,
-    Enable_Negative:= bPower,
+    Enable_Positive:= bPowerPos,
+    Enable_Negative:= bPowerNeg,
     Override:= 100.0);
-// Power on sucsessfuly
-bPowerStatus := fbMC_Power.Status;
 
-// Start homing sequence
-fbMC_Homing(
-	Axis:= stAxis, 
-	Execute:= bHome, 
-	Position:= 0, 
-	HomingMode:= MC_DefaultHoming, 
-	bCalibrationCam:= bEndStop);
-
-// Reset
+// Reset axis errors
 rtResetTrigger(CLK := bReset);
 fbMC_Reset( 
 	Axis := stAxis,
 	Execute := rtResetTrigger.Q);
 	
 // Stop movement
+bMainHalt := bHalt OR bSeqHalt;
+
 fbMC_Halt(
 	Axis := stAxis, 
-	Execute := bHalt OR bSeqHalt);
+	Execute := bMainHalt);
+	
+/////////////////////
+// Status outputts //
+/////////////////////
+
+// Power status
+bPowerStatus := fbMC_Power.Status;
+bPowerBusy := fbMC_Power.Busy;
+bPowerError := fbMC_Power.Error;
+nPowerErrorID := fbMC_Power.ErrorID;
+
+// Homing status (TODO)
+
 // Check if motor stoped
 bHaltDone := fbMC_Halt.Done;
-	
+
 
 ]]></ST>
     </Implementation>
     <LineIds Name="fb_safety">
-      <LineId Id="176" Count="0" />
-      <LineId Id="125" Count="6" />
-      <LineId Id="212" Count="0" />
-      <LineId Id="211" Count="0" />
+      <LineId Id="324" Count="0" />
+      <LineId Id="322" Count="1" />
+      <LineId Id="325" Count="0" />
       <LineId Id="177" Count="0" />
-      <LineId Id="132" Count="10" />
+      <LineId Id="132" Count="0" />
+      <LineId Id="298" Count="0" />
+      <LineId Id="297" Count="0" />
+      <LineId Id="133" Count="5" />
+      <LineId Id="355" Count="0" />
+      <LineId Id="357" Count="14" />
+      <LineId Id="356" Count="0" />
+      <LineId Id="139" Count="3" />
       <LineId Id="179" Count="0" />
       <LineId Id="178" Count="0" />
       <LineId Id="206" Count="0" />
-      <LineId Id="143" Count="1" />
+      <LineId Id="143" Count="0" />
+      <LineId Id="291" Count="0" />
+      <LineId Id="290" Count="0" />
+      <LineId Id="144" Count="0" />
       <LineId Id="180" Count="1" />
-      <LineId Id="213" Count="1" />
+      <LineId Id="314" Count="1" />
+      <LineId Id="313" Count="0" />
+      <LineId Id="317" Count="0" />
+      <LineId Id="302" Count="2" />
+      <LineId Id="306" Count="1" />
+      <LineId Id="300" Count="0" />
       <LineId Id="208" Count="0" />
+      <LineId Id="321" Count="0" />
+      <LineId Id="320" Count="0" />
+      <LineId Id="311" Count="0" />
       <LineId Id="9" Count="0" />
+      <LineId Id="319" Count="0" />
+      <LineId Id="318" Count="0" />
       <LineId Id="175" Count="0" />
     </LineIds>
   </POU>

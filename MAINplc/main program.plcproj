@@ -39,7 +39,7 @@
     <Compile Include="POUs\fb_safety.TcPOU">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="POUs\fb_tenzoBuffer.TcPOU">
+    <Compile Include="POUs\fb_StatusBuffer.TcPOU">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="POUs\MAIN.TcPOU">

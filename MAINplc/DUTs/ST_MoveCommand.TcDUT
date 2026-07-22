@@ -4,20 +4,22 @@
     <Declaration><![CDATA[TYPE ST_MoveCommand :
 	STRUCT
 		// Arrays of trajectory / force
-		fDistances   : ARRAY[1..100] OF LREAL; 
+		fDistances  : ARRAY[1..100] OF LREAL; 
 		
 		// Arrays of speed / time
-		fVelocities  : ARRAY[1..100] OF LREAL;
+		fVelocities : ARRAY[1..100] OF LREAL;
 		
 		// Number of commands
-		nTotalSteps  : INT; 
+		nTotalSteps : INT; 
 	
 		// Safety
-		nMode        : INT;  // 1=Move commands, 2=ForceMode, 3=cyclic
-		bExecute     : BOOL; // Start movement
-		bHalt        : BOOL; // Panic stop
-		bPower       : BOOL; // Enable motorov
-		bReset       : BOOL; // Reset errors
+		nMode       : INT;  // 1=Move commands, 2=ForceMode, 3=cyclic
+		bExecute    : BOOL; // Start movement
+		bHalt       : BOOL; // Panic stop
+		bPower      : BOOL; // Enable motorov
+		bReset      : BOOL; // Reset errors
+		bHome       : BOOL; // Do homing seq
+		bStartTar   : BOOL; // Do Tar seq
 	END_STRUCT
 END_TYPE
 ]]></Declaration>

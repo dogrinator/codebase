@@ -3,13 +3,14 @@
   <POU Name="fb_MovementControler" Id="{adebd811-6102-4c84-8e3c-51cf0446b06f}" SpecialFunc="None">
     <Declaration><![CDATA[FUNCTION_BLOCK fb_MovementControler
 VAR_INPUT
-	nRawTenzo     : DINT;
-	bPowerState   : BOOL; // Actual power on state
-	bHaltDone     : BOOL; // Motor stopped
+	fForce        : LREAL; // Actual force
+	bPowerState   : BOOL;  // Actual power on state
+	bHaltDone     : BOOL;  // Motor stopped
 	stSettings    : ST_settings;
 END_VAR
 
 VAR_OUTPUT
+	fTestStartPos : LREAL := 0.0; // position where test started
 	stateHalt : BOOL; // Stop movement
 	bBusy     : BOOL; // Sys is working
     bError    : BOOL; // Sys in error (TODO)
@@ -39,14 +40,16 @@ VAR
 	
 	// mode 2/3 help vars
 	fTargetForce          : LREAL; // Wanted F
-    fCurrentForce         : LREAL; // Actual F
     fForceError           : LREAL; // Regulation error
     fForceErrorIntegral   : LREAL; // Integ of error
     tStepDuration         : TIME;  // Force time
     fbTimerForce          : TON;   // Start timer
+	fLastSentVelocity   : LREAL;    // Tracks last updated velocity to prevent NC spamming
+    bVelUpdateTriggered : BOOL;     // Manages the rising edge handshake for MC_MoveVelocity
 	
 	// Internal constants
 	CYCLE_TIME : LREAL := 0.01; // dt of plc
+	rtBusyTrig : R_TRIG;
 END_VAR
 
 VAR_IN_OUT
@@ -55,7 +58,19 @@ VAR_IN_OUT
 END_VAR
 ]]></Declaration>
     <Implementation>
-      <ST><![CDATA[// =========================================================
+      <ST><![CDATA[
+// =========================================================
+//             Global Panic Stop / Halt Handling
+// =========================================================
+IF bHaltDone AND nSeqState > 0 THEN
+    nSeqState := 0;
+    stateHalt := FALSE;
+    fbMC_MoveRelative1.Execute := FALSE;
+    fbMC_MoveRelative2.Execute := FALSE;
+    bExecuteVelMove := FALSE;
+END_IF
+
+// =========================================================
 //                      Mode switcher
 // =========================================================
 
@@ -101,6 +116,11 @@ fbMC_MoveVelocity(
 // sys is working
 bBusy := nSeqState > 0;
 
+rtBusyTrig(CLK := bBusy);
+IF rtBusyTrig.Q THEN
+	fTestStartPos := Axis.NcToPlc.ActPos;
+END_IF
+
 // error id (TODO)
 
 
@@ -115,84 +135,63 @@ bBusy := nSeqState > 0;
 // pos ==> pos
 // vel ==> vel
 
+IF fbMC_MoveRelative2.Active THEN
+	fbMC_MoveRelative1.Execute := FALSE;
+END_IF
+IF fbMC_MoveRelative1.Active THEN
+	fbMC_MoveRelative2.Execute := FALSE;
+END_IF
+
 CASE nSeqState OF
-	0: // Wait for Matlab
+	0: // Wait for Command
 		fbMC_MoveRelative1.Execute := FALSE;
 		fbMC_MoveRelative2.Execute := FALSE;
 		IF stMoveCommand.bExecute AND bPowerState THEN
 			nCurrentStep := 1;
-			nSeqState := 1;
 			stMoveCommand.bExecute := FALSE;
+			nSeqState := 1;
 		END_IF
 		
-	1: // Start: buffer FB1
+	1: // Start first move on FB1
 		fTargetDist := stMoveCommand.fDistances[nCurrentStep];
 		fTargetVel  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
 		fbMC_MoveRelative1.Execute := TRUE;
+		nCurrentStep := nCurrentStep + 1;
 		nSeqState := 2;
 
-	2: // Wait for Busy FB1 and buffer FB2
-		IF fbMC_MoveRelative1.Busy THEN
-			nCurrentStep := nCurrentStep + 1;
-			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
-				fTargetDist2 := stMoveCommand.fDistances[nCurrentStep];
-				fTargetVel2  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
-				fbMC_MoveRelative2.Execute := TRUE; 
-				nSeqState := 3;
-			ELSE
-				nSeqState := 10;
-			END_IF
-		ELSIF fbMC_MoveRelative1.Error THEN
-			nSeqState := 99; // ERROR
-		END_IF
-		
-	3: // FB1 running, FB2 active
-		IF fbMC_MoveRelative2.Active THEN 
-			fbMC_MoveRelative1.Execute := FALSE; // Reset FB1
+	2: // Pipeline Management Loop
+		// 1. If FB1 is running and FB2 is clear, buffer the next step into FB2
+		IF (fbMC_MoveRelative1.Active OR fbMC_MoveRelative1.Busy) 
+			AND NOT fbMC_MoveRelative2.Execute 
+			AND (nCurrentStep <= stMoveCommand.nTotalSteps) THEN
+			
+			fTargetDist2 := stMoveCommand.fDistances[nCurrentStep];
+			fTargetVel2  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+			fbMC_MoveRelative2.Execute := TRUE; 
 			nCurrentStep := nCurrentStep + 1;
 			
-			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
-				fTargetDist := stMoveCommand.fDistances[nCurrentStep];
-				fTargetVel  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
-				nSeqState := 31;
-			ELSE
-				nSeqState := 20; // Finish with FB2
-			END_IF
-		ELSIF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
-			nSeqState := 99;
-		END_IF
-	
-	31: // One scan delay 
-		fbMC_MoveRelative1.Execute := TRUE; // Now safe to re-trigger
-		nSeqState := 4;
-	
-	4: // FB2 running, FB1 buffered. Wait for FB1 to go Active.
-		IF fbMC_MoveRelative1.Active THEN
-			fbMC_MoveRelative2.Execute := FALSE; // Reset FB2
-			nCurrentStep := nCurrentStep + 1;
+		// 2. If FB2 is running and FB1 is clear, buffer the next step into FB1
+		ELSIF fbMC_MoveRelative2.Active 
+			AND NOT fbMC_MoveRelative1.Execute 
+			AND (nCurrentStep <= stMoveCommand.nTotalSteps) THEN
 			
-			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
-				fTargetDist2 := stMoveCommand.fDistances[nCurrentStep];
-				fTargetVel2  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
-				nSeqState := 41; 
-			ELSE
-				nSeqState := 10; // Finish with FB1
+			fTargetDist := stMoveCommand.fDistances[nCurrentStep];
+			fTargetVel  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+			fbMC_MoveRelative1.Execute := TRUE;
+			nCurrentStep := nCurrentStep + 1;
+		END_IF
+		
+		// 3. Monitor for overall test completion
+		IF nCurrentStep > stMoveCommand.nTotalSteps THEN
+			IF NOT fbMC_MoveRelative1.Busy AND NOT fbMC_MoveRelative2.Busy THEN
+				nSeqState := 0; // Test finished successfully
 			END_IF
-		ELSIF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
+		END_IF
+		
+		// 4. Error Handling
+		IF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
 			nSeqState := 99;
 		END_IF
-	
-	41: // One scan delay for FB2
-		fbMC_MoveRelative2.Execute := TRUE;
-		nSeqState := 3;
-
-	10: // Wait for Done FB1
-		IF fbMC_MoveRelative1.Done THEN nSeqState := 0; 
-		ELSIF fbMC_MoveRelative1.Error THEN nSeqState := 99; END_IF
-		
-	20: // Wait for Done FB2
-		IF fbMC_MoveRelative2.Done THEN nSeqState := 0; 
-		ELSIF fbMC_MoveRelative2.Error THEN nSeqState := 99; END_IF
 
 	99: // ERROR STATE
 		fbMC_MoveRelative1.Execute := FALSE;
@@ -216,6 +215,7 @@ CASE nSeqState OF
 		bExecuteVelMove := FALSE;
 		fCmdVelocity := 0.0;
 		fForceErrorIntegral := 0.0;
+		fLastSentVelocity := 0.0;
 		IF stMoveCommand.bExecute AND bPowerState THEN
 			nCurrentStep := 1;
 			stMoveCommand.bExecute := FALSE;
@@ -230,17 +230,19 @@ CASE nSeqState OF
 			
 			// reset int and timer
 			fForceErrorIntegral := 0.0;
+			fLastSentVelocity := 0.0;
 			fbTimerForce(IN := FALSE);
 			
 			// next seq
 			nSeqState := 2;
 		ELSE
-			nSeqState := 0;
+			stateHalt := TRUE;
+			bExecuteVelMove := FALSE;
+			nSeqState := 3;
 		END_IF
 		
    2: // Force Regulation Loop (PI Regulator)
-		fCurrentForce := DINT_TO_LREAL(nRawTenzo) * stSettings.fTenzoCons;
-		fForceError := fTargetForce - fCurrentForce;
+		fForceError := fTargetForce - fForce;
 		
 		fForceErrorIntegral := fForceErrorIntegral + (fForceError * CYCLE_TIME);
 		fForceErrorIntegral := LIMIT(-stSettings.fIntegralLimit, fForceErrorIntegral, stSettings.fIntegralLimit);
@@ -250,9 +252,9 @@ CASE nSeqState OF
 		fCmdVelocity := LIMIT(-stSettings.fMaxVelocity, fCmdVelocity, stSettings.fMaxVelocity);
 		
 		// Direction of movement
-		IF fCmdVelocity >= 0.0 THEN
+		IF fCmdVelocity > 0.05 THEN
 			mcDirection := MC_Positive_Direction;
-		ELSE
+		ELSIF fCmdVelocity < -0.05 THEN
 			mcDirection := MC_Negative_Direction;
 		END_IF
 		
@@ -268,7 +270,7 @@ CASE nSeqState OF
 		END_IF
 		
 	3: // stop axis
-		IF bHaltDone OR ABS(Axis.NcToPlc.ActVelo) < 0.1 THEN
+		IF bHaltDone THEN
 			nSeqState := 0;
 			stateHalt := FALSE;
 		END_IF
@@ -318,11 +320,10 @@ CASE nSeqState OF
 		nSeqState := 2;
 
 	2: // Move until force threshold is reached
-		fCurrentForce := DINT_TO_LREAL(nRawTenzo) * stSettings.fTenzoCons;
-
+	
 		// Sign-aware threshold check
-		IF (fTargetForce >= 0.0 AND fCurrentForce >= (fTargetForce - stSettings.fForceTolerance)) OR 
-			(fTargetForce < 0.0 AND fCurrentForce <= (fTargetForce + stSettings.fForceTolerance)) THEN
+		IF (fTargetForce >= 0.0 AND fForce >= (fTargetForce - stSettings.fForceTolerance)) OR 
+			(fTargetForce < 0.0 AND fForce <= (fTargetForce + stSettings.fForceTolerance)) THEN
 			
 			nCurrentStep := nCurrentStep + 1;
 			
@@ -339,7 +340,7 @@ CASE nSeqState OF
 		END_IF
 
 	3: // stop axis
-		IF bHaltDone OR ABS(Axis.NcToPlc.ActVelo) < 0.1 THEN
+		IF bHaltDone THEN
 			nSeqState := 0;
 			stateHalt := FALSE;
 		END_IF
@@ -347,29 +348,47 @@ END_CASE]]></ST>
       </Implementation>
     </Action>
     <LineIds Name="fb_MovementControler">
-      <LineId Id="1684" Count="48" />
+      <LineId Id="1795" Count="0" />
+      <LineId Id="1798" Count="8" />
+      <LineId Id="1796" Count="1" />
+      <LineId Id="1684" Count="44" />
+      <LineId Id="1794" Count="0" />
+      <LineId Id="1793" Count="0" />
+      <LineId Id="1788" Count="0" />
+      <LineId Id="1790" Count="1" />
+      <LineId Id="1729" Count="3" />
       <LineId Id="1422" Count="0" />
     </LineIds>
     <LineIds Name="fb_MovementControler.mode1">
       <LineId Id="2" Count="0" />
       <LineId Id="87" Count="3" />
       <LineId Id="3" Count="0" />
-      <LineId Id="91" Count="0" />
-      <LineId Id="4" Count="82" />
+      <LineId Id="98" Count="62" />
       <LineId Id="1" Count="0" />
     </LineIds>
     <LineIds Name="fb_MovementControler.mode2">
       <LineId Id="64" Count="5" />
       <LineId Id="2" Count="0" />
       <LineId Id="70" Count="0" />
-      <LineId Id="3" Count="60" />
+      <LineId Id="3" Count="4" />
+      <LineId Id="73" Count="0" />
+      <LineId Id="8" Count="13" />
+      <LineId Id="74" Count="0" />
+      <LineId Id="22" Count="4" />
+      <LineId Id="71" Count="1" />
+      <LineId Id="27" Count="3" />
+      <LineId Id="32" Count="9" />
+      <LineId Id="75" Count="3" />
+      <LineId Id="46" Count="17" />
       <LineId Id="1" Count="0" />
     </LineIds>
     <LineIds Name="fb_MovementControler.mode3">
       <LineId Id="62" Count="4" />
       <LineId Id="61" Count="0" />
       <LineId Id="67" Count="0" />
-      <LineId Id="2" Count="58" />
+      <LineId Id="2" Count="33" />
+      <LineId Id="68" Count="0" />
+      <LineId Id="38" Count="22" />
       <LineId Id="1" Count="0" />
     </LineIds>
   </POU>

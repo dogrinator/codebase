@@ -13,16 +13,23 @@ classdef Camera < handle
         latestFrame = [];      % Most recent frame for display
         camStartTime           % Start timer for visualization
         connected = false;
+        recordingPeriod = 0;   % 0 saves every frame
+        lastRecordingTime
+        errorHandler = []
     end
 
     methods
+        % Camera handles this operation.
         function camera = Camera(model)
             camera.model = model;
         end
 
+        % connectCamera handles this operation.
         function connectCamera(camera, app, src)
             if src.Value == "ON"
                 try
+                    camera.closeCam();
+                    camera.connected = false;
                     camera.cameraHW = videoinput('gige', 1, 'Mono8');
                     camera.cameraSrc = getselectedsource(camera.cameraHW);
 
@@ -50,14 +57,18 @@ classdef Camera < handle
 
                     % Start display timer at fixed 15 Hz, independent of camera FPS.
                     camera.latestFrame = [];
-                    camera.connected = true;
-
                     flushdata(camera.cameraHW);
                     start(camera.cameraHW);
+                    camera.connected = true;
                     disp("Camera connected.");
                 catch ME
+                    camera.closeCam();
+                    camera.connected = false;
                     uialert(app.fig, getReport(ME), 'Camera Error');
                     src.Value = "OFF";
+                    if ~isempty(camera.errorHandler)
+                        camera.errorHandler(ME);
+                    end
                 end
             else
                 camera.closeCam();
@@ -76,7 +87,12 @@ classdef Camera < handle
                 timeStamp = camera.camStartTime + seconds(relativeTime);
 
                 % Save
-                camera.model.saveCameraFrame(frame, timeStamp);
+                saveFrame = camera.recordingPeriod <= 0 || isempty(camera.lastRecordingTime) || ...
+                    seconds(timeStamp - camera.lastRecordingTime) >= camera.recordingPeriod;
+                if saveFrame
+                    camera.model.saveCameraFrame(frame, timeStamp);
+                    camera.lastRecordingTime = timeStamp;
+                end
 
                 % Downsample
                 camera.latestFrame = frame(1:3:end, 1:3:end);
@@ -86,20 +102,32 @@ classdef Camera < handle
                     return;
                 end
                 fprintf(2, 'acquireFrame error: %s\n', getReport(ME));
+                if ~isempty(camera.errorHandler)
+                    camera.errorHandler(ME);
+                end
             end
         end
 
         % Closing seq
         function closeCam(camera)
             camera.latestFrame = [];
+            camera.lastRecordingTime = [];
 
             if ~isempty(camera.cameraHW) && isvalid(camera.cameraHW)
-                stop(camera.cameraHW);
-                delete(camera.cameraHW);
-                camera.cameraHW = [];
-                camera.connected = false;
-                disp("Camera disconnected");
+                try
+                    stop(camera.cameraHW);
+                catch
+                end
+                try
+                    delete(camera.cameraHW);
+                catch
+                end
             end
+            camera.cameraHW = [];
+            camera.cameraSrc = [];
+            camera.connected = false;
+            disp("Camera disconnected");
         end
     end
 end
+

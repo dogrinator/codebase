@@ -3,10 +3,13 @@
   <DUT Name="ST_SystemStatus" Id="{1f1ade43-23d7-4c7e-a80f-ab809b514cde}">
     <Declaration><![CDATA[TYPE ST_SystemStatus :
 	STRUCT
+		fPosBuffer   : ARRAY[1..150] OF LREAL; // FIFO position data
 		fTenzoBuffer : ARRAY[1..150] OF LREAL; // FIFO tenzo data
-		nBufferHead  : INT := 1;              // Pointer to head
+		nBufferHead  : INT := 1;               // Pointer to head
+		fTenzoTarOffset : LREAL := 0.0;        // Calculated tar offset
 		
 		bWorking     : BOOL;                  // PLC ocupied. Do not send data to PLC
+		bTarWorking  : BOOL;                  // PLC Tenzo calculating tar
 		bError       : BOOL;                  // Sys in error(TODO)
 	END_STRUCT
 END_TYPE
