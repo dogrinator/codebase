@@ -1,0 +1,105 @@
+{
+  "system": {
+    "axisMode": "Both"
+  },
+  "pre": {
+    "rate": {
+      "x": 10,
+      "y": 10,
+      "lock": true
+    },
+    "cyclic": true,
+    "cycles": 4,
+    "load": {
+      "x": 10,
+      "y": 1,
+      "lock": false
+    },
+    "unload": {
+      "x": 10,
+      "y": 10,
+      "lock": false
+    },
+    "unloadToStart": false,
+    "preload": {
+      "enabled": false,
+      "value": 0
+    },
+    "cameraPeriod": {
+      "enabled": false,
+      "value": 0.1
+    }
+  },
+  "single": {
+    "includePre": false,
+    "mode": "Force controlled",
+    "rate": {
+      "x": 1,
+      "y": 1,
+      "lock": true
+    },
+    "stop1Mode": "Force",
+    "stop1": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
+    "stop2Mode": "Force",
+    "stop2": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
+    "stopAtFailure": true,
+    "forceDrop": 10,
+    "failureThreshold": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
+    "cameraPeriod": {
+      "enabled": false,
+      "value": 0.1
+    }
+  },
+  "cyclic": {
+    "includePre": false,
+    "cycles": 1,
+    "rate": {
+      "x": 1,
+      "y": 1,
+      "lock": true
+    },
+    "loadMode": "Displacement",
+    "load": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
+    "unloadMode": "Displacement",
+    "unload": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
+    "cameraPeriod": {
+      "enabled": false,
+      "value": 0.1
+    }
+  },
+  "general": {
+    "includePre": false,
+    "testFile": "No file selected",
+    "importCameraPeriod": {
+      "enabled": false,
+      "value": 0.1
+    },
+    "cameraPeriod": {
+      "enabled": false,
+      "value": 0.1
+    }
+  },
+  "post": {
+    "afterTest": "Return to pre-test final position"
+  }
+}

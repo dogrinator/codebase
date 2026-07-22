@@ -4,371 +4,109 @@
     <Declaration><![CDATA[PROGRAM MAIN
 
 VAR
-	// FB declaration
-    fbMC_Power1        : MC_Power;
-    fbMC_Reset1    	   : MC_Reset;
-	fbMC_Halt1		   : MC_Halt;
-	fbMC_MoveRelative1 : MC_MoveRelative;
-    fbMC_MoveRelative2 : MC_MoveRelative;
-	mcDirection	   	   : MC_Direction;
+	fbSafetyX : fb_safety;
+	fbSafetyY : fb_safety;
+	fbSystemBufferX : fb_StatusBuffer;
+	fbSystemBufferY : fb_StatusBuffer;
+	fbMovementControlerX : fb_MovementControler;
+	fbMovementControlerY : fb_MovementControler;
 	
-	// Edge detection for triggers
-    rtMoveTrigger       : R_TRIG;
-    rtResetTrigger      : R_TRIG;
+	// DUTs import
+	stMoveCommandX : ST_MoveCommand;
+	stMoveCommandY : ST_MoveCommand; 
 	
-	// From Matlab DUT
-	stMoveCommand : ST_MoveCommand;
-	// To Matlab DUT
-	stSystemStatus : ST_SystemStatus;
+	stSystemStatusX : ST_SystemStatus;
+	stSystemStatusY : ST_SystemStatus;
 	
-	// Readings from Tenzo
+	stSettingsX : ST_settings;
+	stSettingsY : ST_settings;
+	
+	// IO Links
     nRawTenzoX AT %I* : DINT;
-	nTenzoConsX       : REAL := 0.01;
+	nRawTenzoY AT %I* : DINT;
 	
-	// Readings from xEndStop
-	bEndStopX AT %I* : BOOL; 
+	nEndStopLx AT %I* : BOOL;
+	nEndStopHx AT %I* : BOOL;
 	
-	// Variables to go throught vector
-    nSeqState      : INT := 0;
-    nCurrentStep   : INT := 1;
+	nEndStopLy AT %I* : BOOL;
+	nEndStopHy AT %I* : BOOL;
 	
-	// Help vars
-	bExecuteMove  : BOOL;
-    fTargetDist   : LREAL;
-    fTargetVel    : LREAL;
-	fTargetDist2  : LREAL;
-    fTargetVel2   : LREAL;
-	
-	// Pre Mode 2 (Force Control)
-    fbMC_MoveVelocity : MC_MoveVelocity;
-    fbTimerForce      : TON; // Časovač pre udržanie sily
-    
-    // Premenné regulátora
-    fCurrentForce    : LREAL;
-    fTargetForce     : LREAL;
-    fForceError      : LREAL;
-    fKp              : LREAL := 1.5; // P-konštanta (TOTO BUDEŠ MUSIEŤ VYLADIŤ)
-	fKi              : LREAL := 0.1;
-    fCmdVelocity     : LREAL;
-    bExecuteVelMove  : BOOL;
-		
-	fForceErrorIntegral   : LREAL := 0.0;
-	tStepDuration         : TIME  := T#0S;
-	CYCLE_TIME            : LREAL := 0.001;
-	fIntegralLimit        : LREAL := 20.0;
-	fMaxVelocity          : LREAL := 100.0;
-	bVelMovePulse		  : BOOL;
-	fbMC_HomingX: MC_Home;
-	bHomeX: BOOL;
-	
-	bSequenceHalt      : BOOL := FALSE;
-    fForceTolerance    : LREAL := 1.0;   // change to what makes sense for your sensor
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[////////////////////////////////
 //////////   safety   //////////
 ////////////////////////////////
-// Power on axis
-fbMC_Power1(
-    Axis:= GVL_Axis.Axis1,
-    Enable:= stMoveCommand.bPower,
-    Enable_Positive:= stMoveCommand.bPower,
-    Enable_Negative:= stMoveCommand.bPower,
-    Override:= 100.0);
-	
-fbMC_HomingX(
-	Axis:= GVL_Axis.Axis1, 
-	Execute:= bHomeX, 
-	Position:= 0, 
-	HomingMode:= MC_DefaultHoming, 
-	bCalibrationCam:= bEndStopX);
 
-// Reset and Panic stop
-rtResetTrigger(CLK := stMoveCommand.bReset);
-fbMC_Reset1(Axis := GVL_Axis.Axis1, Execute := rtResetTrigger.Q);
-// HALT
-fbMC_Halt1(Axis := GVL_Axis.Axis1, Execute := stMoveCommand.bHalt OR bSequenceHalt);
+fbSafetyX(
+    stAxis := GVL_Axis.xAxis,
+    bPower := stMoveCommandX.bPower,
+    bReset := stMoveCommandX.bReset,
+    bHalt := stMoveCommandX.bHalt,
+    bSeqHalt := fbMovementControlerX.stateHalt,
+    bHome := stMoveCommandX.bHome,
+    bEndStopL := nEndStopLx,
+	bEndStopH := nEndStopHx
+);
 
-// If automat is in other state than 0 the plc is ocupied
-stSystemStatus.bWorking := (nSeqState > 0);
-IF stMoveCommand.bHalt THEN
-	nSeqState := 0;
-	bSequenceHalt := FALSE;
-END_IF
+fbSafetyY(
+    stAxis := GVL_Axis.yAxis,
+    bPower := stMoveCommandY.bPower,
+    bReset := stMoveCommandY.bReset,
+    bHalt := stMoveCommandY.bHalt,
+    bSeqHalt := fbMovementControlerY.stateHalt,
+    bHome := stMoveCommandY.bHome,
+   	bEndStopL := nEndStopLy,
+	bEndStopH := nEndStopHy
+);
 
 ////////////////////////////////
 ////////// Update data /////////
 ////////////////////////////////
 
-// Write TO FIFO buffer
-stSystemStatus.fTenzoBuffer[stSystemStatus.nBufferHead] := DINT_TO_REAL(nRawTenzoX) * nTenzoConsX; 
-stSystemStatus.nBufferHead := stSystemStatus.nBufferHead + 1;
-IF stSystemStatus.nBufferHead > 500 THEN
-    stSystemStatus.nBufferHead := 1; // Go back to begining
-END_IF
+// Read status of axis
+GVL_Axis.xAxis.ReadStatus();
+GVL_Axis.yAxis.ReadStatus();
 
-//Read status of axis
-GVL_Axis.Axis1.ReadStatus();
+// Save actual sys data
+fbSystemBufferX(
+	stSystemStatus:= stSystemStatusX,
+	nRawTenzo:= nRawTenzoX,
+	fTenzoCons:=stSettingsX.fTenzoCons,
+	fTenzoOffset:= stSettingsX.fTenzoOffset,
+	bStartTar:= stMoveCommandX.bStartTar,
+	fActPosition:= GVL_Axis.xAxis.NcToPlc.ActPos,
+	fStartPosition:= fbMovementControlerX.fTestStartPos);
+	
+fbSystemBufferY(
+	stSystemStatus:= stSystemStatusY,
+	nRawTenzo:= nRawTenzoY,
+	fTenzoCons:=stSettingsY.fTenzoCons,
+	fTenzoOffset:= stSettingsY.fTenzoOffset,
+	bStartTar:= stMoveCommandY.bStartTar,
+	fActPosition:= GVL_Axis.yAxis.NcToPlc.ActPos,
+	fStartPosition:= fbMovementControlerY.fTestStartPos);
 
 /////////////////////////////////////
 ////////// Main Move Logic //////////
 /////////////////////////////////////
 
-// =========================================================
-//                  Mode 1: Constant speed
-// =========================================================
-// pos ==> pos
-// vel ==> vel
-CASE stMoveCommand.nMode OF
-	1: 
-   CASE nSeqState OF
-        0: // Wait for Matlab
-            fbMC_MoveRelative1.Execute := FALSE;
-            fbMC_MoveRelative2.Execute := FALSE;
-            IF stMoveCommand.bExecute AND fbMC_Power1.Status THEN
-                nCurrentStep := 1;
-                nSeqState := 1;
-                stMoveCommand.bExecute := FALSE;
-            END_IF
-            
-        1: // Start: buffer FB1
-            fTargetDist := stMoveCommand.fDistancesX[nCurrentStep];
-            fTargetVel  := ABS(stMoveCommand.fVelocitiesX[nCurrentStep]);
-            fbMC_MoveRelative1.Execute := TRUE;
-            nSeqState := 2;
-    
-        2: // Wait for Busy FB1 and buffer FB2
-            IF fbMC_MoveRelative1.Busy THEN
-                nCurrentStep := nCurrentStep + 1;
-                IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-                    fTargetDist2 := stMoveCommand.fDistancesX[nCurrentStep];
-                    fTargetVel2  := ABS(stMoveCommand.fVelocitiesX[nCurrentStep]);
-                    fbMC_MoveRelative2.Execute := TRUE; 
-                    nSeqState := 3;
-                ELSE
-                    nSeqState := 10;
-                END_IF
-            ELSIF fbMC_MoveRelative1.Error THEN
-                nSeqState := 99; // ERROR
-            END_IF
-            
-        3: // FB1 running, FB2 active
-			IF fbMC_MoveRelative2.Active THEN 
-				fbMC_MoveRelative1.Execute := FALSE; // Reset FB1
-				nCurrentStep := nCurrentStep + 1;
-				
-				IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-					fTargetDist := stMoveCommand.fDistancesX[nCurrentStep];
-					fTargetVel  := ABS(stMoveCommand.fVelocitiesX[nCurrentStep]);
-					nSeqState := 31;
-				ELSE
-					nSeqState := 20; // Finish with FB2
-				END_IF
-			ELSIF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
-				nSeqState := 99;
-			END_IF
-		
-		31: // One scan delay 
-			fbMC_MoveRelative1.Execute := TRUE; // Now safe to re-trigger
-			nSeqState := 4;
-		
-		4: // FB2 running, FB1 buffered. Wait for FB1 to go Active.
-			IF fbMC_MoveRelative1.Active THEN
-				fbMC_MoveRelative2.Execute := FALSE; // Reset FB2
-				nCurrentStep := nCurrentStep + 1;
-				
-				IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-					fTargetDist2 := stMoveCommand.fDistancesX[nCurrentStep];
-					fTargetVel2  := ABS(stMoveCommand.fVelocitiesX[nCurrentStep]);
-					nSeqState := 41; 
-				ELSE
-					nSeqState := 10; // Finish with FB1
-				END_IF
-			ELSIF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
-				nSeqState := 99;
-			END_IF
-		
-		41: // One scan delay for FB2
-			fbMC_MoveRelative2.Execute := TRUE;
-			nSeqState := 3;
-    
-        10: // Wait for Done FB1
-            IF fbMC_MoveRelative1.Done THEN nSeqState := 0; 
-            ELSIF fbMC_MoveRelative1.Error THEN nSeqState := 99; END_IF
-            
-        20: // Wait for Done FB2
-            IF fbMC_MoveRelative2.Done THEN nSeqState := 0; 
-            ELSIF fbMC_MoveRelative2.Error THEN nSeqState := 99; END_IF
+fbMovementControlerX(
+	Axis := GVL_Axis.xAxis,
+	stMoveCommand := stMoveCommandX,
+	stSettings := stSettingsX,
+    bPowerState := fbSafetyX.bPowerStatus,
+    bHaltDone := fbSafetyX.bHaltDone,
+    fForce := stSystemStatusX.fTenzoBuffer[stSystemStatusX.nBufferHead]);
+stSystemStatusX.bWorking := fbMovementControlerX.bBusy;
 
-        99: // ERROR STATE
-            fbMC_MoveRelative1.Execute := FALSE;
-            fbMC_MoveRelative2.Execute := FALSE;
-            nSeqState := 0; 
-    END_CASE
-
-// =========================================================
-//                  Mode 2: Constant Force
-// =========================================================
-// pos ==> force
-// vel ==> time
-	2:
-	CASE nSeqState OF
-		0: // Wait for command
-            bExecuteVelMove := FALSE;
-            fCmdVelocity := 0.0;
-            fForceErrorIntegral := 0.0;
-            IF stMoveCommand.bExecute AND fbMC_Power1.Status THEN
-                nCurrentStep := 1;
-                stMoveCommand.bExecute := FALSE;
-                nSeqState := 1;
-            END_IF
-            
-		1: // Init Step
-            IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-				// load new values
-                fTargetForce := stMoveCommand.fVelocitiesX[nCurrentStep];
-                tStepDuration := LREAL_TO_TIME(stMoveCommand.fDistancesX[nCurrentStep] * 1000.0);
-                
-				// reset int and timer
-				fForceErrorIntegral := 0.0;
-                fbTimerForce(IN := FALSE);
-				
-				// next seq
-                nSeqState := 2;
-            ELSE
-                nSeqState := 0;
-            END_IF
-            
-       2: // Force Regulation Loop (PI Regulator)
-            fCurrentForce := DINT_TO_LREAL(nRawTenzoX) * nTenzoConsX;
-            fForceError := fTargetForce - fCurrentForce;
-            
-            fForceErrorIntegral := fForceErrorIntegral + (fForceError * CYCLE_TIME);
-            fForceErrorIntegral := LIMIT(-fIntegralLimit, fForceErrorIntegral, fIntegralLimit);
-            
-			// Calc final wanted value
-            fCmdVelocity := (fForceError * fKp) + (fForceErrorIntegral * fKi);
-            fCmdVelocity := LIMIT(-fMaxVelocity, fCmdVelocity, fMaxVelocity);
-			
-			// Direction of movement
-			IF fCmdVelocity >= 0.0 THEN
-				mcDirection := MC_Positive_Direction;
-			ELSE
-				mcDirection := MC_Negative_Direction;
-			END_IF
-			
-			// edge for execution
-            bExecuteVelMove := NOT bExecuteVelMove;
-			
-			// timer handling
-            fbTimerForce(IN := TRUE, PT := tStepDuration);
-            
-            IF fbTimerForce.Q THEN
-                nCurrentStep := nCurrentStep + 1;
-                nSeqState := 1;
-            END_IF
-            
-        3: // stop axis
-            IF fbMC_Halt1.Done OR ABS(GVL_Axis.Axis1.NcToPlc.ActVelo) < 0.1 THEN
-                nSeqState := 0;
-				bSequenceHalt := FALSE;
-            END_IF
-		END_CASE
-	
-// =========================================================
-//                  Mode 3: Force threshold stepping
-// =========================================================
-// pos ==> force target
-// vel ==> approach speed
-	3:
-    CASE nSeqState OF
-        0: // Wait for command
-            bExecuteVelMove := FALSE;
-            fCmdVelocity := 0.0;
-
-            IF stMoveCommand.bExecute AND fbMC_Power1.Status THEN
-                nCurrentStep := 1;
-                stMoveCommand.bExecute := FALSE;
-                nSeqState := 1;
-            END_IF
-
-        1: // Load next target force + speed
-            IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-                fTargetForce := stMoveCommand.fDistancesX[nCurrentStep];
-                fCmdVelocity  := ABS(stMoveCommand.fVelocitiesX[nCurrentStep]);
-
-                // Choose direction from target force sign
-                IF fTargetForce >= 0.0 THEN
-                    mcDirection := MC_Positive_Direction;
-                ELSE
-                    mcDirection := MC_Negative_Direction;
-                END_IF
-
-                bExecuteVelMove := FALSE;   // prepare trigger
-                nSeqState := 11;
-            ELSE
-                nSeqState := 0; // finished
-            END_IF
-
-        11: // One scan delay / trigger move
-            bExecuteVelMove := TRUE;
-            nSeqState := 2;
-
-        2: // Move until force threshold is reached
-            fCurrentForce := DINT_TO_LREAL(nRawTenzoX) * nTenzoConsX;
-
-            // Sign-aware threshold check
-            IF (fTargetForce >= 0.0 AND fCurrentForce >= (fTargetForce - fForceTolerance)) OR 
-           		(fTargetForce < 0.0 AND fCurrentForce <= (fTargetForce + fForceTolerance)) THEN
-				
-				nCurrentStep := nCurrentStep + 1;
-				
-				IF nCurrentStep <= stMoveCommand.nTotalStepsX THEN
-					// go to next step
-					bExecuteVelMove := FALSE; 
-					nSeqState := 1; 
-				ELSE
-					// end of test
-					bSequenceHalt := TRUE;
-					bExecuteVelMove := FALSE;
-					nSeqState := 3;
-				END_IF
-			END_IF
-
-        3: // stop axis
-            IF fbMC_Halt1.Done OR ABS(GVL_Axis.Axis1.NcToPlc.ActVelo) < 0.1 THEN
-                nSeqState := 0;
-				bSequenceHalt := FALSE;
-            END_IF
-    END_CASE
-END_CASE
-
-// =========================================================
-//                      Motion call
-// =========================================================
-
-// Call motion mode 1
-fbMC_MoveRelative1(Axis := GVL_Axis.Axis1, 
-	Distance := fTargetDist, 
-	Velocity := fTargetVel, 
-	BufferMode := MC_BlendingNext);
-fbMC_MoveRelative2(Axis := GVL_Axis.Axis1, 
-	Distance := fTargetDist2, 
-	Velocity := fTargetVel2, 
-	BufferMode := MC_BlendingNext);
-	
-// call motion mode 2/3
-fbMC_MoveVelocity(
-	Axis      := GVL_Axis.Axis1,
-	Execute   := bExecuteVelMove,
-	Velocity  := ABS(fCmdVelocity),
-	Direction := mcDirection,
-	BufferMode:= MC_Aborting
-);
-
-	
-
-
+fbMovementControlerY(
+	Axis := GVL_Axis.yAxis,
+	stMoveCommand := stMoveCommandY,
+	stSettings := stSettingsY,
+    bPowerState := fbSafetyY.bPowerStatus,
+    bHaltDone := fbSafetyY.bHaltDone,
+	fForce := stSystemStatusY.fTenzoBuffer[stSystemStatusY.nBufferHead]);
+stSystemStatusY.bWorking := fbMovementControlerY.bBusy;
 
 
 
@@ -381,104 +119,19 @@ fbMC_MoveVelocity(
 ]]></ST>
     </Implementation>
     <LineIds Name="MAIN">
-      <LineId Id="2664" Count="2" />
-      <LineId Id="2672" Count="6" />
-      <LineId Id="2683" Count="0" />
-      <LineId Id="2686" Count="4" />
-      <LineId Id="2693" Count="0" />
-      <LineId Id="2679" Count="3" />
-      <LineId Id="3003" Count="0" />
-      <LineId Id="2667" Count="0" />
-      <LineId Id="2934" Count="4" />
-      <LineId Id="3005" Count="0" />
-      <LineId Id="2933" Count="0" />
-      <LineId Id="2639" Count="0" />
-      <LineId Id="874" Count="1" />
-      <LineId Id="872" Count="0" />
-      <LineId Id="882" Count="2" />
-      <LineId Id="887" Count="0" />
-      <LineId Id="889" Count="1" />
-      <LineId Id="878" Count="0" />
-      <LineId Id="873" Count="0" />
-      <LineId Id="322" Count="1" />
-      <LineId Id="868" Count="0" />
-      <LineId Id="1149" Count="2" />
-      <LineId Id="1988" Count="0" />
-      <LineId Id="2772" Count="1" />
-      <LineId Id="2771" Count="0" />
-      <LineId Id="2783" Count="0" />
-      <LineId Id="2782" Count="0" />
-      <LineId Id="1989" Count="0" />
-      <LineId Id="2768" Count="0" />
-      <LineId Id="2120" Count="30" />
-      <LineId Id="2204" Count="37" />
-      <LineId Id="2183" Count="12" />
-      <LineId Id="2197" Count="1" />
-      <LineId Id="2033" Count="0" />
-      <LineId Id="2328" Count="2" />
-      <LineId Id="2781" Count="0" />
-      <LineId Id="2780" Count="0" />
-      <LineId Id="2331" Count="1" />
-      <LineId Id="2526" Count="3" />
-      <LineId Id="2531" Count="3" />
-      <LineId Id="2342" Count="1" />
-      <LineId Id="2512" Count="1" />
-      <LineId Id="3074" Count="0" />
-      <LineId Id="2514" Count="2" />
-      <LineId Id="3076" Count="0" />
-      <LineId Id="3075" Count="0" />
-      <LineId Id="2517" Count="0" />
-      <LineId Id="3066" Count="0" />
-      <LineId Id="3073" Count="0" />
-      <LineId Id="2520" Count="1" />
-      <LineId Id="2525" Count="0" />
-      <LineId Id="2468" Count="0" />
-      <LineId Id="2365" Count="0" />
-      <LineId Id="2480" Count="6" />
-      <LineId Id="3058" Count="0" />
-      <LineId Id="2487" Count="1" />
-      <LineId Id="3077" Count="0" />
-      <LineId Id="3079" Count="4" />
-      <LineId Id="3078" Count="0" />
-      <LineId Id="3055" Count="1" />
-      <LineId Id="2493" Count="0" />
-      <LineId Id="3057" Count="0" />
-      <LineId Id="3060" Count="0" />
-      <LineId Id="2494" Count="2" />
-      <LineId Id="2498" Count="0" />
-      <LineId Id="2500" Count="2" />
-      <LineId Id="3061" Count="3" />
-      <LineId Id="2410" Count="0" />
-      <LineId Id="3065" Count="0" />
-      <LineId Id="2769" Count="0" />
-      <LineId Id="2785" Count="6" />
-      <LineId Id="2793" Count="2" />
-      <LineId Id="2797" Count="28" />
-      <LineId Id="2964" Count="3" />
-      <LineId Id="2984" Count="2" />
-      <LineId Id="2988" Count="2" />
-      <LineId Id="2994" Count="0" />
-      <LineId Id="2996" Count="3" />
-      <LineId Id="3006" Count="0" />
-      <LineId Id="3000" Count="2" />
-      <LineId Id="2846" Count="3" />
-      <LineId Id="2851" Count="0" />
-      <LineId Id="2940" Count="0" />
-      <LineId Id="2852" Count="0" />
-      <LineId Id="2859" Count="0" />
-      <LineId Id="404" Count="0" />
-      <LineId Id="3008" Count="0" />
-      <LineId Id="3017" Count="1" />
-      <LineId Id="3009" Count="0" />
-      <LineId Id="3020" Count="0" />
-      <LineId Id="3046" Count="7" />
-      <LineId Id="3045" Count="0" />
-      <LineId Id="3054" Count="0" />
-      <LineId Id="3021" Count="6" />
-      <LineId Id="3019" Count="0" />
-      <LineId Id="3036" Count="0" />
-      <LineId Id="370" Count="0" />
-      <LineId Id="69" Count="10" />
+      <LineId Id="6943" Count="57" />
+      <LineId Id="7035" Count="0" />
+      <LineId Id="7037" Count="0" />
+      <LineId Id="7030" Count="0" />
+      <LineId Id="7002" Count="1" />
+      <LineId Id="7036" Count="0" />
+      <LineId Id="7007" Count="2" />
+      <LineId Id="7034" Count="0" />
+      <LineId Id="7039" Count="0" />
+      <LineId Id="7032" Count="0" />
+      <LineId Id="7011" Count="1" />
+      <LineId Id="7038" Count="0" />
+      <LineId Id="7016" Count="9" />
       <LineId Id="65" Count="0" />
     </LineIds>
   </POU>

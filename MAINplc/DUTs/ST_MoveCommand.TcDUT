@@ -2,30 +2,25 @@
 <TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
   <DUT Name="ST_MoveCommand" Id="{f7a5f6bb-0c5b-440f-b36c-9128ecf27acb}">
     <Declaration><![CDATA[TYPE ST_MoveCommand :
-STRUCT
-	// Arrays of trajectory / force
-	fDistancesX  : ARRAY[1..100] OF LREAL; 
-	fDistancesY  : ARRAY[1..100] OF LREAL; 
+	STRUCT
+		// Arrays of trajectory / force
+		fDistances  : ARRAY[1..100] OF LREAL; 
+		
+		// Arrays of speed / time
+		fVelocities : ARRAY[1..100] OF LREAL;
+		
+		// Number of commands
+		nTotalSteps : INT; 
 	
-	// Arrays of speed
-    fVelocitiesX : ARRAY[1..100] OF LREAL;
-	fVelocitiesY : ARRAY[1..100] OF LREAL;
-    
-	// Number of commands
-    nTotalStepsX  : INT; 
-	nTotalStepsY  : INT;
-	
-    // Min/Max force
-    fForceLimitX, fForceLimitY : REAL; 
-
-    // Safety
-    nMode      : INT;  // 1=Move commands, 3=ForceMode
-	bStartSequence : BOOL;
-    bExecute   : BOOL; // Start movement
-    bHalt      : BOOL; // Panic stop
-    bPower     : BOOL; // Enable motorov
-	bReset     : BOOL; // Reset errors
-END_STRUCT
+		// Safety
+		nMode       : INT;  // 1=Move commands, 2=ForceMode, 3=cyclic
+		bExecute    : BOOL; // Start movement
+		bHalt       : BOOL; // Panic stop
+		bPower      : BOOL; // Enable motorov
+		bReset      : BOOL; // Reset errors
+		bHome       : BOOL; // Do homing seq
+		bStartTar   : BOOL; // Do Tar seq
+	END_STRUCT
 END_TYPE
 ]]></Declaration>
   </DUT>

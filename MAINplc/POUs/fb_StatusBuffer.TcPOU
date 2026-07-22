@@ -1,0 +1,85 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <POU Name="fb_StatusBuffer" Id="{b8a883a1-d10e-4ae2-918d-ef376e1e59b0}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK fb_StatusBuffer
+VAR_IN_OUT
+    stSystemStatus    : ST_SystemStatus;
+    bStartTar         : BOOL;  // Reset to FALSE inside FB when done
+END_VAR
+VAR_INPUT
+	// Tenzo buffer
+    nRawTenzo    : DINT;
+    fTenzoCons   : LREAL;
+    fTenzoOffset : LREAL;
+	
+	// Position buffer
+	fActPosition   : LREAL;
+	fStartPosition : LREAL;
+END_VAR
+VAR
+    fbStartTarRiseClp : R_TRIG;   // Detects the moment tare button is pressed
+    bTarActive        : BOOL;     // Flag indicating taring is in progress
+    nTarCounter       : INT;      // Counts up to 100 samples
+    fTarAccumulator   : LREAL;    // Holds the running sum of samples
+    fCurrentCalculated: LREAL;    // The current weight before tare constant
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+// Calculate the current weight snapshot
+fCurrentCalculated := (DINT_TO_LREAL(nRawTenzo) * fTenzoCons) + fTenzoOffset;
+
+// Taring Logic
+fbStartTarRiseClp(CLK := bStartTar);
+
+// Start the taring process
+IF fbStartTarRiseClp.Q AND NOT bTarActive THEN
+    bTarActive      := TRUE;
+    nTarCounter     := 0;
+    fTarAccumulator := 0.0;
+END_IF
+
+IF bTarActive THEN
+    // Accumulate the current weight across 100 consecutive cycles
+    fTarAccumulator := fTarAccumulator + fCurrentCalculated;
+    nTarCounter     := nTarCounter + 1;
+    
+    // After 100 
+    IF nTarCounter >= 100 THEN
+        // Calculate the mean
+        stSystemStatus.fTenzoTarOffset := - (fTarAccumulator / 100.0); 
+        
+        // Reset control flags
+        bTarActive := FALSE;
+        bStartTar  := FALSE;
+    END_IF
+END_IF
+
+// Pointer handling
+stSystemStatus.nBufferHead := stSystemStatus.nBufferHead + 1;
+IF stSystemStatus.nBufferHead > 150 THEN
+    stSystemStatus.nBufferHead := 1; // Go back to beginning
+END_IF
+
+// Write TO FIFO buffer
+stSystemStatus.fTenzoBuffer[stSystemStatus.nBufferHead] := fCurrentCalculated + stSystemStatus.fTenzoTarOffset; 
+stSystemStatus.fPosBuffer[stSystemStatus.nBufferHead] := fActPosition - fStartPosition; 
+
+]]></ST>
+    </Implementation>
+    <LineIds Name="fb_StatusBuffer">
+      <LineId Id="156" Count="0" />
+      <LineId Id="119" Count="4" />
+      <LineId Id="158" Count="0" />
+      <LineId Id="124" Count="1" />
+      <LineId Id="127" Count="12" />
+      <LineId Id="141" Count="6" />
+      <LineId Id="166" Count="0" />
+      <LineId Id="168" Count="3" />
+      <LineId Id="167" Count="0" />
+      <LineId Id="148" Count="2" />
+      <LineId Id="161" Count="0" />
+      <LineId Id="39" Count="0" />
+      <LineId Id="157" Count="0" />
+    </LineIds>
+  </POU>
+</TcPlcObject>
