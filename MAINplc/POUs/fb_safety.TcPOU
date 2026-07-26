@@ -3,147 +3,240 @@
   <POU Name="fb_safety" Id="{2b1a91eb-6451-41aa-b214-38ff110b08ec}" SpecialFunc="None">
     <Declaration><![CDATA[FUNCTION_BLOCK fb_safety
 VAR_INPUT
-	bPower    : BOOL; // Turn on motor
-	bReset    : BOOL; // Error reset
-	bHalt     : BOOL; // Halt button pressed
-	bSeqHalt  : BOOL; // Halt from movement controler
-	bHome     : BOOL; // Start homing seq
-	bEndStopH : BOOL; // Physical endstop max
-	bEndStopL : BOOL; // Physical endstop 0
+	bPower        : BOOL;
+	bReset        : BOOL;
+	bHalt         : BOOL;
+	bHome         : BOOL;
+	bEndStopL     : BOOL; // TRUE when the normalized lower switch is active
+	bEndStopH     : BOOL; // TRUE when the normalized upper switch is active
+	bExternalBusy : BOOL; // Test motion or tare is active
 END_VAR
 
 VAR_OUTPUT
-	bPowerStatus : BOOL; // Power on 
-	bHaltDone    : BOOL; // Motor stopped
-END_VAR
-
-VAR
-	// Safety FBs
-    fbMC_Power  : MC_Power;
-    fbMC_Reset	: MC_Reset;
-	fbMC_Halt	: MC_Halt;
-	
-	// Homing
-	fbMC_Homing : MC_Home;
-
-	// Edge detection
-	rtResetTrigger : R_TRIG;
-	rtHome         : R_TRIG;
-	
-	// Halt help variable
-	bMainHalt     : BOOL;
-	
-	// Power help variables
-	bPowerBusy    : BOOL;
-	bPowerError   : BOOL;
-	nPowerErrorID : UDINT;
-	bPowerPos     : BOOL;
-	bPowerNeg     : BOOL;
+	bPowerStatus       : BOOL;
+	bHaltDone          : BOOL;
+	bError             : BOOL;
+	nErrorCode         : UDINT;
+	nAxisErrorID       : UDINT;
+	bHoming            : BOOL;
+	bHomed             : BOOL;
+	bStopped           : BOOL;
+	bProtectiveStop    : BOOL; // Abort active test motion but retain commanded power
 END_VAR
 
 VAR_IN_OUT
-	stAxis   : Axis_REF; 
+	stAxis : AXIS_REF;
+END_VAR
+
+VAR
+	fbPower        : MC_Power;
+	fbReset        : MC_Reset;
+	fbHalt         : MC_Halt;
+	fbHome         : MC_Home;
+	fbMoveToZero   : MC_MoveRelative;
+
+	rtReset        : R_TRIG;
+	rtHalt         : R_TRIG;
+	rtHome         : R_TRIG;
+
+	fbHomeTimeout  : TON;
+	fbMoveTimeout  : TON;
+
+	eState             : E_SafetyState := E_SafetyState.Idle;
+	bFaultPowerInhibit : BOOL;
+	bResetExecute      : BOOL;
+	bHaltDonePulse     : BOOL;
+	fHomeParkDistance  : LREAL;
+END_VAR
+
+VAR CONSTANT
+	HOME_PARK_POSITION : LREAL := 0.0;
+	HOME_PARK_VELOCITY : LREAL := 5.0;
+	HOME_TIMEOUT       : TIME := T#10M;
+	HOME_PARK_TIMEOUT  : TIME := T#10S;
 END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[
-///////////////////////
-// Main safety logic //
-///////////////////////
-
-// Start homing sequence
+// Commands are edge-triggered. End-stop inputs are normalized once in MAIN.
+rtReset(CLK := bReset);
+rtHalt(CLK := bHalt);
 rtHome(CLK := bHome);
 
-fbMC_Homing(
-	Axis:= stAxis, 
-	Execute:= rtHome.Q, 
-	Position:= 0.0, 
-	HomingMode:= MC_DefaultHoming, 
-	bCalibrationCam:= bEndStopL);
-	
-// endstops logic
-IF fbMC_Homing.Busy THEN
-    bPowerPos := bPower;
-    bPowerNeg := bPower;
-ELSE
-    bPowerPos := bPower AND NOT bEndStopH;
-    bPowerNeg := bPower AND NOT bEndStopL;
+bHaltDonePulse := FALSE;
+
+// Reset a latched fault. Successful reset restores MATLAB ownership of bPower.
+IF rtReset.Q AND bError AND eState = E_SafetyState.Idle THEN
+	bResetExecute := TRUE;
 END_IF
 
-// Power on axis
-fbMC_Power(
-    Axis:= stAxis,
-    Enable:= bPower,
-    Enable_Positive:= bPowerPos,
-    Enable_Negative:= bPowerNeg,
-    Override:= 100.0);
+IF bResetExecute AND fbReset.Done THEN
+	bResetExecute := FALSE;
+	bError := FALSE;
+	nErrorCode := 0;
+	nAxisErrorID := 0;
+	bFaultPowerInhibit := FALSE;
+ELSIF bResetExecute AND fbReset.Error THEN
+	bResetExecute := FALSE;
+	bError := TRUE;
+	nErrorCode := 1002;
+	nAxisErrorID := fbReset.ErrorID;
+	bFaultPowerInhibit := TRUE;
+END_IF
 
-// Reset axis errors
-rtResetTrigger(CLK := bReset);
-fbMC_Reset( 
+// Latch genuine NC, wiring and motion-function-block faults.
+IF NOT bError THEN
+	IF stAxis.Status.Error THEN
+		bError := TRUE;
+		nErrorCode := 1005;
+		nAxisErrorID := stAxis.Status.ErrorID;
+		eState := E_SafetyState.ErrorStop;
+	ELSIF bEndStopL AND bEndStopH THEN
+		bError := TRUE;
+		nErrorCode := 1006;
+		nAxisErrorID := 0;
+		eState := E_SafetyState.ErrorStop;
+	ELSIF fbPower.Error THEN
+		bError := TRUE;
+		nErrorCode := 1001;
+		nAxisErrorID := fbPower.ErrorID;
+		eState := E_SafetyState.ErrorStop;
+	ELSIF fbHalt.Error THEN
+		bError := TRUE;
+		nErrorCode := 1003;
+		nAxisErrorID := fbHalt.ErrorID;
+		eState := E_SafetyState.ErrorStop;
+	ELSIF fbHome.Error THEN
+		bError := TRUE;
+		nErrorCode := 1004;
+		nAxisErrorID := fbHome.ErrorID;
+		eState := E_SafetyState.ErrorStop;
+	ELSIF fbMoveToZero.Error THEN
+		bError := TRUE;
+		nErrorCode := 1008;
+		nAxisErrorID := fbMoveToZero.ErrorID;
+		eState := E_SafetyState.ErrorStop;
+	END_IF
+END_IF
+
+// A normal halt always uses MC_Halt and never changes the power command.
+IF rtHalt.Q AND eState <> E_SafetyState.ErrorStop THEN
+	eState := E_SafetyState.ProtectiveStop;
+END_IF
+
+CASE eState OF
+	E_SafetyState.Idle:
+		// Stop only when travelling farther into an active physical switch.
+		IF (bEndStopL AND stAxis.Status.NegativeDirection) OR
+			(bEndStopH AND stAxis.Status.PositiveDirection) THEN
+			eState := E_SafetyState.ProtectiveStop;
+		ELSIF rtHome.Q AND NOT bExternalBusy AND fbPower.Status THEN
+			eState := E_SafetyState.Homing;
+		END_IF
+
+	E_SafetyState.Homing:
+		IF fbHomeTimeout.Q THEN
+			bError := TRUE;
+			nErrorCode := 1011;
+			nAxisErrorID := 0;
+			eState := E_SafetyState.ErrorStop;
+		ELSIF fbHome.Done THEN
+			IF bEndStopL THEN
+				bError := TRUE;
+				nErrorCode := 1014;
+				nAxisErrorID := 0;
+				eState := E_SafetyState.ErrorStop;
+			ELSE
+				fHomeParkDistance := HOME_PARK_POSITION - stAxis.NcToPlc.ActPos;
+				eState := E_SafetyState.MoveToZero;
+			END_IF
+		END_IF
+
+	E_SafetyState.MoveToZero:
+		IF bEndStopH THEN
+			bError := TRUE;
+			nErrorCode := 1013;
+			nAxisErrorID := 0;
+			eState := E_SafetyState.ErrorStop;
+		ELSIF fbMoveTimeout.Q THEN
+			bError := TRUE;
+			nErrorCode := 1012;
+			nAxisErrorID := 0;
+			eState := E_SafetyState.ErrorStop;
+		ELSIF fbMoveToZero.Done THEN
+			eState := E_SafetyState.Complete;
+		END_IF
+
+	E_SafetyState.Complete:
+		eState := E_SafetyState.Idle;
+
+	E_SafetyState.ProtectiveStop:
+		IF fbHalt.Done OR stAxis.Status.StandStill THEN
+			bHaltDonePulse := TRUE;
+			eState := E_SafetyState.Idle;
+		END_IF
+
+	E_SafetyState.ErrorStop:
+		IF fbHalt.Done OR stAxis.Status.StandStill THEN
+			bHaltDonePulse := TRUE;
+			bFaultPowerInhibit := TRUE;
+			eState := E_SafetyState.Idle;
+		END_IF
+END_CASE
+
+fbHomeTimeout(
+	IN := eState = E_SafetyState.Homing,
+	PT := HOME_TIMEOUT);
+fbMoveTimeout(
+	IN := eState = E_SafetyState.MoveToZero,
+	PT := HOME_PARK_TIMEOUT);
+
+// Physical switches continuously block motion farther into the active limit.
+fbPower(
 	Axis := stAxis,
-	Execute := rtResetTrigger.Q);
-	
-// Stop movement
-bMainHalt := bHalt OR bSeqHalt;
+	Enable := bPower AND NOT bFaultPowerInhibit,
+	Enable_Positive := bPower AND NOT bFaultPowerInhibit AND NOT bEndStopH,
+	Enable_Negative := bPower AND NOT bFaultPowerInhibit AND (NOT bEndStopL OR eState = E_SafetyState.Homing),
+	Override := 100.0);
 
-fbMC_Halt(
-	Axis := stAxis, 
-	Execute := bMainHalt);
-	
-/////////////////////
-// Status outputts //
-/////////////////////
+fbReset(
+	Axis := stAxis,
+	Execute := bResetExecute);
 
-// Power status
-bPowerStatus := fbMC_Power.Status;
-bPowerBusy := fbMC_Power.Busy;
-bPowerError := fbMC_Power.Error;
-nPowerErrorID := fbMC_Power.ErrorID;
+// TwinCAT NC owns the complete reference-cam search and release sequence.
+// Position is omitted so the NC-configured reference position (-5 mm) is used.
+fbHome(
+	Axis := stAxis,
+	Execute := eState = E_SafetyState.Homing,
+	HomingMode := MC_DefaultHoming,
+	BufferMode := MC_Aborting,
+	bCalibrationCam := bEndStopL);
 
-// Homing status (TODO)
+// Park at the safe working origin after TwinCAT has established the reference.
+fbMoveToZero(
+	Axis := stAxis,
+	Execute := eState = E_SafetyState.MoveToZero,
+	Distance := fHomeParkDistance,
+	Velocity := HOME_PARK_VELOCITY,
+	BufferMode := MC_Aborting);
 
-// Check if motor stoped
-bHaltDone := fbMC_Halt.Done;
+fbHalt(
+	Axis := stAxis,
+	Execute := eState = E_SafetyState.ProtectiveStop OR
+		eState = E_SafetyState.ErrorStop);
 
-
+// Public status.
+bPowerStatus := fbPower.Status;
+bHaltDone := bHaltDonePulse OR fbHalt.Done;
+bHoming := eState = E_SafetyState.Homing OR
+	eState = E_SafetyState.MoveToZero;
+bHomed := stAxis.Status.Homed;
+bStopped := stAxis.Status.StandStill;
+bProtectiveStop := eState = E_SafetyState.ProtectiveStop;
 ]]></ST>
     </Implementation>
     <LineIds Name="fb_safety">
-      <LineId Id="324" Count="0" />
-      <LineId Id="322" Count="1" />
-      <LineId Id="325" Count="0" />
-      <LineId Id="177" Count="0" />
-      <LineId Id="132" Count="0" />
-      <LineId Id="298" Count="0" />
-      <LineId Id="297" Count="0" />
-      <LineId Id="133" Count="5" />
-      <LineId Id="355" Count="0" />
-      <LineId Id="357" Count="14" />
-      <LineId Id="356" Count="0" />
-      <LineId Id="139" Count="3" />
-      <LineId Id="179" Count="0" />
-      <LineId Id="178" Count="0" />
-      <LineId Id="206" Count="0" />
-      <LineId Id="143" Count="0" />
-      <LineId Id="291" Count="0" />
-      <LineId Id="290" Count="0" />
-      <LineId Id="144" Count="0" />
-      <LineId Id="180" Count="1" />
-      <LineId Id="314" Count="1" />
-      <LineId Id="313" Count="0" />
-      <LineId Id="317" Count="0" />
-      <LineId Id="302" Count="2" />
-      <LineId Id="306" Count="1" />
-      <LineId Id="300" Count="0" />
-      <LineId Id="208" Count="0" />
-      <LineId Id="321" Count="0" />
-      <LineId Id="320" Count="0" />
-      <LineId Id="311" Count="0" />
-      <LineId Id="9" Count="0" />
-      <LineId Id="319" Count="0" />
-      <LineId Id="318" Count="0" />
-      <LineId Id="175" Count="0" />
+      <LineId Id="1" Count="175" />
     </LineIds>
   </POU>
 </TcPlcObject>

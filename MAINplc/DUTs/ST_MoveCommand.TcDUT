@@ -4,22 +4,60 @@
     <Declaration><![CDATA[TYPE ST_MoveCommand :
 	STRUCT
 		// Arrays of trajectory / force
-		fDistances  : ARRAY[1..100] OF LREAL; 
+		fDistances  : ARRAY[1..100] OF LREAL;
 		
 		// Arrays of speed / time
 		fVelocities : ARRAY[1..100] OF LREAL;
 		
 		// Number of commands
-		nTotalSteps : INT; 
+		nTotalSteps : INT;
 	
-		// Safety
-		nMode       : INT;  // 1=Move commands, 2=ForceMode, 3=cyclic
+		// Command and service controls
+		nMode       : INT;  // 1=buffered relative moves, 2=force/time, 3=test sequence
 		bExecute    : BOOL; // Start movement
 		bHalt       : BOOL; // Panic stop
 		bPower      : BOOL; // Enable motorov
 		bReset      : BOOL; // Reset errors
 		bHome       : BOOL; // Do homing seq
 		bStartTar   : BOOL; // Do Tar seq
+		bSavePosition : BOOL; // Capture the current axis position while idle
+		bRestorePosition : BOOL; // Return to the saved coordinate while idle
+		fRestoreVelocity : LREAL; // Saved-position return speed [mm/s]
+
+		// Optional force pre-conditioning sequence
+		bIncludePreTest : BOOL;
+		bPreTestOnly    : BOOL;  // Run pre-test and post-test without a main test
+		nPreCycleCount  : INT;   // Number of force load/unload cycles, 0..100
+		bPreloadEnabled : BOOL;  // Apply one force preload before the first cycle
+		fPreloadValue   : LREAL; // Signed preload force [N]
+		fPreLoadValue   : LREAL; // Signed force load target [N]
+		fPreUnloadValue : LREAL; // Signed force unload target [N]
+		bPreUnloadToStart : BOOL; // Return to sequence-start position instead of force unload
+		fPreTestRate     : LREAL; // Signed loading motor speed [mm/s]
+		fPreTestHoldTime : LREAL; // In-tolerance hold time for pre-test force endpoints [s]
+
+		// Shared test settings
+		fTestRate      : LREAL; // signed loading motor speed [mm/s]
+		fForceHoldTime : LREAL; // stopped dwell after a non-preload force endpoint [s]
+		fForceDropPercent   : LREAL; // phase-local peak drop [%], 0 disables
+		fForceDropThreshold : LREAL; // absolute force required before arming [N], 0 disables
+
+		// Test selection: >0=cyclic count, 0=single test
+		nCycleCount : INT;
+		nLoadMode   : INT;   // 1=displacement, 2=force
+		fLoadValues : ARRAY[1..100] OF LREAL; // per-cycle level [mm] or signed force [N]
+		nUnloadMode : INT;   // 1=displacement, 2=force
+		fUnloadValues : ARRAY[1..100] OF LREAL; // per-cycle level [mm] or signed force [N]
+
+		// Single test (nMode=3, nCycleCount=0); criterion 2 is optional OR
+		nStop1Mode         : INT;   // 0=off, 1=displacement, 2=force
+		fStop1Value        : LREAL;
+		nStop2Mode         : INT;
+		fStop2Value        : LREAL;
+
+		// 0=stay, 1=saved position, 2=sequence start,
+		// 3=pre-test final position, 4=unload to zero force
+		nPostTestMode : INT;
 	END_STRUCT
 END_TYPE
 ]]></Declaration>

@@ -4,34 +4,42 @@
     <Declaration><![CDATA[FUNCTION_BLOCK fb_MovementControler
 VAR_INPUT
 	fForce        : LREAL; // Actual force
+	fActPosition  : LREAL; // Absolute NC position
 	bPowerState   : BOOL;  // Actual power on state
 	bHaltDone     : BOOL;  // Motor stopped
+	bSafetyError  : BOOL;
+	bProtectiveStop : BOOL;
+	bExternalBusy : BOOL;
 	stSettings    : ST_settings;
 END_VAR
 
 VAR_OUTPUT
 	fTestStartPos : LREAL := 0.0; // position where test started
-	stateHalt : BOOL; // Stop movement
-	bBusy     : BOOL; // Sys is working
-    bError    : BOOL; // Sys in error (TODO)
+	stateHalt   : BOOL; // Request a controlled stop
+	bBusy       : BOOL; // System is processing a test or stopping
+	bError      : BOOL; // Latched application/motion error
+	nErrorCode  : UDINT;
+	nAxisErrorID: UDINT;
+	nOperationCounter : UDINT;
+	bSavedPositionValid : BOOL;
 END_VAR
 
 VAR
 	// Movement FBs
 	fbMC_MoveRelative1 : MC_MoveRelative;
-    fbMC_MoveRelative2 : MC_MoveRelative;
+	fbMC_MoveRelative2 : MC_MoveRelative;
 	fbMC_MoveVelocity  : MC_MoveVelocity;
+	mcRel1BufferMode   : MC_BufferMode := MC_Aborting;
 	
 	// Shared help vars
-	nCurrentStep : INT; // Witch movement is processed
-	nSeqState    : INT; // Modes actual state
+	nCurrentStep : INT; // Current movement step
+	nSeqState    : INT; // Current sequence state
 	
 	// mode 1
-    bExecuteMove : BOOL;
-    fTargetDist  : LREAL;
-    fTargetVel   : LREAL;
-    fTargetDist2 : LREAL;
-    fTargetVel2  : LREAL;
+	fTargetDist1 : LREAL;
+	fTargetVel1  : LREAL;
+	fTargetDist2 : LREAL;
+	fTargetVel2  : LREAL;
 	
 	// mode 2/3 vel movement
 	bExecuteVelMove : BOOL;
@@ -42,13 +50,58 @@ VAR
 	fTargetForce          : LREAL; // Wanted F
     fForceError           : LREAL; // Regulation error
     fForceErrorIntegral   : LREAL; // Integ of error
-    tStepDuration         : TIME;  // Force time
+	tStepDuration         : TIME;  // Force time
     fbTimerForce          : TON;   // Start timer
 	fLastSentVelocity   : LREAL;    // Tracks last updated velocity to prevent NC spamming
-    bVelUpdateTriggered : BOOL;     // Manages the rising edge handshake for MC_MoveVelocity
+	fPendingVelocity   : LREAL;
+	mcPendingDirection : MC_Direction;
+	nVelocityState     : INT;
+	nVelocityUpdateCounter : INT;
+	bResetRequested : BOOL;
+	bOperationCompleted : BOOL;
+
+	// Saved/reference positions
+	fSavedPosition      : LREAL;
+	fSequenceStartPos   : LREAL;
+	fPreTestFinalPos    : LREAL;
+	rtSavePosition      : R_TRIG;
+	rtRestorePosition   : R_TRIG;
+
+	// Generic endpoint engine for test-sequence mode 3
+	nCurrentCycle           : INT;
+	nCurrentPreCycle        : INT;
+	nAfterEndpointState     : INT;
+	fEndpointTargetPosition : LREAL;
+	fEndpointTargetForce    : LREAL;
+	fEndpointRate           : LREAL;
+	fEndpointHoldTime       : LREAL;
+	fEndpointStartError     : LREAL;
+	fEndpointCurrentError   : LREAL;
+	fForceHoldElapsed       : LREAL;
+	bEndpointUsePI          : BOOL;
+	bForceDropEnabled       : BOOL;
+	bForceDropArmed         : BOOL;
+	fForceDropPeak          : LREAL;
+	fForceMagnitude         : LREAL;
+	nLoadDirection          : INT;
+	nForceControlSign       : INT;
+	nLastMotionDirection    : INT;
+	nReliefSourceDirection  : INT;
+	bCommandValid           : BOOL;
+	nValidationIndex        : INT;
+
+	// Optional OR criterion for the single test
+	bSinglePrimaryActive  : BOOL;
+	bSingleStopReached    : BOOL;
+	fStop2TargetPosition  : LREAL;
+	fStop2StartError      : LREAL;
+	fStop2CurrentError    : LREAL;
 	
 	// Internal constants
 	CYCLE_TIME : LREAL := 0.01; // dt of plc
+	VELOCITY_UPDATE_DELTA : LREAL := 0.1;
+	VELOCITY_UPDATE_CYCLES : INT := 10;
+	POSITION_EPSILON : LREAL := 0.000001;
 	rtBusyTrig : R_TRIG;
 END_VAR
 
@@ -60,69 +113,235 @@ END_VAR
     <Implementation>
       <ST><![CDATA[
 // =========================================================
-//             Global Panic Stop / Halt Handling
+//                 Saved position and homing
 // =========================================================
-IF bHaltDone AND nSeqState > 0 THEN
-    nSeqState := 0;
-    stateHalt := FALSE;
-    fbMC_MoveRelative1.Execute := FALSE;
-    fbMC_MoveRelative2.Execute := FALSE;
-    bExecuteVelMove := FALSE;
+
+rtSavePosition(CLK := stMoveCommand.bSavePosition);
+rtRestorePosition(CLK := stMoveCommand.bRestorePosition);
+IF rtSavePosition.Q AND nSeqState = 0 AND NOT bExternalBusy THEN
+	fSavedPosition := fActPosition;
+	bSavedPositionValid := TRUE;
 END_IF
+
+// =========================================================
+//                      Error handling
+// =========================================================
+
+IF stMoveCommand.bReset THEN
+	bResetRequested := TRUE;
+END_IF
+
+IF bResetRequested AND bError AND NOT bSafetyError THEN
+	bError := FALSE;
+	nErrorCode := 0;
+	nAxisErrorID := 0;
+	nSeqState := 0;
+	stateHalt := FALSE;
+	bResetRequested := FALSE;
+ELSIF bResetRequested AND NOT bError AND NOT bSafetyError THEN
+	IF nSeqState = 999 THEN
+		nSeqState := 0;
+	END_IF
+	bResetRequested := FALSE;
+END_IF
+
+// Operator and safety stops abort the sequence without running post-test.
+IF stMoveCommand.bHalt OR (bProtectiveStop AND NOT stateHalt) THEN
+	IF stMoveCommand.bHalt THEN
+		stMoveCommand.bHalt := FALSE;
+	END_IF
+	stMoveCommand.bExecute := FALSE;
+	fbMC_MoveRelative1.Execute := FALSE;
+	fbMC_MoveRelative2.Execute := FALSE;
+	bExecuteVelMove := FALSE;
+	bSinglePrimaryActive := FALSE;
+	stateHalt := TRUE;
+	nSeqState := 900;
+END_IF
+
+// A safety-owned error cancels local motion without issuing another halt.
+IF bSafetyError THEN
+	stMoveCommand.bExecute := FALSE;
+	fbMC_MoveRelative1.Execute := FALSE;
+	fbMC_MoveRelative2.Execute := FALSE;
+	bExecuteVelMove := FALSE;
+	bSinglePrimaryActive := FALSE;
+	stateHalt := FALSE;
+	nSeqState := 999;
+END_IF
+
+// Latch motion-function-block and sensor errors.
+IF NOT bError AND NOT bSafetyError THEN
+	IF fbMC_MoveRelative1.Error THEN
+		bError := TRUE;
+		nErrorCode := 2201;
+		nAxisErrorID := fbMC_MoveRelative1.ErrorID;
+	ELSIF fbMC_MoveRelative2.Error THEN
+		bError := TRUE;
+		nErrorCode := 2202;
+		nAxisErrorID := fbMC_MoveRelative2.ErrorID;
+	ELSIF fbMC_MoveVelocity.Error THEN
+		bError := TRUE;
+		nErrorCode := 2203;
+		nAxisErrorID := fbMC_MoveVelocity.ErrorID;
+	ELSIF nSeqState > 0 AND nSeqState < 900 AND
+		NOT ((fForce = fForce) AND ABS(fForce) < 1.0E300) THEN
+		bError := TRUE;
+		nErrorCode := 2009;
+	END_IF
+END_IF
+
+// Runtime overforce response: halt, make one fixed relative release move, then abort.
+IF NOT bError AND NOT bSafetyError AND
+	nSeqState > 0 AND nSeqState < 900 AND
+	ABS(fForce) > stSettings.fMaxForce THEN
+	IF stMoveCommand.nMode = 3 AND nLoadDirection <> 0 THEN
+		nReliefSourceDirection := nLoadDirection;
+	ELSIF Axis.Status.PositiveDirection THEN
+		nReliefSourceDirection := 1;
+	ELSIF Axis.Status.NegativeDirection THEN
+		nReliefSourceDirection := -1;
+	ELSE
+		nReliefSourceDirection := nLastMotionDirection;
+	END_IF
+	fbMC_MoveRelative1.Execute := FALSE;
+	fbMC_MoveRelative2.Execute := FALSE;
+	bExecuteVelMove := FALSE;
+	bSinglePrimaryActive := FALSE;
+	stateHalt := TRUE;
+	nSeqState := 910;
+END_IF
+
+IF bError AND nSeqState <> 998 AND nSeqState <> 999 THEN
+	stMoveCommand.bExecute := FALSE;
+	fbMC_MoveRelative1.Execute := FALSE;
+	fbMC_MoveRelative2.Execute := FALSE;
+	bExecuteVelMove := FALSE;
+	bSinglePrimaryActive := FALSE;
+	stateHalt := TRUE;
+	nSeqState := 998;
+END_IF
+
+IF bError THEN
+	stMoveCommand.bExecute := FALSE;
+END_IF
+
+IF stMoveCommand.bExecute AND bExternalBusy THEN
+	stMoveCommand.bExecute := FALSE;
+	bError := TRUE;
+	nErrorCode := 2008;
+END_IF
+
+IF stMoveCommand.bExecute AND NOT bPowerState THEN
+	stMoveCommand.bExecute := FALSE;
+	bError := TRUE;
+	nErrorCode := 2006;
+END_IF
+
+// Finish operator/error stops.
+IF (nSeqState = 900 OR nSeqState = 998) AND bHaltDone THEN
+	stateHalt := FALSE;
+	IF nSeqState = 998 THEN
+		nSeqState := 999;
+	ELSE
+		nSeqState := 0;
+	END_IF
+END_IF
+
+// Overforce release sequence. FB1 is reused with aborting buffer mode.
+CASE nSeqState OF
+	910:
+		IF bHaltDone THEN
+			stateHalt := FALSE;
+			IF nReliefSourceDirection = 0 THEN
+				bError := TRUE;
+				nErrorCode := 2102;
+				nSeqState := 999;
+			ELSE
+				mcRel1BufferMode := MC_Aborting;
+				fTargetDist1 := -INT_TO_LREAL(nReliefSourceDirection) *
+					ABS(stSettings.fForceReliefDistance);
+				fTargetVel1 := ABS(stSettings.fForceReliefVelocity);
+				fbMC_MoveRelative1.Execute := FALSE;
+				nSeqState := 911;
+			END_IF
+		END_IF
+
+	911:
+		fbMC_MoveRelative1.Execute := TRUE;
+		nSeqState := 912;
+
+	912:
+		IF fbMC_MoveRelative1.Done THEN
+			fbMC_MoveRelative1.Execute := FALSE;
+			bError := TRUE;
+			nErrorCode := 2101;
+			nAxisErrorID := 0;
+			nSeqState := 999;
+		END_IF
+END_CASE
 
 // =========================================================
 //                      Mode switcher
 // =========================================================
 
-CASE stMoveCommand.nMode OF
-	1: // Mode 1: Constant speed
-	mode1();
-
-	2: // Mode 2: Constant Force
-	mode2();
-	
-	3: // Mode 3: Force threshold stepping
-	mode3();
-	
-END_CASE
+IF NOT bError AND NOT bSafetyError AND nSeqState < 900 THEN
+	CASE stMoveCommand.nMode OF
+		1: mode1();
+		2: mode2();
+		3: testSequence();
+	ELSE
+		IF stMoveCommand.bExecute THEN
+			stMoveCommand.bExecute := FALSE;
+			bError := TRUE;
+			nErrorCode := 2001;
+		END_IF
+	END_CASE
+END_IF
 
 // =========================================================
-//                      Motion call
+//                      Motion calls
 // =========================================================
 
-// Call motion mode 1
-fbMC_MoveRelative1(Axis := Axis, 
-	Distance := fTargetDist, 
-	Velocity := fTargetVel, 
+fbMC_MoveRelative1(
+	Axis := Axis,
+	Distance := fTargetDist1,
+	Velocity := fTargetVel1,
+	BufferMode := mcRel1BufferMode);
+fbMC_MoveRelative2(
+	Axis := Axis,
+	Distance := fTargetDist2,
+	Velocity := fTargetVel2,
 	BufferMode := MC_BlendingNext);
-fbMC_MoveRelative2(Axis := Axis, 
-	Distance := fTargetDist2, 
-	Velocity := fTargetVel2, 
-	BufferMode := MC_BlendingNext);
-	
-// call motion mode 2/3
+
 fbMC_MoveVelocity(
-	Axis      := Axis,
-	Execute   := bExecuteVelMove,
-	Velocity  := ABS(fCmdVelocity),
+	Axis := Axis,
+	Execute := bExecuteVelMove,
+	Velocity := ABS(fCmdVelocity),
 	Direction := mcDirection,
-	BufferMode:= MC_Aborting
-);
+	BufferMode := MC_Aborting);
+
+IF Axis.Status.PositiveDirection THEN
+	nLastMotionDirection := 1;
+ELSIF Axis.Status.NegativeDirection THEN
+	nLastMotionDirection := -1;
+END_IF
 
 // =========================================================
-//                      Outputs
+//                         Outputs
 // =========================================================
 
-// sys is working
-bBusy := nSeqState > 0;
+bBusy := nSeqState > 0 AND nSeqState <> 999;
 
 rtBusyTrig(CLK := bBusy);
 IF rtBusyTrig.Q THEN
 	fTestStartPos := Axis.NcToPlc.ActPos;
 END_IF
 
-// error id (TODO)
-
+IF bOperationCompleted THEN
+	nOperationCounter := nOperationCounter + 1;
+	bOperationCompleted := FALSE;
+END_IF
 
 ]]></ST>
     </Implementation>
@@ -135,68 +354,108 @@ END_IF
 // pos ==> pos
 // vel ==> vel
 
-IF fbMC_MoveRelative2.Active THEN
-	fbMC_MoveRelative1.Execute := FALSE;
-END_IF
-IF fbMC_MoveRelative1.Active THEN
-	fbMC_MoveRelative2.Execute := FALSE;
-END_IF
-
 CASE nSeqState OF
 	0: // Wait for Command
+		mcRel1BufferMode := MC_BlendingNext;
 		fbMC_MoveRelative1.Execute := FALSE;
 		fbMC_MoveRelative2.Execute := FALSE;
-		IF stMoveCommand.bExecute AND bPowerState THEN
-			nCurrentStep := 1;
+		IF stMoveCommand.bExecute THEN
 			stMoveCommand.bExecute := FALSE;
-			nSeqState := 1;
-		END_IF
-		
-	1: // Start first move on FB1
-		fTargetDist := stMoveCommand.fDistances[nCurrentStep];
-		fTargetVel  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
-		fbMC_MoveRelative1.Execute := TRUE;
-		nCurrentStep := nCurrentStep + 1;
-		nSeqState := 2;
-
-	2: // Pipeline Management Loop
-		// 1. If FB1 is running and FB2 is clear, buffer the next step into FB2
-		IF (fbMC_MoveRelative1.Active OR fbMC_MoveRelative1.Busy) 
-			AND NOT fbMC_MoveRelative2.Execute 
-			AND (nCurrentStep <= stMoveCommand.nTotalSteps) THEN
-			
-			fTargetDist2 := stMoveCommand.fDistances[nCurrentStep];
-			fTargetVel2  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
-			fbMC_MoveRelative2.Execute := TRUE; 
-			nCurrentStep := nCurrentStep + 1;
-			
-		// 2. If FB2 is running and FB1 is clear, buffer the next step into FB1
-		ELSIF fbMC_MoveRelative2.Active 
-			AND NOT fbMC_MoveRelative1.Execute 
-			AND (nCurrentStep <= stMoveCommand.nTotalSteps) THEN
-			
-			fTargetDist := stMoveCommand.fDistances[nCurrentStep];
-			fTargetVel  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
-			fbMC_MoveRelative1.Execute := TRUE;
-			nCurrentStep := nCurrentStep + 1;
-		END_IF
-		
-		// 3. Monitor for overall test completion
-		IF nCurrentStep > stMoveCommand.nTotalSteps THEN
-			IF NOT fbMC_MoveRelative1.Busy AND NOT fbMC_MoveRelative2.Busy THEN
-				nSeqState := 0; // Test finished successfully
+			bCommandValid := stMoveCommand.nTotalSteps >= 1 AND
+				stMoveCommand.nTotalSteps <= 100;
+			IF bCommandValid THEN
+				FOR nValidationIndex := 1 TO stMoveCommand.nTotalSteps DO
+					IF NOT ((stMoveCommand.fDistances[nValidationIndex] =
+						stMoveCommand.fDistances[nValidationIndex]) AND
+						ABS(stMoveCommand.fDistances[nValidationIndex]) < 1.0E300 AND
+						(stMoveCommand.fVelocities[nValidationIndex] =
+						stMoveCommand.fVelocities[nValidationIndex]) AND
+						ABS(stMoveCommand.fVelocities[nValidationIndex]) > 0.0 AND
+						ABS(stMoveCommand.fVelocities[nValidationIndex]) < 1.0E300) THEN
+						bCommandValid := FALSE;
+					END_IF
+				END_FOR
+			END_IF
+			IF bCommandValid THEN
+				nCurrentStep := 1;
+				nLoadDirection := 0;
+				nLastMotionDirection := 0;
+				nReliefSourceDirection := 0;
+				nSeqState := 1;
+			ELSE
+				bError := TRUE;
+				nErrorCode := 2007;
+				stateHalt := TRUE;
+				nSeqState := 998;
 			END_IF
 		END_IF
 		
-		// 4. Error Handling
-		IF fbMC_MoveRelative1.Error OR fbMC_MoveRelative2.Error THEN
-			nSeqState := 99;
+	1: // Start the first segment on FB1.
+		fTargetDist1 := stMoveCommand.fDistances[nCurrentStep];
+		fTargetVel1 := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+		fbMC_MoveRelative1.Execute := TRUE;
+		nSeqState := 2;
+
+	2: // Once FB1 is running, buffer the next segment on FB2.
+		IF fbMC_MoveRelative1.Busy THEN
+			nCurrentStep := nCurrentStep + 1;
+			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+				fTargetDist2 := stMoveCommand.fDistances[nCurrentStep];
+				fTargetVel2 := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+				fbMC_MoveRelative2.Execute := TRUE;
+				nSeqState := 3;
+			ELSE
+				nSeqState := 10;
+			END_IF
 		END_IF
 
-	99: // ERROR STATE
-		fbMC_MoveRelative1.Execute := FALSE;
-		fbMC_MoveRelative2.Execute := FALSE;
-		nSeqState := 0; 
+	3: // FB2 becomes active; reset and prepare FB1 for the following segment.
+		IF fbMC_MoveRelative2.Active THEN
+			fbMC_MoveRelative1.Execute := FALSE;
+			nCurrentStep := nCurrentStep + 1;
+			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+				fTargetDist1 := stMoveCommand.fDistances[nCurrentStep];
+				fTargetVel1 := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+				nSeqState := 31;
+			ELSE
+				nSeqState := 20;
+			END_IF
+		END_IF
+
+	31: // One scan with FB1 Execute low before retriggering it.
+		fbMC_MoveRelative1.Execute := TRUE;
+		nSeqState := 4;
+
+	4: // FB1 becomes active; reset and prepare FB2 for the next segment.
+		IF fbMC_MoveRelative1.Active THEN
+			fbMC_MoveRelative2.Execute := FALSE;
+			nCurrentStep := nCurrentStep + 1;
+			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+				fTargetDist2 := stMoveCommand.fDistances[nCurrentStep];
+				fTargetVel2 := ABS(stMoveCommand.fVelocities[nCurrentStep]);
+				nSeqState := 41;
+			ELSE
+				nSeqState := 10;
+			END_IF
+		END_IF
+
+	41: // One scan with FB2 Execute low before retriggering it.
+		fbMC_MoveRelative2.Execute := TRUE;
+		nSeqState := 3;
+
+	10: // The final active segment is FB1.
+		IF fbMC_MoveRelative1.Done THEN
+			fbMC_MoveRelative1.Execute := FALSE;
+			bOperationCompleted := TRUE;
+			nSeqState := 0;
+		END_IF
+
+	20: // The final active segment is FB2.
+		IF fbMC_MoveRelative2.Done THEN
+			fbMC_MoveRelative2.Execute := FALSE;
+			bOperationCompleted := TRUE;
+			nSeqState := 0;
+		END_IF
 END_CASE]]></ST>
       </Implementation>
     </Action>
@@ -216,10 +475,36 @@ CASE nSeqState OF
 		fCmdVelocity := 0.0;
 		fForceErrorIntegral := 0.0;
 		fLastSentVelocity := 0.0;
-		IF stMoveCommand.bExecute AND bPowerState THEN
-			nCurrentStep := 1;
+		IF stMoveCommand.bExecute THEN
 			stMoveCommand.bExecute := FALSE;
-			nSeqState := 1;
+			bCommandValid := stMoveCommand.nTotalSteps >= 1 AND
+				stMoveCommand.nTotalSteps <= 100;
+			IF bCommandValid THEN
+				FOR nValidationIndex := 1 TO stMoveCommand.nTotalSteps DO
+					IF NOT ((stMoveCommand.fVelocities[nValidationIndex] =
+						stMoveCommand.fVelocities[nValidationIndex]) AND
+						ABS(stMoveCommand.fVelocities[nValidationIndex]) < 1.0E300 AND
+						(stMoveCommand.fDistances[nValidationIndex] =
+						stMoveCommand.fDistances[nValidationIndex]) AND
+						stMoveCommand.fDistances[nValidationIndex] >= 0.0 AND
+						stMoveCommand.fDistances[nValidationIndex] < 1.0E300) THEN
+						bCommandValid := FALSE;
+					END_IF
+				END_FOR
+			END_IF
+			IF bCommandValid THEN
+				nCurrentStep := 1;
+				nVelocityState := 0;
+				nLoadDirection := 0;
+				nLastMotionDirection := 0;
+				nReliefSourceDirection := 0;
+				nSeqState := 1;
+			ELSE
+				bError := TRUE;
+				nErrorCode := 2007;
+				stateHalt := TRUE;
+				nSeqState := 998;
+			END_IF
 		END_IF
 		
 	1: // Init Step
@@ -227,17 +512,17 @@ CASE nSeqState OF
 			// load new values
 			fTargetForce := stMoveCommand.fVelocities[nCurrentStep];
 			tStepDuration := LREAL_TO_TIME(stMoveCommand.fDistances[nCurrentStep] * 1000.0);
-			
 			// reset int and timer
 			fForceErrorIntegral := 0.0;
 			fLastSentVelocity := 0.0;
+			nVelocityUpdateCounter := VELOCITY_UPDATE_CYCLES;
 			fbTimerForce(IN := FALSE);
 			
 			// next seq
 			nSeqState := 2;
 		ELSE
-			stateHalt := TRUE;
 			bExecuteVelMove := FALSE;
+			stateHalt := TRUE;
 			nSeqState := 3;
 		END_IF
 		
@@ -251,113 +536,797 @@ CASE nSeqState OF
 		fCmdVelocity := (fForceError * stSettings.fKp) + (fForceErrorIntegral * stSettings.fKi);
 		fCmdVelocity := LIMIT(-stSettings.fMaxVelocity, fCmdVelocity, stSettings.fMaxVelocity);
 		
-		// Direction of movement
-		IF fCmdVelocity > 0.05 THEN
-			mcDirection := MC_Positive_Direction;
-		ELSIF fCmdVelocity < -0.05 THEN
-			mcDirection := MC_Negative_Direction;
+		nVelocityUpdateCounter := nVelocityUpdateCounter + 1;
+
+		IF ABS(fForceError) <= stSettings.fForceTolerance THEN
+			// Stop in the force deadband without powering the axis off.
+			bExecuteVelMove := FALSE;
+			IF nVelocityState <> 3 AND nVelocityState <> 4 THEN
+				stateHalt := TRUE;
+				nVelocityState := 3;
+			ELSIF nVelocityState = 3 AND bHaltDone THEN
+				stateHalt := FALSE;
+				nVelocityState := 4;
+			END_IF
+		ELSIF nVelocityState = 3 THEN
+			IF bHaltDone THEN
+				stateHalt := FALSE;
+				nVelocityState := 0;
+			END_IF
+		ELSIF nVelocityState = 4 THEN
+			// The axis is stopped and the force left the deadband.
+			nVelocityState := 0;
+		ELSIF nVelocityState = 2 THEN
+			fCmdVelocity := fPendingVelocity;
+			mcDirection := mcPendingDirection;
+			bExecuteVelMove := TRUE;
+			fLastSentVelocity := fCmdVelocity;
+			nVelocityUpdateCounter := 0;
+			nVelocityState := 1;
+		ELSE
+			IF fCmdVelocity >= 0.0 THEN
+				mcPendingDirection := MC_Positive_Direction;
+			ELSE
+				mcPendingDirection := MC_Negative_Direction;
+			END_IF
+			fPendingVelocity := ABS(fCmdVelocity);
+
+			IF nVelocityState = 0 THEN
+				fCmdVelocity := fPendingVelocity;
+				mcDirection := mcPendingDirection;
+				bExecuteVelMove := TRUE;
+				fLastSentVelocity := fCmdVelocity;
+				nVelocityUpdateCounter := 0;
+				nVelocityState := 1;
+			ELSIF nVelocityUpdateCounter >= VELOCITY_UPDATE_CYCLES AND
+				(ABS(fPendingVelocity - fLastSentVelocity) >= VELOCITY_UPDATE_DELTA OR
+				 mcPendingDirection <> mcDirection) THEN
+				bExecuteVelMove := FALSE;
+				nVelocityState := 2;
+			END_IF
 		END_IF
-		
-		// edge for execution
-		bExecuteVelMove := NOT bExecuteVelMove;
 		
 		// timer handling
 		fbTimerForce(IN := TRUE, PT := tStepDuration);
 		
 		IF fbTimerForce.Q THEN
+			bExecuteVelMove := FALSE;
+			IF nVelocityState = 4 OR bHaltDone THEN
+				// The deadband halt already stopped the axis in this scan.
+				stateHalt := FALSE;
+				nVelocityState := 0;
+				nCurrentStep := nCurrentStep + 1;
+				IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+					nSeqState := 1;
+				ELSE
+					bOperationCompleted := TRUE;
+					nSeqState := 0;
+				END_IF
+			ELSE
+				stateHalt := TRUE;
+				nSeqState := 4;
+			END_IF
+		END_IF
+
+	4: // Stop cleanly between force/time steps
+		IF bHaltDone THEN
+			stateHalt := FALSE;
+			nVelocityState := 0;
 			nCurrentStep := nCurrentStep + 1;
-			nSeqState := 1;
+			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
+				nSeqState := 1;
+			ELSE
+				bOperationCompleted := TRUE;
+				nSeqState := 0;
+			END_IF
 		END_IF
 		
 	3: // stop axis
 		IF bHaltDone THEN
-			nSeqState := 0;
 			stateHalt := FALSE;
+			bOperationCompleted := TRUE;
+			nSeqState := 0;
 		END_IF
 END_CASE]]></ST>
       </Implementation>
     </Action>
-    <Action Name="mode3" Id="{91b9dfb8-a151-4a2f-a1d9-cceccc9ea242}">
+    <Action Name="testSequence" Id="{6e45f489-7cb6-4ab3-9956-7b9a3d25d9d1}">
       <Implementation>
         <ST><![CDATA[
-// =========================================================
-//                  Mode 3: Force threshold stepping
-// =========================================================
-// pos ==> force target
-// vel ==> approach speed
+// Shared pre-test, main-test and post-test sequence for mode 3.
+// All stored coordinates are references only; every position command is relative.
+
+// Phase-local force-drop detection. Zero percent or threshold disables it.
+IF bForceDropEnabled AND nSeqState >= 311 AND nSeqState <= 315 THEN
+	fForceMagnitude := ABS(fForce);
+	IF NOT bForceDropArmed THEN
+		IF fForceMagnitude >= stMoveCommand.fForceDropThreshold THEN
+			bForceDropArmed := TRUE;
+			fForceDropPeak := fForceMagnitude;
+		END_IF
+	ELSE
+		IF fForceMagnitude > fForceDropPeak THEN
+			fForceDropPeak := fForceMagnitude;
+		END_IF
+		IF fForceMagnitude <=
+			fForceDropPeak * (1.0 - (stMoveCommand.fForceDropPercent / 100.0)) THEN
+			fbMC_MoveRelative1.Execute := FALSE;
+			bExecuteVelMove := FALSE;
+			bSinglePrimaryActive := FALSE;
+			bForceDropEnabled := FALSE;
+			stateHalt := TRUE;
+			nSeqState := 230;
+		END_IF
+	END_IF
+END_IF
+
+// Criterion 2 ends a single test immediately when its signed level is crossed.
+IF bSinglePrimaryActive AND stMoveCommand.nStop2Mode > 0 THEN
+	bSingleStopReached := FALSE;
+	IF stMoveCommand.nStop2Mode = 1 THEN
+		fStop2CurrentError := fStop2TargetPosition - fActPosition;
+		IF ABS(fStop2CurrentError) <= POSITION_EPSILON OR
+			(fStop2StartError > 0.0 AND fStop2CurrentError <= 0.0) OR
+			(fStop2StartError < 0.0 AND fStop2CurrentError >= 0.0) THEN
+			bSingleStopReached := TRUE;
+		END_IF
+	ELSIF stMoveCommand.nStop2Mode = 2 THEN
+		fStop2CurrentError := stMoveCommand.fStop2Value - fForce;
+		IF ABS(fStop2CurrentError) <= stSettings.fForceTolerance OR
+			(fStop2StartError > 0.0 AND fStop2CurrentError <= 0.0) OR
+			(fStop2StartError < 0.0 AND fStop2CurrentError >= 0.0) THEN
+			bSingleStopReached := TRUE;
+		END_IF
+	END_IF
+
+	IF bSingleStopReached THEN
+		fbMC_MoveRelative1.Execute := FALSE;
+		bExecuteVelMove := FALSE;
+		bSinglePrimaryActive := FALSE;
+		stateHalt := TRUE;
+		nSeqState := 220;
+	END_IF
+END_IF
 
 CASE nSeqState OF
-	0: // Wait for command
+	0: // Start a test. MATLAB keeps command values unchanged while bWorking is TRUE.
+		mcRel1BufferMode := MC_Aborting;
+		fbMC_MoveRelative1.Execute := FALSE;
+		fbMC_MoveRelative2.Execute := FALSE;
 		bExecuteVelMove := FALSE;
-		fCmdVelocity := 0.0;
+		stateHalt := FALSE;
+		bSinglePrimaryActive := FALSE;
+		bEndpointUsePI := FALSE;
+		bForceDropEnabled := FALSE;
+		bForceDropArmed := FALSE;
 
-		IF stMoveCommand.bExecute AND bPowerState THEN
-			nCurrentStep := 1;
-			stMoveCommand.bExecute := FALSE;
-			nSeqState := 1;
-		END_IF
-
-	1: // Load next target force + speed
-		IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
-			fTargetForce := stMoveCommand.fDistances[nCurrentStep];
-			fCmdVelocity  := ABS(stMoveCommand.fVelocities[nCurrentStep]);
-
-			// Choose direction from target force sign
-			IF fTargetForce >= 0.0 THEN
-				mcDirection := MC_Positive_Direction;
-			ELSE
-				mcDirection := MC_Negative_Direction;
-			END_IF
-
-			bExecuteVelMove := FALSE;   // prepare trigger
-			nSeqState := 11;
-		ELSE
-			nSeqState := 0; // finished
-		END_IF
-
-	11: // One scan delay / trigger move
-		bExecuteVelMove := TRUE;
-		nSeqState := 2;
-
-	2: // Move until force threshold is reached
-	
-		// Sign-aware threshold check
-		IF (fTargetForce >= 0.0 AND fForce >= (fTargetForce - stSettings.fForceTolerance)) OR 
-			(fTargetForce < 0.0 AND fForce <= (fTargetForce + stSettings.fForceTolerance)) THEN
-			
-			nCurrentStep := nCurrentStep + 1;
-			
-			IF nCurrentStep <= stMoveCommand.nTotalSteps THEN
-				// go to next step
-				bExecuteVelMove := FALSE; 
-				nSeqState := 1; 
-			ELSE
-				// end of test
+		IF rtRestorePosition.Q THEN
+			IF bExternalBusy THEN
+				bError := TRUE;
+				nErrorCode := 2008;
 				stateHalt := TRUE;
-				bExecuteVelMove := FALSE;
-				nSeqState := 3;
+				nSeqState := 998;
+			ELSIF NOT bPowerState THEN
+				bError := TRUE;
+				nErrorCode := 2006;
+				stateHalt := TRUE;
+				nSeqState := 998;
+			ELSIF NOT bSavedPositionValid THEN
+				bError := TRUE;
+				nErrorCode := 2002;
+				stateHalt := TRUE;
+				nSeqState := 998;
+			ELSIF NOT ((stMoveCommand.fRestoreVelocity =
+				stMoveCommand.fRestoreVelocity) AND
+				ABS(stMoveCommand.fRestoreVelocity) > 0.0 AND
+				ABS(stMoveCommand.fRestoreVelocity) < 1.0E300) THEN
+				bError := TRUE;
+				nErrorCode := 2009;
+				stateHalt := TRUE;
+				nSeqState := 998;
+			ELSE
+				fTestStartPos := fActPosition;
+				nLoadDirection := 0;
+				nLastMotionDirection := 0;
+				nReliefSourceDirection := 0;
+				fEndpointTargetPosition := fSavedPosition;
+				bForceDropEnabled := FALSE;
+				fTargetDist1 := fEndpointTargetPosition - fActPosition;
+				fTargetVel1 := ABS(stMoveCommand.fRestoreVelocity);
+				nAfterEndpointState := 56;
+				nSeqState := 300;
+			END_IF
+		ELSIF stMoveCommand.bExecute THEN
+			stMoveCommand.bExecute := FALSE;
+
+			bCommandValid :=
+				(stSettings.fMaxForce = stSettings.fMaxForce) AND
+				stSettings.fMaxForce > 0.0 AND stSettings.fMaxForce < 1.0E300 AND
+				(stSettings.fForceReliefDistance = stSettings.fForceReliefDistance) AND
+				stSettings.fForceReliefDistance > 0.0 AND
+				stSettings.fForceReliefDistance < 1.0E300 AND
+				(stSettings.fForceReliefVelocity = stSettings.fForceReliefVelocity) AND
+				stSettings.fForceReliefVelocity > 0.0 AND
+				stSettings.fForceReliefVelocity < 1.0E300 AND
+				(stSettings.fForceTolerance = stSettings.fForceTolerance) AND
+				stSettings.fForceTolerance >= 0.0 AND
+				(stSettings.fMaxVelocity = stSettings.fMaxVelocity) AND
+				stSettings.fMaxVelocity > 0.0 AND
+				(stSettings.fIntegralLimit = stSettings.fIntegralLimit) AND
+				stSettings.fIntegralLimit >= 0.0;
+
+			IF stMoveCommand.bPreTestOnly AND NOT stMoveCommand.bIncludePreTest THEN
+				bCommandValid := FALSE;
+			END_IF
+
+			IF stMoveCommand.bIncludePreTest THEN
+				bCommandValid := bCommandValid AND
+					stMoveCommand.nPreCycleCount >= 0 AND
+					stMoveCommand.nPreCycleCount <= 100 AND
+					(stMoveCommand.fPreTestRate = stMoveCommand.fPreTestRate) AND
+					ABS(stMoveCommand.fPreTestRate) > 0.0 AND
+					ABS(stMoveCommand.fPreTestRate) < 1.0E300 AND
+					(stMoveCommand.fPreTestHoldTime = stMoveCommand.fPreTestHoldTime) AND
+					stMoveCommand.fPreTestHoldTime >= 0.0 AND
+					stMoveCommand.fPreTestHoldTime < 1.0E300 AND
+					(stMoveCommand.fPreloadValue = stMoveCommand.fPreloadValue) AND
+					ABS(stMoveCommand.fPreloadValue) < 1.0E300 AND
+					(stMoveCommand.fPreLoadValue = stMoveCommand.fPreLoadValue) AND
+					ABS(stMoveCommand.fPreLoadValue) < 1.0E300 AND
+					(stMoveCommand.fPreUnloadValue = stMoveCommand.fPreUnloadValue) AND
+					ABS(stMoveCommand.fPreUnloadValue) < 1.0E300;
+			END_IF
+
+			bCommandValid := bCommandValid AND
+				stMoveCommand.nPostTestMode >= 0 AND
+				stMoveCommand.nPostTestMode <= 4 AND
+				(stMoveCommand.fTestRate = stMoveCommand.fTestRate) AND
+				ABS(stMoveCommand.fTestRate) > 0.0 AND
+				ABS(stMoveCommand.fTestRate) < 1.0E300 AND
+				(stMoveCommand.fForceHoldTime = stMoveCommand.fForceHoldTime) AND
+				stMoveCommand.fForceHoldTime >= 0.0 AND
+				stMoveCommand.fForceHoldTime < 1.0E300 AND
+				(stMoveCommand.fForceDropPercent =
+					stMoveCommand.fForceDropPercent) AND
+				stMoveCommand.fForceDropPercent >= 0.0 AND
+				stMoveCommand.fForceDropPercent < 100.0 AND
+				(stMoveCommand.fForceDropThreshold =
+					stMoveCommand.fForceDropThreshold) AND
+				stMoveCommand.fForceDropThreshold >= 0.0 AND
+				stMoveCommand.fForceDropThreshold < 1.0E300;
+
+			IF NOT stMoveCommand.bPreTestOnly THEN
+				bCommandValid := bCommandValid AND
+					stMoveCommand.nCycleCount >= 0 AND
+					stMoveCommand.nCycleCount <= 100;
+
+				IF stMoveCommand.nCycleCount > 0 THEN
+					bCommandValid := bCommandValid AND
+						(stMoveCommand.nLoadMode = 1 OR stMoveCommand.nLoadMode = 2) AND
+						(stMoveCommand.nUnloadMode = 1 OR stMoveCommand.nUnloadMode = 2);
+					IF bCommandValid THEN
+						FOR nValidationIndex := 1 TO stMoveCommand.nCycleCount DO
+							IF NOT ((stMoveCommand.fLoadValues[nValidationIndex] =
+								stMoveCommand.fLoadValues[nValidationIndex]) AND
+								ABS(stMoveCommand.fLoadValues[nValidationIndex]) < 1.0E300 AND
+								(stMoveCommand.fUnloadValues[nValidationIndex] =
+								stMoveCommand.fUnloadValues[nValidationIndex]) AND
+								ABS(stMoveCommand.fUnloadValues[nValidationIndex]) < 1.0E300) THEN
+								bCommandValid := FALSE;
+							END_IF
+						END_FOR
+					END_IF
+				ELSE
+					bCommandValid := bCommandValid AND
+						(stMoveCommand.nStop1Mode = 1 OR stMoveCommand.nStop1Mode = 2) AND
+						stMoveCommand.nStop2Mode >= 0 AND stMoveCommand.nStop2Mode <= 2 AND
+						(stMoveCommand.fStop1Value = stMoveCommand.fStop1Value) AND
+						ABS(stMoveCommand.fStop1Value) < 1.0E300 AND
+						(stMoveCommand.fStop2Value = stMoveCommand.fStop2Value) AND
+						ABS(stMoveCommand.fStop2Value) < 1.0E300;
+				END_IF
+			END_IF
+
+			IF bCommandValid THEN
+				fSequenceStartPos := fActPosition;
+				fPreTestFinalPos := fSequenceStartPos;
+				fTestStartPos := fSequenceStartPos;
+				nCurrentCycle := 1;
+				nCurrentPreCycle := 1;
+				nLoadDirection := 0;
+				nLastMotionDirection := 0;
+				nReliefSourceDirection := 0;
+				fForceErrorIntegral := 0.0;
+				nVelocityState := 0;
+				nVelocityUpdateCounter := VELOCITY_UPDATE_CYCLES;
+
+				IF stMoveCommand.bIncludePreTest THEN
+					nSeqState := 10;
+				ELSE
+					nSeqState := 20;
+				END_IF
+			ELSE
+				bError := TRUE;
+				nErrorCode := 2007;
+				stateHalt := TRUE;
+				nSeqState := 998;
 			END_IF
 		END_IF
 
-	3: // stop axis
-		IF bHaltDone THEN
-			nSeqState := 0;
-			stateHalt := FALSE;
+	10: // Optional one-time force preload.
+		nCurrentPreCycle := 1;
+		IF stMoveCommand.bPreloadEnabled THEN
+			fEndpointTargetForce := stMoveCommand.fPreloadValue;
+			fEndpointRate := stMoveCommand.fPreTestRate;
+			fEndpointHoldTime := stMoveCommand.fPreTestHoldTime;
+			bEndpointUsePI := TRUE;
+			bForceDropEnabled := FALSE;
+			nAfterEndpointState := 11;
+			nSeqState := 310;
+		ELSE
+			nSeqState := 12;
 		END_IF
-END_CASE]]></ST>
+
+	11:
+		nSeqState := 12;
+
+	12: // Force-loading endpoint for one pre-conditioning cycle.
+		IF nCurrentPreCycle > stMoveCommand.nPreCycleCount THEN
+			nSeqState := 19;
+		ELSE
+			fEndpointTargetForce := stMoveCommand.fPreLoadValue;
+			fEndpointRate := stMoveCommand.fPreTestRate;
+			fEndpointHoldTime := stMoveCommand.fPreTestHoldTime;
+			bEndpointUsePI := FALSE;
+			bForceDropEnabled := FALSE;
+			IF fEndpointRate > 0.0 THEN
+				nLoadDirection := 1;
+			ELSE
+				nLoadDirection := -1;
+			END_IF
+			nAfterEndpointState := 13;
+			nSeqState := 310;
+		END_IF
+
+	13: // Force unload or return to the sequence-start coordinate.
+		IF stMoveCommand.bPreUnloadToStart THEN
+			fEndpointTargetPosition := fSequenceStartPos;
+			fTargetDist1 := fEndpointTargetPosition - fActPosition;
+			fTargetVel1 := ABS(stMoveCommand.fPreTestRate);
+			bForceDropEnabled := FALSE;
+			nAfterEndpointState := 14;
+			nSeqState := 300;
+		ELSE
+			fEndpointTargetForce := stMoveCommand.fPreUnloadValue;
+			fEndpointRate := -stMoveCommand.fPreTestRate;
+			fEndpointHoldTime := stMoveCommand.fPreTestHoldTime;
+			bEndpointUsePI := FALSE;
+			bForceDropEnabled := FALSE;
+			nAfterEndpointState := 14;
+			nSeqState := 310;
+		END_IF
+
+	14:
+		nCurrentPreCycle := nCurrentPreCycle + 1;
+		nSeqState := 12;
+
+	19: // The actual pre-test final position is the main-test origin.
+		fPreTestFinalPos := fActPosition;
+		IF stMoveCommand.bPreTestOnly THEN
+			nSeqState := 50;
+		ELSE
+			nSeqState := 20;
+		END_IF
+
+	20: // A positive cycle count selects cyclic; zero selects single.
+		IF stMoveCommand.nCycleCount > 0 THEN
+			nSeqState := 100;
+		ELSE
+			nSeqState := 200;
+		END_IF
+
+	// -----------------------------------------------------
+	// Mode 3: cyclic load endpoint followed by unload endpoint
+	// -----------------------------------------------------
+	100:
+		IF nCurrentCycle > stMoveCommand.nCycleCount THEN
+			nSeqState := 50;
+		ELSIF stMoveCommand.nLoadMode = 1 THEN
+			fEndpointTargetPosition := fPreTestFinalPos +
+				stMoveCommand.fLoadValues[nCurrentCycle];
+			fTargetDist1 := fEndpointTargetPosition - fActPosition;
+			fTargetVel1 := ABS(stMoveCommand.fTestRate);
+			bForceDropEnabled := FALSE;
+			IF fTargetDist1 > POSITION_EPSILON THEN
+				nLoadDirection := 1;
+			ELSIF fTargetDist1 < -POSITION_EPSILON THEN
+				nLoadDirection := -1;
+			END_IF
+			nAfterEndpointState := 110;
+			nSeqState := 300;
+		ELSIF stMoveCommand.nLoadMode = 2 THEN
+			fEndpointTargetForce := stMoveCommand.fLoadValues[nCurrentCycle];
+			fEndpointRate := stMoveCommand.fTestRate;
+			fEndpointHoldTime := stMoveCommand.fForceHoldTime;
+			bEndpointUsePI := FALSE;
+			bForceDropEnabled :=
+				stMoveCommand.fForceDropPercent > 0.0 AND
+				stMoveCommand.fForceDropThreshold > 0.0;
+			IF fEndpointRate > 0.0 THEN
+				nLoadDirection := 1;
+			ELSIF fEndpointRate < 0.0 THEN
+				nLoadDirection := -1;
+			END_IF
+			nAfterEndpointState := 110;
+			nSeqState := 310;
+		ELSE
+			bError := TRUE;
+			nErrorCode := 2003;
+			stateHalt := TRUE;
+			nSeqState := 998;
+		END_IF
+
+	110:
+		IF stMoveCommand.nUnloadMode = 1 THEN
+			fEndpointTargetPosition := fPreTestFinalPos +
+				stMoveCommand.fUnloadValues[nCurrentCycle];
+			fTargetDist1 := fEndpointTargetPosition - fActPosition;
+			fTargetVel1 := ABS(stMoveCommand.fTestRate);
+			bForceDropEnabled := FALSE;
+			nAfterEndpointState := 120;
+			nSeqState := 300;
+		ELSIF stMoveCommand.nUnloadMode = 2 THEN
+			fEndpointTargetForce := stMoveCommand.fUnloadValues[nCurrentCycle];
+			fEndpointRate := -stMoveCommand.fTestRate;
+			fEndpointHoldTime := stMoveCommand.fForceHoldTime;
+			bEndpointUsePI := FALSE;
+			bForceDropEnabled :=
+				stMoveCommand.fForceDropPercent > 0.0 AND
+				stMoveCommand.fForceDropThreshold > 0.0;
+			nAfterEndpointState := 120;
+			nSeqState := 310;
+		ELSE
+			bError := TRUE;
+			nErrorCode := 2003;
+			stateHalt := TRUE;
+			nSeqState := 998;
+		END_IF
+
+	120:
+		nCurrentCycle := nCurrentCycle + 1;
+		nSeqState := 100;
+
+	// -----------------------------------------------------
+	// Mode 3 single test: criterion 1 is the primary endpoint
+	// -----------------------------------------------------
+	200:
+		bSingleStopReached := FALSE;
+		bSinglePrimaryActive := TRUE;
+
+		IF stMoveCommand.nStop2Mode = 1 THEN
+			fStop2TargetPosition := fPreTestFinalPos + stMoveCommand.fStop2Value;
+			fStop2StartError := fStop2TargetPosition - fActPosition;
+		ELSIF stMoveCommand.nStop2Mode = 2 THEN
+			fStop2StartError := stMoveCommand.fStop2Value - fForce;
+		END_IF
+
+		IF stMoveCommand.nStop1Mode = 1 THEN
+			fEndpointTargetPosition := fPreTestFinalPos + stMoveCommand.fStop1Value;
+			fTargetDist1 := fEndpointTargetPosition - fActPosition;
+			fTargetVel1 := ABS(stMoveCommand.fTestRate);
+			bForceDropEnabled := FALSE;
+			IF fTargetDist1 > POSITION_EPSILON THEN
+				nLoadDirection := 1;
+			ELSIF fTargetDist1 < -POSITION_EPSILON THEN
+				nLoadDirection := -1;
+			END_IF
+			nAfterEndpointState := 210;
+			nSeqState := 300;
+		ELSIF stMoveCommand.nStop1Mode = 2 THEN
+			fEndpointTargetForce := stMoveCommand.fStop1Value;
+			fEndpointRate := stMoveCommand.fTestRate;
+			fEndpointHoldTime := stMoveCommand.fForceHoldTime;
+			bEndpointUsePI := FALSE;
+			bForceDropEnabled :=
+				stMoveCommand.fForceDropPercent > 0.0 AND
+				stMoveCommand.fForceDropThreshold > 0.0;
+			IF fEndpointRate > 0.0 THEN
+				nLoadDirection := 1;
+			ELSIF fEndpointRate < 0.0 THEN
+				nLoadDirection := -1;
+			END_IF
+			nAfterEndpointState := 210;
+			nSeqState := 310;
+		ELSE
+			bSinglePrimaryActive := FALSE;
+			bError := TRUE;
+			nErrorCode := 2003;
+			stateHalt := TRUE;
+			nSeqState := 998;
+		END_IF
+
+	210: // Primary endpoint completed normally.
+		bSinglePrimaryActive := FALSE;
+		nSeqState := 50;
+
+	220: // Optional OR criterion stopped the active primary move.
+		IF bHaltDone THEN
+			stateHalt := FALSE;
+			nVelocityState := 0;
+			nSeqState := 50;
+		END_IF
+
+	230: // Force drop stopped the active force phase.
+		IF bHaltDone THEN
+			stateHalt := FALSE;
+			nVelocityState := 0;
+			nSeqState := 50;
+		END_IF
+
+	// -----------------------------------------------------
+	// Post-test; reached only after normal main-test completion
+	// -----------------------------------------------------
+	50:
+		bSinglePrimaryActive := FALSE;
+		bForceDropEnabled := FALSE;
+		CASE stMoveCommand.nPostTestMode OF
+			0: // Stay at the current position.
+				fbMC_MoveRelative1.Execute := FALSE;
+				bExecuteVelMove := FALSE;
+				stateHalt := TRUE;
+				nSeqState := 51;
+
+			1: // Return to the separately saved coordinate.
+				IF bSavedPositionValid THEN
+					fEndpointTargetPosition := fSavedPosition;
+					fTargetDist1 := fEndpointTargetPosition - fActPosition;
+					fTargetVel1 := ABS(stMoveCommand.fTestRate);
+					nAfterEndpointState := 55;
+					nSeqState := 300;
+				ELSE
+					bError := TRUE;
+					nErrorCode := 2002;
+					stateHalt := TRUE;
+					nSeqState := 998;
+				END_IF
+
+			2: // Return to the position captured before pre-test.
+				fEndpointTargetPosition := fSequenceStartPos;
+				fTargetDist1 := fEndpointTargetPosition - fActPosition;
+				fTargetVel1 := ABS(stMoveCommand.fTestRate);
+				nAfterEndpointState := 55;
+				nSeqState := 300;
+
+			3: // Return to the actual position reached after pre-test.
+				fEndpointTargetPosition := fPreTestFinalPos;
+				fTargetDist1 := fEndpointTargetPosition - fActPosition;
+				fTargetVel1 := ABS(stMoveCommand.fTestRate);
+				nAfterEndpointState := 55;
+				nSeqState := 300;
+
+			4: // Release to signed zero force without a hold period.
+				IF nLoadDirection = 0 THEN
+					bError := TRUE;
+					nErrorCode := 2004;
+					stateHalt := TRUE;
+					nSeqState := 998;
+				ELSE
+					fEndpointTargetForce := 0.0;
+					fEndpointRate := -INT_TO_LREAL(nLoadDirection) *
+						ABS(stMoveCommand.fTestRate);
+					fEndpointHoldTime := 0.0;
+					bEndpointUsePI := FALSE;
+					nAfterEndpointState := 55;
+					nSeqState := 310;
+				END_IF
+
+		ELSE
+			bError := TRUE;
+			nErrorCode := 2005;
+			stateHalt := TRUE;
+			nSeqState := 998;
+		END_CASE
+
+	51:
+		IF bHaltDone THEN
+			stateHalt := FALSE;
+			nSeqState := 55;
+		END_IF
+
+	55:
+		bOperationCompleted := TRUE;
+		nSeqState := 0;
+
+	56: // Standalone saved-position restore completed.
+		bOperationCompleted := TRUE;
+		nSeqState := 0;
+
+	// -----------------------------------------------------
+	// Generic MC_MoveRelative endpoint
+	// -----------------------------------------------------
+	300:
+		mcRel1BufferMode := MC_Aborting;
+		fbMC_MoveRelative1.Execute := FALSE;
+		IF ABS(fTargetDist1) <= POSITION_EPSILON THEN
+			nSeqState := nAfterEndpointState;
+		ELSE
+			IF fTargetDist1 > 0.0 THEN
+				nLastMotionDirection := 1;
+			ELSE
+				nLastMotionDirection := -1;
+			END_IF
+			nSeqState := 301;
+		END_IF
+
+	301: // One complete scan with Execute low before reuse.
+		fbMC_MoveRelative1.Execute := TRUE;
+		nSeqState := 302;
+
+	302:
+		IF fbMC_MoveRelative1.Done THEN
+			fbMC_MoveRelative1.Execute := FALSE;
+			nSeqState := nAfterEndpointState;
+		END_IF
+
+	// -----------------------------------------------------
+	// Generic signed-force endpoint and in-tolerance hold
+	// -----------------------------------------------------
+	310:
+		bExecuteVelMove := FALSE;
+		fForceErrorIntegral := 0.0;
+		fForceHoldElapsed := 0.0;
+		bForceDropArmed := FALSE;
+		fForceDropPeak := 0.0;
+		fEndpointStartError := fEndpointTargetForce - fForce;
+		nVelocityState := 0;
+		nVelocityUpdateCounter := VELOCITY_UPDATE_CYCLES;
+		fCmdVelocity := ABS(fEndpointRate);
+		IF fEndpointRate >= 0.0 THEN
+			mcDirection := MC_Positive_Direction;
+			nLastMotionDirection := 1;
+		ELSE
+			mcDirection := MC_Negative_Direction;
+			nLastMotionDirection := -1;
+		END_IF
+		// Map force error polarity to the MATLAB-selected motor direction.
+		IF (fEndpointRate >= 0.0 AND fEndpointStartError >= 0.0) OR
+			(fEndpointRate < 0.0 AND fEndpointStartError < 0.0) THEN
+			nForceControlSign := 1;
+		ELSE
+			nForceControlSign := -1;
+		END_IF
+		IF ABS(fEndpointStartError) <= stSettings.fForceTolerance THEN
+			stateHalt := TRUE;
+			nVelocityState := 3;
+			nSeqState := 313;
+		ELSE
+			nSeqState := 311;
+		END_IF
+
+	311: // Trigger the constant-speed force approach.
+		bExecuteVelMove := TRUE;
+		nVelocityState := 1;
+		nSeqState := 312;
+
+	312:
+		fEndpointCurrentError := fEndpointTargetForce - fForce;
+		IF ABS(fEndpointCurrentError) <= stSettings.fForceTolerance OR
+			(fEndpointStartError > 0.0 AND fEndpointCurrentError <= 0.0) OR
+			(fEndpointStartError < 0.0 AND fEndpointCurrentError >= 0.0) THEN
+			bExecuteVelMove := FALSE;
+			stateHalt := TRUE;
+			nVelocityState := 3;
+			nSeqState := 313;
+		END_IF
+
+	313:
+		IF bHaltDone THEN
+			stateHalt := FALSE;
+			nVelocityState := 4;
+			IF fEndpointHoldTime <= 0.0 THEN
+				nSeqState := nAfterEndpointState;
+			ELSIF bEndpointUsePI THEN
+				nSeqState := 314;
+			ELSE
+				nSeqState := 315;
+			END_IF
+		END_IF
+
+	314:
+		fForceError := fEndpointTargetForce - fForce;
+
+		IF ABS(fForceError) <= stSettings.fForceTolerance THEN
+			fForceHoldElapsed := fForceHoldElapsed + CYCLE_TIME;
+			bExecuteVelMove := FALSE;
+
+			IF nVelocityState <> 3 AND nVelocityState <> 4 THEN
+				stateHalt := TRUE;
+				nVelocityState := 3;
+			ELSIF nVelocityState = 3 AND bHaltDone THEN
+				stateHalt := FALSE;
+				nVelocityState := 4;
+			END_IF
+
+			IF fForceHoldElapsed >= fEndpointHoldTime AND nVelocityState = 4 THEN
+				nSeqState := nAfterEndpointState;
+			END_IF
+		ELSIF nVelocityState = 3 THEN
+			IF bHaltDone THEN
+				stateHalt := FALSE;
+				nVelocityState := 0;
+			END_IF
+		ELSIF nVelocityState = 4 THEN
+			// Force drifted outside tolerance while stopped; restart PI correction.
+			nVelocityState := 0;
+		ELSE
+			fForceErrorIntegral := LIMIT(
+				-stSettings.fIntegralLimit,
+				fForceErrorIntegral + (fForceError * CYCLE_TIME),
+				stSettings.fIntegralLimit);
+			fPendingVelocity := LIMIT(
+				-stSettings.fMaxVelocity,
+				((fForceError * stSettings.fKp) +
+					(fForceErrorIntegral * stSettings.fKi)) *
+					INT_TO_LREAL(nForceControlSign),
+				stSettings.fMaxVelocity);
+			nVelocityUpdateCounter := nVelocityUpdateCounter + 1;
+
+			IF fPendingVelocity >= 0.0 THEN
+				mcPendingDirection := MC_Positive_Direction;
+			ELSE
+				mcPendingDirection := MC_Negative_Direction;
+			END_IF
+			fPendingVelocity := ABS(fPendingVelocity);
+
+			IF fPendingVelocity > 0.0 THEN
+				IF nVelocityState = 0 OR nVelocityState = 2 THEN
+					fCmdVelocity := fPendingVelocity;
+					mcDirection := mcPendingDirection;
+					bExecuteVelMove := TRUE;
+					fLastSentVelocity := fCmdVelocity;
+					nVelocityUpdateCounter := 0;
+					nVelocityState := 1;
+				ELSIF nVelocityUpdateCounter >= VELOCITY_UPDATE_CYCLES AND
+					(ABS(fPendingVelocity - fLastSentVelocity) >= VELOCITY_UPDATE_DELTA OR
+					 mcPendingDirection <> mcDirection) THEN
+					bExecuteVelMove := FALSE;
+					nVelocityState := 2;
+				END_IF
+			END_IF
+		END_IF
+
+	315: // Non-preload force endpoint: remain stopped for the requested dwell.
+		bExecuteVelMove := FALSE;
+		fForceHoldElapsed := fForceHoldElapsed + CYCLE_TIME;
+		IF fForceHoldElapsed >= fEndpointHoldTime THEN
+			nSeqState := nAfterEndpointState;
+		END_IF
+END_CASE
+]]></ST>
       </Implementation>
     </Action>
     <LineIds Name="fb_MovementControler">
+      <LineId Id="1884" Count="0" />
+      <LineId Id="1886" Count="1" />
+      <LineId Id="1885" Count="0" />
       <LineId Id="1795" Count="0" />
-      <LineId Id="1798" Count="8" />
+      <LineId Id="1798" Count="2" />
+      <LineId Id="1883" Count="0" />
+      <LineId Id="1801" Count="5" />
       <LineId Id="1796" Count="1" />
-      <LineId Id="1684" Count="44" />
+      <LineId Id="1684" Count="10" />
+      <LineId Id="1696" Count="12" />
+      <LineId Id="1710" Count="18" />
       <LineId Id="1794" Count="0" />
       <LineId Id="1793" Count="0" />
       <LineId Id="1788" Count="0" />
       <LineId Id="1790" Count="1" />
       <LineId Id="1729" Count="3" />
       <LineId Id="1422" Count="0" />
+      <LineId Id="70" Count="91" />
+      <LineId Id="2" Count="0" />
+      <LineId Id="163" Count="8" />
+      <LineId Id="1807" Count="0" />
     </LineIds>
     <LineIds Name="fb_MovementControler.mode1">
       <LineId Id="2" Count="0" />
@@ -365,6 +1334,8 @@ END_CASE]]></ST>
       <LineId Id="3" Count="0" />
       <LineId Id="98" Count="62" />
       <LineId Id="1" Count="0" />
+      <LineId Id="72" Count="12" />
+      <LineId Id="161" Count="0" />
     </LineIds>
     <LineIds Name="fb_MovementControler.mode2">
       <LineId Id="64" Count="5" />
@@ -381,15 +1352,9 @@ END_CASE]]></ST>
       <LineId Id="75" Count="3" />
       <LineId Id="46" Count="17" />
       <LineId Id="1" Count="0" />
-    </LineIds>
-    <LineIds Name="fb_MovementControler.mode3">
-      <LineId Id="62" Count="4" />
-      <LineId Id="61" Count="0" />
-      <LineId Id="67" Count="0" />
-      <LineId Id="2" Count="33" />
-      <LineId Id="68" Count="0" />
-      <LineId Id="38" Count="22" />
-      <LineId Id="1" Count="0" />
+      <LineId Id="138" Count="3" />
+      <LineId Id="79" Count="58" />
+      <LineId Id="142" Count="5" />
     </LineIds>
   </POU>
 </TcPlcObject>

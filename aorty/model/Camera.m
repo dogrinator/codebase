@@ -30,7 +30,21 @@ classdef Camera < handle
                 try
                     camera.closeCam();
                     camera.connected = false;
-                    camera.cameraHW = videoinput('gige', 1, 'Mono8');
+
+                    % Refresh the Image Acquisition Toolbox after a camera
+                    % has been unplugged/reconnected. Without this, the
+                    % gige adaptor can keep a stale device list.
+                    imaqreset;
+                    hwInfo = imaqhwinfo('gige');
+                    if isempty(hwInfo.DeviceInfo)
+                        error('Camera:NotDetected', ...
+                            ['No GigE Vision camera was detected. Check the ', ...
+                             'camera power, Ethernet connection, and network settings.']);
+                    end
+
+                    % Do not assume that the first camera always has ID 1.
+                    deviceID = hwInfo.DeviceInfo(1).DeviceID;
+                    camera.cameraHW = videoinput('gige', deviceID, 'Mono8');
                     camera.cameraSrc = getselectedsource(camera.cameraHW);
 
                     % Trigger reset

@@ -113,7 +113,7 @@ classdef Model < handle
                 warning('Model:StatusWriteFailed', 'Could not write %s.', filename);
                 return;
             end
-            cleanup = onCleanup(@() fclose(fid)); %#ok<NASGU>
+            cleanup = onCleanup(@() fclose(fid)); 
             fprintf(fid, 'Status: %s\nReason: %s\n', ...
                 model.recordingStatus, model.recordingReason);
         end
@@ -148,44 +148,6 @@ classdef Model < handle
             fprintf(forceFid, '%s,%s,\n', forceLog{:});
             fprintf(untaredForceFid, '%s,%s,\n', untaredForceLog{:});
             fprintf(positionFid, '%s,%s,\n', positionLog{:});
-        end
-
-        % saveTenzoX handles this operation.
-        function saveTenzoX(model,actualXval)
-            try
-                % Save data if recording is on
-                if model.isRecording
-                    % calculate time stamps
-                    timeStamp = datetime('now');
-                    timeVec = timeStamp - seconds(length(actualXval) -1:-1:0) * model.dt;
-
-                    % save
-                    tString = string(timeVec, 'HH:mm:ss.SSS');
-                    dataLog = [tString(:), string(actualXval(:))]';
-                    fprintf(model.tenzoxFid,'%s,%s,\n', dataLog{:});
-                end
-            catch ME
-                fprintf(2, 'Tenzo X save frame Error: %s\n', getReport(ME));
-            end
-        end
-
-        % saveTenzoY handles this operation.
-        function saveTenzoY(model,actualYval)
-            try
-                % Save data if recording is on
-                if model.isRecording
-                    % calculate time stamps
-                    timeStamp = datetime('now');
-                    timeVec = timeStamp - seconds(length(actualYval) -1:-1:0) * model.dt;
-
-                    % save
-                    tString = string(timeVec, 'HH:mm:ss.SSS');
-                    dataLog = [tString(:), string(actualYval(:))]';
-                    fprintf(model.tenzoyFid,'%s,%s,\n', dataLog{:});
-                end
-            catch ME
-                fprintf(2, 'Tenzo Y save frame Error: %s\n', getReport(ME));
-            end
         end
 
         % saveCameraFrame handles this operation.

@@ -7,8 +7,8 @@ classdef Settings < handle
         camera Camera
 
         % help variables
-        hwPath  = '.config/hwConfig'  % relative path to hardware config folder
-        appPath = '.config/appConfig' % relative path to tests configs
+        hwPath
+        appPath
 
         hwConfig  = []; % loaded hw config
         appConfig = []; % loaded test config
@@ -19,6 +19,9 @@ classdef Settings < handle
         function settings = Settings(plc, camera)
             settings.plc = plc;
             settings.camera = camera;
+            applicationRoot = fileparts(fileparts(mfilename('fullpath')));
+            settings.hwPath = fullfile(applicationRoot, '.config', 'hwConfig');
+            settings.appPath = fullfile(applicationRoot, '.config', 'appConfig');
         end
 
         %% PLC settings
@@ -35,6 +38,7 @@ classdef Settings < handle
             fullFilename = fullfile( settings.hwPath, filename);
             txt = fileread(fullFilename);
             settings.hwConfig = jsondecode(txt);
+            settings.normalizeHwConfig();
         end
 
         % saveHwConfig handles this operation.
@@ -74,6 +78,32 @@ classdef Settings < handle
                 disp('Plc settings aplied');
             else
                 disp('Plc disconnected or config not loaded');
+            end
+        end
+
+        function normalizeHwConfig(settings)
+            if isempty(settings.hwConfig) || ~isfield(settings.hwConfig, 'plc')
+                return;
+            end
+            for axisName = {'xAxis', 'yAxis'}
+                name = axisName{1};
+                if ~isfield(settings.hwConfig.plc, name)
+                    continue;
+                end
+                axisCfg = settings.hwConfig.plc.(name);
+                if ~isfield(axisCfg, 'fTenzoOffset')
+                    axisCfg.fTenzoOffset = 0;
+                end
+                if ~isfield(axisCfg, 'fForceReliefDistance')
+                    axisCfg.fForceReliefDistance = 1.0;
+                end
+                if ~isfield(axisCfg, 'fForceReliefVelocity')
+                    axisCfg.fForceReliefVelocity = 1.0;
+                end
+                if isfield(axisCfg, 'fMaxPosition')
+                    axisCfg = rmfield(axisCfg, 'fMaxPosition');
+                end
+                settings.hwConfig.plc.(name) = axisCfg;
             end
         end
 

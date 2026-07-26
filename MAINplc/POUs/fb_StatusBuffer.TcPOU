@@ -4,9 +4,11 @@
     <Declaration><![CDATA[FUNCTION_BLOCK fb_StatusBuffer
 VAR_IN_OUT
     stSystemStatus    : ST_SystemStatus;
-    bStartTar         : BOOL;  // Reset to FALSE inside FB when done
+    bStartTar         : BOOL;  // Cleared after completion or when tare is blocked
 END_VAR
 VAR_INPUT
+	bBlockTar     : BOOL;  // Motion or homing is active
+
 	// Tenzo buffer
     nRawTenzo    : DINT;
     fTenzoCons   : LREAL;
@@ -22,6 +24,7 @@ VAR
     nTarCounter       : INT;      // Counts up to 100 samples
     fTarAccumulator   : LREAL;    // Holds the running sum of samples
     fCurrentCalculated: LREAL;    // The current weight before tare constant
+	nNextHead        : INT;
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[
@@ -29,6 +32,11 @@ END_VAR]]></Declaration>
 fCurrentCalculated := (DINT_TO_LREAL(nRawTenzo) * fTenzoCons) + fTenzoOffset;
 
 // Taring Logic
+// Reject a tare command received while motion or homing is active.
+IF bStartTar AND bBlockTar THEN
+	bStartTar := FALSE;
+END_IF
+
 fbStartTarRiseClp(CLK := bStartTar);
 
 // Start the taring process
@@ -54,15 +62,22 @@ IF bTarActive THEN
     END_IF
 END_IF
 
-// Pointer handling
-stSystemStatus.nBufferHead := stSystemStatus.nBufferHead + 1;
-IF stSystemStatus.nBufferHead > 150 THEN
-    stSystemStatus.nBufferHead := 1; // Go back to beginning
+// Flag sys is working so no mowement will be done
+stSystemStatus.bTarWorking := bTarActive;
+
+// New head
+nNextHead := stSystemStatus.nBufferHead + 1;
+IF nNextHead > 150 THEN
+    nNextHead := 1;
 END_IF
 
-// Write TO FIFO buffer
-stSystemStatus.fTenzoBuffer[stSystemStatus.nBufferHead] := fCurrentCalculated + stSystemStatus.fTenzoTarOffset; 
-stSystemStatus.fPosBuffer[stSystemStatus.nBufferHead] := fActPosition - fStartPosition; 
+// Buffering data
+stSystemStatus.fTenzoBuffer[nNextHead] := fCurrentCalculated + stSystemStatus.fTenzoTarOffset;
+stSystemStatus.fPosBuffer[nNextHead] := fActPosition - fStartPosition;
+
+// Matlab status helpers
+stSystemStatus.nBufferHead := nNextHead;
+stSystemStatus.nSampleCounter := stSystemStatus.nSampleCounter + 1;
 
 ]]></ST>
     </Implementation>
@@ -73,13 +88,19 @@ stSystemStatus.fPosBuffer[stSystemStatus.nBufferHead] := fActPosition - fStartPo
       <LineId Id="124" Count="1" />
       <LineId Id="127" Count="12" />
       <LineId Id="141" Count="6" />
+      <LineId Id="193" Count="0" />
       <LineId Id="166" Count="0" />
-      <LineId Id="168" Count="3" />
+      <LineId Id="168" Count="2" />
       <LineId Id="167" Count="0" />
       <LineId Id="148" Count="2" />
+      <LineId Id="194" Count="0" />
       <LineId Id="161" Count="0" />
       <LineId Id="39" Count="0" />
       <LineId Id="157" Count="0" />
+      <LineId Id="196" Count="0" />
+      <LineId Id="195" Count="0" />
+      <LineId Id="44" Count="2" />
+      <LineId Id="2" Count="0" />
     </LineIds>
   </POU>
 </TcPlcObject>

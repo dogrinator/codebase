@@ -5,12 +5,23 @@
 	STRUCT
 		fPosBuffer   : ARRAY[1..150] OF LREAL; // FIFO position data
 		fTenzoBuffer : ARRAY[1..150] OF LREAL; // FIFO tenzo data
-		nBufferHead  : INT := 1;               // Pointer to head
+		nBufferHead  : INT := 150;             // Index of latest completely written sample
+		nSampleCounter : UDINT := 0;            // Monotonic counter for dropped-sample detection
+		nOperationCounter : UDINT := 0;         // Incremented after each completed motion command
+		nInterfaceVersion : UDINT := 3;          // MATLAB/PLC ADS contract version
 		fTenzoTarOffset : LREAL := 0.0;        // Calculated tar offset
+		fActPosition : LREAL := 0.0;            // Absolute NC axis position
 		
-		bWorking     : BOOL;                  // PLC ocupied. Do not send data to PLC
-		bTarWorking  : BOOL;                  // PLC Tenzo calculating tar
-		bError       : BOOL;                  // Sys in error(TODO)
+		bWorking     : BOOL;                   // PLC occupied; do not send a new test
+		bTarWorking  : BOOL;                   // PLC is calculating tare
+		bError       : BOOL;                   // Latched application or motion error
+		nErrorCode   : UDINT := 0;             // Application error code (0 = no error)
+		nAxisErrorID : UDINT := 0;             // Native TwinCAT/NC error ID
+		bPowered     : BOOL;                   // Axis power is enabled
+		bHoming      : BOOL;                   // Homing command is active
+		bHomed       : BOOL;                   // NC axis reports a valid home reference
+		bStopped     : BOOL;                   // Axis is at standstill
+		bSavedPositionValid : BOOL;            // A return-to-saved reference is available
 	END_STRUCT
 END_TYPE
 ]]></Declaration>

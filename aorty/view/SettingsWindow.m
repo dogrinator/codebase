@@ -122,7 +122,8 @@ classdef SettingsWindow < handle
             motorPanel = uipanel(layout, 'Title', 'Motor settings');
             tenzoNames = {'fTenzoOffset', 'fTenzoCons'};
             motorOrder = {'fKp', 'fKi', 'fIntegralLimit', 'fForceTolerance', ...
-                'fMaxVelocity', 'fMaxForce', 'fMaxPosition'};
+                'fMaxVelocity', 'fMaxForce', 'fForceReliefDistance', ...
+                'fForceReliefVelocity'};
             allNames = fieldnames(config)';
             motorNames = [motorOrder, setdiff(allNames, ...
                 [tenzoNames, motorOrder], 'stable')];
@@ -194,14 +195,7 @@ classdef SettingsWindow < handle
 
         % ensureTenzoOffsets handles this operation.
         function ensureTenzoOffsets(window)
-            cfg = window.settings.hwConfig;
-            if ~isfield(cfg.plc.xAxis, 'fTenzoOffset')
-                cfg.plc.xAxis.fTenzoOffset = 0;
-            end
-            if ~isfield(cfg.plc.yAxis, 'fTenzoOffset')
-                cfg.plc.yAxis.fTenzoOffset = 0;
-            end
-            window.settings.hwConfig = cfg;
+            window.settings.normalizeHwConfig();
         end
 
         % saveConfig handles this operation.

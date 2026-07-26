@@ -5,7 +5,7 @@
 	STRUCT
 		// Tenzo
 		fTenzoCons   : LREAL := 0.01;
-		fTenzoOffset : LREAL := 0.0; 
+		fTenzoOffset : LREAL := 0.0;
 	
 		// Force control
 		fKp : LREAL := 10;
@@ -14,9 +14,10 @@
 		fForceTolerance : LREAL := 0.1;
 		fMaxVelocity    : LREAL := 100;
 	
-		// Motion safety
-		fMaxForce    : LREAL := 10;
-		fMaxPosition : LREAL := 0.1;
+		// Runtime force limit
+		fMaxForce            : LREAL := 10;
+		fForceReliefDistance : LREAL := 1.0; // fixed overforce release move [mm]
+		fForceReliefVelocity : LREAL := 1.0; // release speed [mm/s]
 	END_STRUCT
 END_TYPE
 ]]></Declaration>

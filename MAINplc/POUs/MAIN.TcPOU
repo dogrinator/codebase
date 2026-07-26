@@ -13,63 +13,75 @@ VAR
 	
 	// DUTs import
 	stMoveCommandX : ST_MoveCommand;
-	stMoveCommandY : ST_MoveCommand; 
-	
+	stMoveCommandY : ST_MoveCommand;
+
 	stSystemStatusX : ST_SystemStatus;
 	stSystemStatusY : ST_SystemStatus;
-	
+
 	stSettingsX : ST_settings;
 	stSettingsY : ST_settings;
-	
+
 	// IO Links
     nRawTenzoX AT %I* : DINT;
 	nRawTenzoY AT %I* : DINT;
-	
+
 	nEndStopLx AT %I* : BOOL;
 	nEndStopHx AT %I* : BOOL;
-	
+
 	nEndStopLy AT %I* : BOOL;
 	nEndStopHy AT %I* : BOOL;
-	
+
+	// Normalized physical limits: TRUE means that the switch is pressed.
+	bEndStopLxActive : BOOL;
+	bEndStopHxActive : BOOL;
+	bEndStopLyActive : BOOL;
+	bEndStopHyActive : BOOL;
+
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[////////////////////////////////
 //////////   safety   //////////
 ////////////////////////////////
 
+// Refresh NC status before making any safety or motion decision.
+GVL_Axis.xAxis.ReadStatus();
+GVL_Axis.yAxis.ReadStatus();
+
+// Normalize the active-low physical switches.
+bEndStopLxActive := NOT nEndStopLx;
+bEndStopHxActive := NOT nEndStopHx;
+bEndStopLyActive := NOT nEndStopLy;
+bEndStopHyActive := NOT nEndStopHy;
+
 fbSafetyX(
     stAxis := GVL_Axis.xAxis,
     bPower := stMoveCommandX.bPower,
     bReset := stMoveCommandX.bReset,
-    bHalt := stMoveCommandX.bHalt,
-    bSeqHalt := fbMovementControlerX.stateHalt,
+    bHalt := stMoveCommandX.bHalt OR fbMovementControlerX.stateHalt,
     bHome := stMoveCommandX.bHome,
-    bEndStopL := nEndStopLx,
-	bEndStopH := nEndStopHx
+    bEndStopL := bEndStopLxActive,
+	bEndStopH := bEndStopHxActive,
+	bExternalBusy := fbMovementControlerX.bBusy OR stSystemStatusX.bTarWorking
 );
 
 fbSafetyY(
     stAxis := GVL_Axis.yAxis,
     bPower := stMoveCommandY.bPower,
     bReset := stMoveCommandY.bReset,
-    bHalt := stMoveCommandY.bHalt,
-    bSeqHalt := fbMovementControlerY.stateHalt,
+    bHalt := stMoveCommandY.bHalt OR fbMovementControlerY.stateHalt,
     bHome := stMoveCommandY.bHome,
-   	bEndStopL := nEndStopLy,
-	bEndStopH := nEndStopHy
+	bEndStopL := bEndStopLyActive,
+	bEndStopH := bEndStopHyActive,
+	bExternalBusy := fbMovementControlerY.bBusy OR stSystemStatusY.bTarWorking
 );
 
 ////////////////////////////////
 ////////// Update data /////////
 ////////////////////////////////
 
-// Read status of axis
-GVL_Axis.xAxis.ReadStatus();
-GVL_Axis.yAxis.ReadStatus();
-
-// Save actual sys data
 fbSystemBufferX(
 	stSystemStatus:= stSystemStatusX,
+	bBlockTar:= fbMovementControlerX.bBusy OR fbSafetyX.bHoming,
 	nRawTenzo:= nRawTenzoX,
 	fTenzoCons:=stSettingsX.fTenzoCons,
 	fTenzoOffset:= stSettingsX.fTenzoOffset,
@@ -79,6 +91,7 @@ fbSystemBufferX(
 	
 fbSystemBufferY(
 	stSystemStatus:= stSystemStatusY,
+	bBlockTar:= fbMovementControlerY.bBusy OR fbSafetyY.bHoming,
 	nRawTenzo:= nRawTenzoY,
 	fTenzoCons:=stSettingsY.fTenzoCons,
 	fTenzoOffset:= stSettingsY.fTenzoOffset,
@@ -94,19 +107,77 @@ fbMovementControlerX(
 	Axis := GVL_Axis.xAxis,
 	stMoveCommand := stMoveCommandX,
 	stSettings := stSettingsX,
+	fActPosition := GVL_Axis.xAxis.NcToPlc.ActPos,
     bPowerState := fbSafetyX.bPowerStatus,
-    bHaltDone := fbSafetyX.bHaltDone,
+	bHaltDone := fbSafetyX.bHaltDone,
+	bSafetyError := fbSafetyX.bError,
+	bProtectiveStop := fbSafetyX.bProtectiveStop,
+	bExternalBusy := fbSafetyX.bHoming OR stSystemStatusX.bTarWorking,
     fForce := stSystemStatusX.fTenzoBuffer[stSystemStatusX.nBufferHead]);
-stSystemStatusX.bWorking := fbMovementControlerX.bBusy;
 
 fbMovementControlerY(
 	Axis := GVL_Axis.yAxis,
 	stMoveCommand := stMoveCommandY,
 	stSettings := stSettingsY,
+	fActPosition := GVL_Axis.yAxis.NcToPlc.ActPos,
     bPowerState := fbSafetyY.bPowerStatus,
-    bHaltDone := fbSafetyY.bHaltDone,
+	bHaltDone := fbSafetyY.bHaltDone,
+	bSafetyError := fbSafetyY.bError,
+	bProtectiveStop := fbSafetyY.bProtectiveStop,
+	bExternalBusy := fbSafetyY.bHoming OR stSystemStatusY.bTarWorking,
 	fForce := stSystemStatusY.fTenzoBuffer[stSystemStatusY.nBufferHead]);
-stSystemStatusY.bWorking := fbMovementControlerY.bBusy;
+
+///////////////////////////////////////////////////
+////// ADS status contract for each axis //////////
+///////////////////////////////////////////////////
+
+stSystemStatusX.fActPosition := GVL_Axis.xAxis.NcToPlc.ActPos;
+stSystemStatusX.bPowered := fbSafetyX.bPowerStatus;
+stSystemStatusX.bHoming := fbSafetyX.bHoming;
+stSystemStatusX.bHomed := fbSafetyX.bHomed;
+stSystemStatusX.bStopped := fbSafetyX.bStopped;
+stSystemStatusX.bWorking := fbMovementControlerX.bBusy OR fbSafetyX.bHoming OR
+	fbSafetyX.bProtectiveStop OR stSystemStatusX.bTarWorking;
+stSystemStatusX.nOperationCounter := fbMovementControlerX.nOperationCounter;
+stSystemStatusX.nInterfaceVersion := 3;
+stSystemStatusX.bSavedPositionValid := fbMovementControlerX.bSavedPositionValid;
+stSystemStatusX.bError := fbMovementControlerX.bError OR fbSafetyX.bError;
+IF fbSafetyX.bError THEN
+	stSystemStatusX.nErrorCode := fbSafetyX.nErrorCode;
+	stSystemStatusX.nAxisErrorID := fbSafetyX.nAxisErrorID;
+ELSE
+	stSystemStatusX.nErrorCode := fbMovementControlerX.nErrorCode;
+	stSystemStatusX.nAxisErrorID := fbMovementControlerX.nAxisErrorID;
+END_IF
+
+stSystemStatusY.fActPosition := GVL_Axis.yAxis.NcToPlc.ActPos;
+stSystemStatusY.bPowered := fbSafetyY.bPowerStatus;
+stSystemStatusY.bHoming := fbSafetyY.bHoming;
+stSystemStatusY.bHomed := fbSafetyY.bHomed;
+stSystemStatusY.bStopped := fbSafetyY.bStopped;
+stSystemStatusY.bWorking := fbMovementControlerY.bBusy OR fbSafetyY.bHoming OR
+	fbSafetyY.bProtectiveStop OR stSystemStatusY.bTarWorking;
+stSystemStatusY.nOperationCounter := fbMovementControlerY.nOperationCounter;
+stSystemStatusY.nInterfaceVersion := 3;
+stSystemStatusY.bSavedPositionValid := fbMovementControlerY.bSavedPositionValid;
+stSystemStatusY.bError := fbMovementControlerY.bError OR fbSafetyY.bError;
+IF fbSafetyY.bError THEN
+	stSystemStatusY.nErrorCode := fbSafetyY.nErrorCode;
+	stSystemStatusY.nAxisErrorID := fbSafetyY.nAxisErrorID;
+ELSE
+	stSystemStatusY.nErrorCode := fbMovementControlerY.nErrorCode;
+	stSystemStatusY.nAxisErrorID := fbMovementControlerY.nAxisErrorID;
+END_IF
+
+// Home and reset are one-shot commands
+stMoveCommandX.bHome := FALSE;
+stMoveCommandY.bHome := FALSE;
+stMoveCommandX.bReset := FALSE;
+stMoveCommandY.bReset := FALSE;
+stMoveCommandX.bSavePosition := FALSE;
+stMoveCommandY.bSavePosition := FALSE;
+stMoveCommandX.bRestorePosition := FALSE;
+stMoveCommandY.bRestorePosition := FALSE;
 
 
 
@@ -133,6 +204,12 @@ stSystemStatusY.bWorking := fbMovementControlerY.bBusy;
       <LineId Id="7038" Count="0" />
       <LineId Id="7016" Count="9" />
       <LineId Id="65" Count="0" />
+      <LineId Id="87" Count="1" />
+      <LineId Id="7070" Count="1" />
+      <LineId Id="89" Count="0" />
+      <LineId Id="7073" Count="1" />
+      <LineId Id="7072" Count="0" />
+      <LineId Id="90" Count="47" />
     </LineIds>
   </POU>
 </TcPlcObject>

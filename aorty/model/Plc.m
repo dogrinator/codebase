@@ -1,16 +1,24 @@
 classdef Plc < handle
-    % Typed ADS interface for the two-axis TwinCAT application.
+    %PLC Typed ADS interface for the two-axis TwinCAT application.
+
+    properties (Constant)
+        EXPECTED_INTERFACE_VERSION = uint32(3)
+        COMMAND_ARRAY_LENGTH = 100
+        STATUS_BUFFER_LENGTH = 150
+    end
 
     properties
         model Model
         amsNetID = '5.85.113.174.1.1'
+        adsPort = 851
         dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll'
         client
         connected = false
+        disconnecting = false
 
         handles = struct()
         netBuffers = struct()
-        arrayLengths
+        statusArrayLengths
         lastSampleCounter = struct('X', [], 'Y', [])
         droppedSamples = struct('X', 0, 'Y', 0)
         status = struct('X', struct(), 'Y', struct())
@@ -26,15 +34,14 @@ classdef Plc < handle
     end
 
     methods
-        % Plc handles this operation.
         function plc = Plc(model)
             plc.model = model;
         end
 
-        % connectPLC handles this operation.
         function connectPLC(plc, app, src)
             if src.Value ~= "ON"
                 plc.disconnectPLC();
+                app.updateMachineStatus([], false);
                 return;
             end
 
@@ -42,21 +49,63 @@ classdef Plc < handle
                 plc.disconnectPLC();
                 NET.addAssembly(plc.dllPath);
                 plc.client = TwinCAT.Ads.TcAdsClient();
-                plc.client.Connect(plc.amsNetID, 851);
+                plc.client.Connect(plc.amsNetID, plc.adsPort);
+                try
+                    versionHandleX = plc.makeHandle( ...
+                        'MAIN.stSystemStatusX.nInterfaceVersion');
+                    versionHandleY = plc.makeHandle( ...
+                        'MAIN.stSystemStatusY.nInterfaceVersion');
+                    versionX = plc.readUdint(versionHandleX);
+                    versionY = plc.readUdint(versionHandleY);
+                    plc.client.DeleteVariableHandle(versionHandleX);
+                    plc.client.DeleteVariableHandle(versionHandleY);
+                catch versionException
+                    if exist('versionHandleX', 'var')
+                        try
+                            plc.client.DeleteVariableHandle(versionHandleX);
+                        catch
+                        end
+                    end
+                    if exist('versionHandleY', 'var')
+                        try
+                            plc.client.DeleteVariableHandle(versionHandleY);
+                        catch
+                        end
+                    end
+                    error('PLC:InterfaceVersion', ...
+                        ['PLC does not expose interface version 3. Build and ' ...
+                        'deploy the matching TwinCAT project and regenerate ' ...
+                        'its symbols. ADS detail: %s'], versionException.message);
+                end
+                if versionX ~= plc.EXPECTED_INTERFACE_VERSION || ...
+                        versionY ~= plc.EXPECTED_INTERFACE_VERSION
+                    error('PLC:InterfaceVersion', ...
+                        ['PLC/MATLAB interface mismatch. MATLAB expects version %u, ' ...
+                        'but PLC reports X=%u and Y=%u. Deploy the matching PLC build.'], ...
+                        plc.EXPECTED_INTERFACE_VERSION, versionX, versionY);
+                end
                 plc.handles.X = plc.createAxisHandles('X');
                 plc.handles.Y = plc.createAxisHandles('Y');
                 plc.hHaltX = plc.handles.X.command.halt;
                 plc.hHaltY = plc.handles.Y.command.halt;
 
-                plc.arrayLengths = NET.createArray('System.Int32', 1);
-                plc.arrayLengths(1) = 150;
-                plc.netBuffers.X.distance = NET.createArray('System.Double', 100);
-                plc.netBuffers.X.velocity = NET.createArray('System.Double', 100);
-                plc.netBuffers.Y.distance = NET.createArray('System.Double', 100);
-                plc.netBuffers.Y.velocity = NET.createArray('System.Double', 100);
+                plc.statusArrayLengths = NET.createArray('System.Int32', 1);
+                plc.statusArrayLengths(1) = plc.STATUS_BUFFER_LENGTH;
+                for axisName = {'X', 'Y'}
+                    axis = axisName{1};
+                    plc.netBuffers.(axis).distance = ...
+                        NET.createArray('System.Double', plc.COMMAND_ARRAY_LENGTH);
+                    plc.netBuffers.(axis).velocity = ...
+                        NET.createArray('System.Double', plc.COMMAND_ARRAY_LENGTH);
+                    plc.netBuffers.(axis).load = ...
+                        NET.createArray('System.Double', plc.COMMAND_ARRAY_LENGTH);
+                    plc.netBuffers.(axis).unload = ...
+                        NET.createArray('System.Double', plc.COMMAND_ARRAY_LENGTH);
+                end
 
                 plc.resetStreamingState();
                 plc.connected = true;
+                app.updateMachineStatus(plc.pollStatus(), true);
                 disp('PLC connected.');
             catch exception
                 plc.disconnectPLC();
@@ -65,28 +114,65 @@ classdef Plc < handle
             end
         end
 
-        % disconnectPLC handles this operation.
         function disconnectPLC(plc)
-            if ~isempty(plc.client)
+            if plc.disconnecting
+                return;
+            end
+            plc.disconnecting = true;
+            oldClient = plc.client;
+            oldHandles = plc.handles;
+            plc.connected = false;
+            plc.client = [];
+            plc.handles = struct();
+            plc.netBuffers = struct();
+            plc.isWorking = false;
+            if ~isempty(oldClient)
                 try
-                    plc.deleteHandleTree(plc.handles);
-                catch exception
-                    warning('PLC:HandleCleanup', 'Could not delete all ADS handles: %s', exception.message);
-                end
-                try
-                    plc.client.Disconnect();
-                    plc.client.Dispose();
+                    plc.deleteHandleTree(oldHandles, oldClient);
+                    oldClient.Disconnect();
+                    oldClient.Dispose();
                 catch
                 end
             end
-            plc.client = [];
-            plc.handles = struct();
-            plc.connected = false;
-            plc.isWorking = false;
+            plc.resetStreamingState();
+            plc.disconnecting = false;
+        end
+
+        function connectClientForTesting(plc, fakeClient)
+            % Offline test seam. It exercises the real symbol map, typed
+            % reads/writes, validation, padding, and trigger ordering.
+            plc.client = fakeClient;
+            plc.disconnecting = false;
+            plc.handles.X = plc.createAxisHandles('X');
+            plc.handles.Y = plc.createAxisHandles('Y');
+            plc.hHaltX = plc.handles.X.command.halt;
+            plc.hHaltY = plc.handles.Y.command.halt;
+            versionX = plc.readUdint(plc.handles.X.status.interfaceVersion);
+            versionY = plc.readUdint(plc.handles.Y.status.interfaceVersion);
+            if versionX ~= plc.EXPECTED_INTERFACE_VERSION || ...
+                    versionY ~= plc.EXPECTED_INTERFACE_VERSION
+                plc.client = [];
+                plc.handles = struct();
+                error('PLC:InterfaceVersion', ...
+                    ['PLC/MATLAB interface mismatch. MATLAB expects version %u, ' ...
+                    'but PLC reports X=%u and Y=%u.'], ...
+                    plc.EXPECTED_INTERFACE_VERSION, versionX, versionY);
+            end
+            for axisName = {'X', 'Y'}
+                axis = axisName{1};
+                plc.netBuffers.(axis).distance = ...
+                    zeros(1, plc.COMMAND_ARRAY_LENGTH);
+                plc.netBuffers.(axis).velocity = ...
+                    zeros(1, plc.COMMAND_ARRAY_LENGTH);
+                plc.netBuffers.(axis).load = ...
+                    zeros(1, plc.COMMAND_ARRAY_LENGTH);
+                plc.netBuffers.(axis).unload = ...
+                    zeros(1, plc.COMMAND_ARRAY_LENGTH);
+            end
+            plc.connected = true;
             plc.resetStreamingState();
         end
 
-        % fifoProcess handles this operation.
         function [forceX, forceY, untaredX, untaredY, posX, posY, statuses] = fifoProcess(plc)
             plc.requireConnection();
             [forceX, posX, plc.status.X] = plc.readAxisSnapshot('X');
@@ -97,7 +183,6 @@ classdef Plc < handle
             statuses = plc.status;
         end
 
-        % pollStatus handles this operation.
         function statuses = pollStatus(plc)
             plc.requireConnection();
             plc.status.X = plc.readAxisStatus('X');
@@ -106,106 +191,193 @@ classdef Plc < handle
             statuses = plc.status;
         end
 
-        % SendCommands handles this operation.
         function accepted = SendCommands(plc, mode, xPos, xVel, yPos, yVel)
+            % Send a Mode 1 or Mode 2 command. Both axes are prepared before
+            % either Execute bit is raised.
             accepted = false;
             plc.requireConnection();
+            if ~ismember(double(mode), [1, 2])
+                error('PLC:InvalidTrajectoryMode', ...
+                    'Only PLC modes 1 and 2 use trajectory arrays.');
+            end
+
             statuses = plc.pollStatus();
             activeX = ~isempty(xPos);
             activeY = ~isempty(yPos);
-            if (activeX && statuses.X.working) || (activeY && statuses.Y.working)
-                error('PLC:Busy', 'An active axis is already working.');
+            if ~activeX && ~activeY
+                return;
             end
+            if (activeX && (statuses.X.working || statuses.X.error)) || ...
+                    (activeY && (statuses.Y.working || statuses.Y.error))
+                error('PLC:AxisUnavailable', ...
+                    'A selected axis is busy or in error.');
+            end
+
             if activeX, plc.ensureAxisPowered('X'); end
             if activeY, plc.ensureAxisPowered('Y'); end
             if activeX
-                plc.sendAxisTrajectory('X', mode, xPos, xVel, true);
+                plc.writeAxisTrajectory('X', mode, xPos, xVel);
             end
             if activeY
-                plc.sendAxisTrajectory('Y', mode, yPos, yVel, true);
+                plc.writeAxisTrajectory('Y', mode, yPos, yVel);
             end
-            accepted = activeX || activeY;
+            if activeX
+                plc.writeBool(plc.handles.X.command.execute, true);
+            end
+            if activeY
+                plc.writeBool(plc.handles.Y.command.execute, true);
+            end
+            accepted = true;
         end
 
-        % sendSingleTest handles this operation.
-        function sendSingleTest(plc, axisName, controlMode, rate, stop1Mode, stop1Value, stop2Mode, stop2Value)
+        function axes = sendTestSequence(plc, commands)
+            % Send complete Mode 3 commands. commands.X/Y are either empty
+            % or normalized structures produced by Control.
             plc.requireConnection();
-            axisName = upper(char(axisName));
-            values = [double(rate), double(stop1Value), double(stop2Value)];
-            if any(~isfinite(values)) || rate == 0
-                error('PLC:InvalidSingleTest', 'Single-test values must be finite and the rate must be non-zero.');
+            axes = {};
+            for axisName = {'X', 'Y'}
+                axis = axisName{1};
+                if isfield(commands, axis) && ~isempty(commands.(axis))
+                    axes{end+1} = axis; %#ok<AGROW>
+                end
             end
-            statusNow = plc.readAxisStatus(axisName);
-            if statusNow.working || statusNow.error
-                error('PLC:AxisUnavailable', '%s axis is busy or in error.', axisName);
+            if isempty(axes)
+                error('PLC:NoAxes', 'No active axis command was provided.');
             end
-            plc.ensureAxisPowered(axisName);
-            command = plc.handles.(axisName).command;
-            plc.writeInt(command.mode, 4);
-            plc.writeInt(command.singleControlMode, controlMode);
-            plc.writeLreal(command.singleRate, rate);
-            plc.writeInt(command.stop1Mode, stop1Mode);
-            plc.writeLreal(command.stop1Value, stop1Value);
-            plc.writeInt(command.stop2Mode, stop2Mode);
-            plc.writeLreal(command.stop2Value, stop2Value);
-            plc.writeBool(command.execute, true);
+
+            statuses = plc.pollStatus();
+            for index = 1:numel(axes)
+                axis = axes{index};
+                statusNow = statuses.(axis);
+                if statusNow.working || statusNow.error
+                    error('PLC:AxisUnavailable', ...
+                        '%s axis is busy or in error.', axis);
+                end
+                plc.validateTestCommand(commands.(axis), statusNow);
+            end
+
+            plc.ensurePowered(axes);
+            for index = 1:numel(axes)
+                axis = axes{index};
+                plc.writeAxisTestCommand(axis, commands.(axis));
+            end
+            for index = 1:numel(axes)
+                plc.writeBool(plc.handles.(axes{index}).command.execute, true);
+            end
         end
 
-        % jog handles this operation.
         function jog(plc, axisName, distance, velocity)
-            if ~isfinite(distance) || distance == 0 || ~isfinite(velocity) || velocity <= 0
-                error('PLC:InvalidJog', 'Jog distance must be non-zero and velocity must be positive.');
+            if ~isfinite(distance) || distance == 0 || ...
+                    ~isfinite(velocity) || velocity <= 0
+                error('PLC:InvalidJog', ...
+                    'Jog distance must be non-zero and velocity must be positive.');
             end
-            plc.sendAxisTrajectory(axisName, 1, distance, velocity);
+            axisName = upper(char(axisName));
+            if strcmp(axisName, 'X')
+                plc.SendCommands(1, distance, velocity, [], []);
+            elseif strcmp(axisName, 'Y')
+                plc.SendCommands(1, [], [], distance, velocity);
+            else
+                error('PLC:InvalidAxes', 'Unknown axis selection: %s', axisName);
+            end
         end
 
-        % stop handles this operation.
         function stop(plc, axes)
             plc.writeCommandForAxes(axes, 'halt');
         end
 
-        % resetErrors handles this operation.
         function resetErrors(plc, axes)
             plc.writeCommandForAxes(axes, 'reset');
         end
 
-        % tare handles this operation.
         function tare(plc, axes)
             plc.requireConnection();
             axes = plc.normalizeAxes(axes);
             for index = 1:numel(axes)
-                axisName = axes{index};
-                statusNow = plc.readAxisStatus(axisName);
+                axis = axes{index};
+                statusNow = plc.readAxisStatus(axis);
                 if statusNow.working || statusNow.error
-                    error('PLC:AxisUnavailable', '%s axis is busy or in error.', axisName);
+                    error('PLC:AxisUnavailable', ...
+                        '%s axis is busy or in error.', axis);
                 end
-                plc.writeBool(plc.handles.(axisName).command.tare, true);
+                plc.writeBool(plc.handles.(axis).command.tare, true);
             end
         end
 
-        % moveToLowerLimit handles this operation.
         function moveToLowerLimit(plc, axes)
+            plc.requireConnection();
             axes = plc.normalizeAxes(axes);
             for index = 1:numel(axes)
-                axisName = axes{index};
-                statusNow = plc.readAxisStatus(axisName);
+                axis = axes{index};
+                statusNow = plc.readAxisStatus(axis);
                 if statusNow.working || statusNow.error
-                    error('PLC:AxisUnavailable', '%s axis is busy or in error.', axisName);
+                    error('PLC:AxisUnavailable', ...
+                        '%s axis is busy or in error.', axis);
                 end
-                plc.ensureAxisPowered(axisName);
-                plc.writeBool(plc.handles.(axisName).command.home, true);
+                plc.ensureAxisPowered(axis);
+                plc.writeBool(plc.handles.(axis).command.home, true);
             end
         end
 
-        % setPower handles this operation.
-        function setPower(plc, axes, enabled)
+        function savePosition(plc, axes)
+            plc.requireConnection();
             axes = plc.normalizeAxes(axes);
             for index = 1:numel(axes)
-                plc.writeBool(plc.handles.(axes{index}).command.power, logical(enabled));
+                axis = axes{index};
+                statusNow = plc.readAxisStatus(axis);
+                if statusNow.working || statusNow.error
+                    error('PLC:AxisUnavailable', ...
+                        '%s axis is busy or in error.', axis);
+                end
+            end
+            for index = 1:numel(axes)
+                plc.writeBool(plc.handles.(axes{index}).command.savePosition, true);
             end
         end
 
-        % ensurePowered handles this operation.
+        function restorePosition(plc, axes, speeds)
+            plc.requireConnection();
+            axes = plc.normalizeAxes(axes);
+            statuses = plc.pollStatus();
+            for index = 1:numel(axes)
+                axis = axes{index};
+                speed = speeds.(axis);
+                if statuses.(axis).working || statuses.(axis).error
+                    error('PLC:AxisUnavailable', ...
+                        '%s axis is busy or in error.', axis);
+                end
+                if ~statuses.(axis).savedPositionValid
+                    error('PLC:NoSavedPosition', ...
+                        '%s axis has no saved position.', axis);
+                end
+                if ~isfinite(speed) || speed <= 0
+                    error('PLC:InvalidRestoreSpeed', ...
+                        '%s restore speed must be positive.', axis);
+                end
+            end
+
+            plc.ensurePowered(axes);
+            for index = 1:numel(axes)
+                axis = axes{index};
+                command = plc.handles.(axis).command;
+                plc.writeInt(command.mode, 3);
+                plc.writeLreal(command.restoreVelocity, speeds.(axis));
+            end
+            for index = 1:numel(axes)
+                plc.writeBool( ...
+                    plc.handles.(axes{index}).command.restorePosition, true);
+            end
+        end
+
+        function setPower(plc, axes, enabled)
+            plc.requireConnection();
+            axes = plc.normalizeAxes(axes);
+            for index = 1:numel(axes)
+                plc.writeBool(plc.handles.(axes{index}).command.power, ...
+                    logical(enabled));
+            end
+        end
+
         function ensurePowered(plc, axes)
             plc.requireConnection();
             axes = plc.normalizeAxes(axes);
@@ -214,17 +386,29 @@ classdef Plc < handle
             end
         end
 
-        % writeAxisConfig handles this operation.
         function writeAxisConfig(plc, axisCfg, axisName)
             plc.requireConnection();
-            values = [axisCfg.fTenzoCons, axisCfg.fTenzoOffset, axisCfg.fKp, axisCfg.fKi, ...
-                axisCfg.fIntegralLimit, axisCfg.fForceTolerance, axisCfg.fMaxVelocity, ...
-                axisCfg.fMaxForce, axisCfg.fMaxPosition];
-            if any(~isfinite(double(values))) || axisCfg.fTenzoCons == 0 || ...
-                    axisCfg.fIntegralLimit < 0 || axisCfg.fForceTolerance < 0 || ...
-                    axisCfg.fMaxVelocity <= 0 || axisCfg.fMaxForce <= 0 || axisCfg.fMaxPosition <= 0
-                error('PLC:InvalidConfiguration', 'Hardware configuration contains invalid values.');
+            required = {'fTenzoCons', 'fTenzoOffset', 'fKp', 'fKi', ...
+                'fIntegralLimit', 'fForceTolerance', 'fMaxVelocity', ...
+                'fMaxForce', 'fForceReliefDistance', 'fForceReliefVelocity'};
+            for index = 1:numel(required)
+                if ~isfield(axisCfg, required{index})
+                    error('PLC:InvalidConfiguration', ...
+                        'Hardware configuration is missing %s.', required{index});
+                end
             end
+            values = cellfun(@(name) double(axisCfg.(name)), required);
+            if any(~isfinite(values)) || axisCfg.fTenzoCons == 0 || ...
+                    axisCfg.fIntegralLimit < 0 || ...
+                    axisCfg.fForceTolerance < 0 || ...
+                    axisCfg.fMaxVelocity <= 0 || ...
+                    axisCfg.fMaxForce <= 0 || ...
+                    axisCfg.fForceReliefDistance <= 0 || ...
+                    axisCfg.fForceReliefVelocity <= 0
+                error('PLC:InvalidConfiguration', ...
+                    'Hardware configuration contains invalid values.');
+            end
+
             settings = plc.handles.(upper(char(axisName))).settings;
             plc.writeLreal(settings.tenzoCons, axisCfg.fTenzoCons);
             plc.writeLreal(settings.tenzoOffset, axisCfg.fTenzoOffset);
@@ -234,82 +418,116 @@ classdef Plc < handle
             plc.writeLreal(settings.forceTolerance, axisCfg.fForceTolerance);
             plc.writeLreal(settings.maxVelocity, axisCfg.fMaxVelocity);
             plc.writeLreal(settings.maxForce, axisCfg.fMaxForce);
-            plc.writeLreal(settings.maxPosition, axisCfg.fMaxPosition);
+            plc.writeLreal(settings.forceReliefDistance, ...
+                axisCfg.fForceReliefDistance);
+            plc.writeLreal(settings.forceReliefVelocity, ...
+                axisCfg.fForceReliefVelocity);
         end
-
     end
 
     methods (Access = private)
-        % createAxisHandles handles this operation.
         function handles = createAxisHandles(plc, axisName)
             statusRoot = sprintf('MAIN.stSystemStatus%s.', axisName);
             commandRoot = sprintf('MAIN.stMoveCommand%s.', axisName);
             settingsRoot = sprintf('MAIN.stSettings%s.', axisName);
 
             handles.status = struct( ...
-                'working', plc.makeHandle(statusRoot + "bWorking"), ...
-                'head', plc.makeHandle(statusRoot + "nBufferHead"), ...
-                'sampleCounter', plc.makeHandle(statusRoot + "nSampleCounter"), ...
-                'operationCounter', plc.makeHandle(statusRoot + "nOperationCounter"), ...
-                'forceBuffer', plc.makeHandle(statusRoot + "fTenzoBuffer"), ...
-                'positionBuffer', plc.makeHandle(statusRoot + "fPosBuffer"), ...
-                'tareOffset', plc.makeHandle(statusRoot + "fTenzoTarOffset"), ...
-                'tareWorking', plc.makeHandle(statusRoot + "bTarWorking"), ...
-                'error', plc.makeHandle(statusRoot + "bError"), ...
-                'errorCode', plc.makeHandle(statusRoot + "nErrorCode"), ...
-                'axisErrorID', plc.makeHandle(statusRoot + "nAxisErrorID"), ...
-                'powered', plc.makeHandle(statusRoot + "bPowered"), ...
-                'homing', plc.makeHandle(statusRoot + "bHoming"), ...
-                'homed', plc.makeHandle(statusRoot + "bHomed"), ...
-                'stopped', plc.makeHandle(statusRoot + "bStopped"), ...
-                'actPosition', plc.makeHandle(statusRoot + "fActPosition"));
+                'working', plc.makeHandle([statusRoot, 'bWorking']), ...
+                'head', plc.makeHandle([statusRoot, 'nBufferHead']), ...
+                'sampleCounter', plc.makeHandle([statusRoot, 'nSampleCounter']), ...
+                'operationCounter', plc.makeHandle([statusRoot, 'nOperationCounter']), ...
+                'interfaceVersion', plc.makeHandle([statusRoot, 'nInterfaceVersion']), ...
+                'forceBuffer', plc.makeHandle([statusRoot, 'fTenzoBuffer']), ...
+                'positionBuffer', plc.makeHandle([statusRoot, 'fPosBuffer']), ...
+                'tareOffset', plc.makeHandle([statusRoot, 'fTenzoTarOffset']), ...
+                'tareWorking', plc.makeHandle([statusRoot, 'bTarWorking']), ...
+                'error', plc.makeHandle([statusRoot, 'bError']), ...
+                'errorCode', plc.makeHandle([statusRoot, 'nErrorCode']), ...
+                'axisErrorID', plc.makeHandle([statusRoot, 'nAxisErrorID']), ...
+                'powered', plc.makeHandle([statusRoot, 'bPowered']), ...
+                'homing', plc.makeHandle([statusRoot, 'bHoming']), ...
+                'homed', plc.makeHandle([statusRoot, 'bHomed']), ...
+                'stopped', plc.makeHandle([statusRoot, 'bStopped']), ...
+                'savedPositionValid', ...
+                    plc.makeHandle([statusRoot, 'bSavedPositionValid']), ...
+                'actPosition', plc.makeHandle([statusRoot, 'fActPosition']));
 
             handles.command = struct( ...
-                'distance', plc.makeHandle(commandRoot + "fDistances"), ...
-                'velocity', plc.makeHandle(commandRoot + "fVelocities"), ...
-                'total', plc.makeHandle(commandRoot + "nTotalSteps"), ...
-                'mode', plc.makeHandle(commandRoot + "nMode"), ...
-                'execute', plc.makeHandle(commandRoot + "bExecute"), ...
-                'halt', plc.makeHandle(commandRoot + "bHalt"), ...
-                'power', plc.makeHandle(commandRoot + "bPower"), ...
-                'reset', plc.makeHandle(commandRoot + "bReset"), ...
-                'home', plc.makeHandle(commandRoot + "bHome"), ...
-                'tare', plc.makeHandle(commandRoot + "bStartTar"), ...
-                'singleControlMode', plc.makeHandle(commandRoot + "nSingleControlMode"), ...
-                'singleRate', plc.makeHandle(commandRoot + "fSingleRate"), ...
-                'stop1Mode', plc.makeHandle(commandRoot + "nStop1Mode"), ...
-                'stop1Value', plc.makeHandle(commandRoot + "fStop1Value"), ...
-                'stop2Mode', plc.makeHandle(commandRoot + "nStop2Mode"), ...
-                'stop2Value', plc.makeHandle(commandRoot + "fStop2Value"));
+                'distance', plc.makeHandle([commandRoot, 'fDistances']), ...
+                'velocity', plc.makeHandle([commandRoot, 'fVelocities']), ...
+                'total', plc.makeHandle([commandRoot, 'nTotalSteps']), ...
+                'mode', plc.makeHandle([commandRoot, 'nMode']), ...
+                'execute', plc.makeHandle([commandRoot, 'bExecute']), ...
+                'halt', plc.makeHandle([commandRoot, 'bHalt']), ...
+                'power', plc.makeHandle([commandRoot, 'bPower']), ...
+                'reset', plc.makeHandle([commandRoot, 'bReset']), ...
+                'home', plc.makeHandle([commandRoot, 'bHome']), ...
+                'tare', plc.makeHandle([commandRoot, 'bStartTar']), ...
+                'savePosition', plc.makeHandle([commandRoot, 'bSavePosition']), ...
+                'restorePosition', plc.makeHandle([commandRoot, 'bRestorePosition']), ...
+                'restoreVelocity', plc.makeHandle([commandRoot, 'fRestoreVelocity']), ...
+                'includePreTest', plc.makeHandle([commandRoot, 'bIncludePreTest']), ...
+                'preTestOnly', plc.makeHandle([commandRoot, 'bPreTestOnly']), ...
+                'preCycleCount', plc.makeHandle([commandRoot, 'nPreCycleCount']), ...
+                'preloadEnabled', plc.makeHandle([commandRoot, 'bPreloadEnabled']), ...
+                'preloadValue', plc.makeHandle([commandRoot, 'fPreloadValue']), ...
+                'preLoadValue', plc.makeHandle([commandRoot, 'fPreLoadValue']), ...
+                'preUnloadValue', plc.makeHandle([commandRoot, 'fPreUnloadValue']), ...
+                'preUnloadToStart', ...
+                    plc.makeHandle([commandRoot, 'bPreUnloadToStart']), ...
+                'preTestRate', plc.makeHandle([commandRoot, 'fPreTestRate']), ...
+                'preTestHoldTime', ...
+                    plc.makeHandle([commandRoot, 'fPreTestHoldTime']), ...
+                'testRate', plc.makeHandle([commandRoot, 'fTestRate']), ...
+                'forceHoldTime', plc.makeHandle([commandRoot, 'fForceHoldTime']), ...
+                'forceDropPercent', ...
+                    plc.makeHandle([commandRoot, 'fForceDropPercent']), ...
+                'forceDropThreshold', ...
+                    plc.makeHandle([commandRoot, 'fForceDropThreshold']), ...
+                'cycleCount', plc.makeHandle([commandRoot, 'nCycleCount']), ...
+                'loadMode', plc.makeHandle([commandRoot, 'nLoadMode']), ...
+                'loadValues', plc.makeHandle([commandRoot, 'fLoadValues']), ...
+                'unloadMode', plc.makeHandle([commandRoot, 'nUnloadMode']), ...
+                'unloadValues', plc.makeHandle([commandRoot, 'fUnloadValues']), ...
+                'stop1Mode', plc.makeHandle([commandRoot, 'nStop1Mode']), ...
+                'stop1Value', plc.makeHandle([commandRoot, 'fStop1Value']), ...
+                'stop2Mode', plc.makeHandle([commandRoot, 'nStop2Mode']), ...
+                'stop2Value', plc.makeHandle([commandRoot, 'fStop2Value']), ...
+                'postTestMode', plc.makeHandle([commandRoot, 'nPostTestMode']));
 
             handles.settings = struct( ...
-                'tenzoCons', plc.makeHandle(settingsRoot + "fTenzoCons"), ...
-                'tenzoOffset', plc.makeHandle(settingsRoot + "fTenzoOffset"), ...
-                'kp', plc.makeHandle(settingsRoot + "fKp"), ...
-                'ki', plc.makeHandle(settingsRoot + "fKi"), ...
-                'integralLimit', plc.makeHandle(settingsRoot + "fIntegralLimit"), ...
-                'forceTolerance', plc.makeHandle(settingsRoot + "fForceTolerance"), ...
-                'maxVelocity', plc.makeHandle(settingsRoot + "fMaxVelocity"), ...
-                'maxForce', plc.makeHandle(settingsRoot + "fMaxForce"), ...
-                'maxPosition', plc.makeHandle(settingsRoot + "fMaxPosition"));
+                'tenzoCons', plc.makeHandle([settingsRoot, 'fTenzoCons']), ...
+                'tenzoOffset', plc.makeHandle([settingsRoot, 'fTenzoOffset']), ...
+                'kp', plc.makeHandle([settingsRoot, 'fKp']), ...
+                'ki', plc.makeHandle([settingsRoot, 'fKi']), ...
+                'integralLimit', plc.makeHandle([settingsRoot, 'fIntegralLimit']), ...
+                'forceTolerance', plc.makeHandle([settingsRoot, 'fForceTolerance']), ...
+                'maxVelocity', plc.makeHandle([settingsRoot, 'fMaxVelocity']), ...
+                'maxForce', plc.makeHandle([settingsRoot, 'fMaxForce']), ...
+                'forceReliefDistance', ...
+                    plc.makeHandle([settingsRoot, 'fForceReliefDistance']), ...
+                'forceReliefVelocity', ...
+                    plc.makeHandle([settingsRoot, 'fForceReliefVelocity']));
         end
 
-        % makeHandle handles this operation.
         function handle = makeHandle(plc, symbol)
             handle = int32(plc.client.CreateVariableHandle(char(symbol)));
         end
 
-        % readAxisSnapshot handles this operation.
         function [forceData, positionData, statusNow] = readAxisSnapshot(plc, axisName)
-            statusHandles = plc.handles.(axisName).status;
+            h = plc.handles.(axisName).status;
+            counterAfter = plc.readUdint(h.sampleCounter);
+            head = double(plc.readInt(h.head));
+            forceBuffer = [];
+            positionBuffer = [];
             for attempt = 1:2
-                counterBefore = plc.readUdint(statusHandles.sampleCounter);
-                head = double(plc.readInt(statusHandles.head));
-                forceBuffer = double(plc.client.ReadAny(statusHandles.forceBuffer, ...
-                    System.Type.GetType('System.Double[]'), plc.arrayLengths));
-                positionBuffer = double(plc.client.ReadAny(statusHandles.positionBuffer, ...
-                    System.Type.GetType('System.Double[]'), plc.arrayLengths));
-                counterAfter = plc.readUdint(statusHandles.sampleCounter);
+                counterBefore = plc.readUdint(h.sampleCounter);
+                head = double(plc.readInt(h.head));
+                forceBuffer = double(plc.client.ReadAny(h.forceBuffer, ...
+                    System.Type.GetType('System.Double[]'), plc.statusArrayLengths));
+                positionBuffer = double(plc.client.ReadAny(h.positionBuffer, ...
+                    System.Type.GetType('System.Double[]'), plc.statusArrayLengths));
+                counterAfter = plc.readUdint(h.sampleCounter);
                 if counterBefore == counterAfter
                     break;
                 end
@@ -324,13 +542,14 @@ classdef Plc < handle
                 return;
             end
 
-            if double(counterAfter) < double(previous) && double(previous) < (2^32 - 150)
-                % Counter moved backwards away from its natural wrap point: PLC restarted.
+            if double(counterAfter) < double(previous) && ...
+                    double(previous) < (2^32 - plc.STATUS_BUFFER_LENGTH)
                 plc.lastSampleCounter.(axisName) = double(counterAfter);
                 forceData = [];
                 positionData = [];
                 return;
             end
+
             count = mod(double(counterAfter) - double(previous), 2^32);
             plc.lastSampleCounter.(axisName) = double(counterAfter);
             if count == 0
@@ -338,17 +557,20 @@ classdef Plc < handle
                 positionData = [];
                 return;
             end
-            if count > 150
-                plc.droppedSamples.(axisName) = plc.droppedSamples.(axisName) + count - 150;
-                count = 150;
+            if count > plc.STATUS_BUFFER_LENGTH
+                plc.droppedSamples.(axisName) = ...
+                    plc.droppedSamples.(axisName) + ...
+                    count - plc.STATUS_BUFFER_LENGTH;
+                count = plc.STATUS_BUFFER_LENGTH;
             end
-            startIndex = mod(head - count, 150) + 1;
-            indices = mod((startIndex - 1) + (0:count-1), 150) + 1;
+
+            startIndex = mod(head - count, plc.STATUS_BUFFER_LENGTH) + 1;
+            indices = mod((startIndex - 1) + (0:count-1), ...
+                plc.STATUS_BUFFER_LENGTH) + 1;
             forceData = forceBuffer(indices);
             positionData = positionBuffer(indices);
         end
 
-        % readAxisStatus handles this operation.
         function statusNow = readAxisStatus(plc, axisName)
             h = plc.handles.(axisName).status;
             statusNow = struct( ...
@@ -362,49 +584,159 @@ classdef Plc < handle
                 'homing', plc.readBool(h.homing), ...
                 'homed', plc.readBool(h.homed), ...
                 'stopped', plc.readBool(h.stopped), ...
-                'position', plc.readLreal(h.actPosition));
-            statusNow.operationCounter = plc.readUdint(h.operationCounter);
+                'savedPositionValid', plc.readBool(h.savedPositionValid), ...
+                'position', plc.readLreal(h.actPosition), ...
+                'operationCounter', plc.readUdint(h.operationCounter), ...
+                'interfaceVersion', plc.readUdint(h.interfaceVersion));
         end
 
-        % sendAxisTrajectory handles this operation.
-        function sendAxisTrajectory(plc, axisName, mode, distances, velocities, powerConfirmed)
-            if nargin < 6
-                powerConfirmed = false;
-            end
-            axisName = upper(char(axisName));
+        function writeAxisTrajectory(plc, axisName, mode, distances, velocities)
             distances = double(distances(:)');
             velocities = double(velocities(:)');
-            if isempty(distances) || numel(distances) ~= numel(velocities) || numel(distances) > 100
-                error('PLC:InvalidTrajectory', 'Trajectory arrays must have equal lengths from 1 to 100.');
+            if isempty(distances) || numel(distances) ~= numel(velocities) || ...
+                    numel(distances) > plc.COMMAND_ARRAY_LENGTH
+                error('PLC:InvalidTrajectory', ...
+                    'Trajectory arrays must have equal lengths from 1 to 100.');
             end
-            if any(~isfinite(distances)) || any(~isfinite(velocities))
-                error('PLC:InvalidTrajectory', 'Trajectory values must be finite.');
-            end
-            statusNow = plc.readAxisStatus(axisName);
-            if statusNow.working || statusNow.error
-                error('PLC:AxisUnavailable', '%s axis is busy or in error.', axisName);
-            end
-            if ~powerConfirmed
-                plc.ensureAxisPowered(axisName);
+            if any(~isfinite(distances)) || any(~isfinite(velocities)) || ...
+                    any(abs(velocities) <= 0)
+                error('PLC:InvalidTrajectory', ...
+                    'Trajectory values must be finite and velocities non-zero.');
             end
 
-            distanceBuffer = zeros(1, 100);
-            velocityBuffer = zeros(1, 100);
-            distanceBuffer(1:numel(distances)) = distances;
-            velocityBuffer(1:numel(velocities)) = velocities;
-            for index = 1:100
-                plc.netBuffers.(axisName).distance(index) = distanceBuffer(index);
-                plc.netBuffers.(axisName).velocity(index) = velocityBuffer(index);
-            end
             command = plc.handles.(axisName).command;
-            plc.client.WriteAny(command.distance, plc.netBuffers.(axisName).distance);
-            plc.client.WriteAny(command.velocity, plc.netBuffers.(axisName).velocity);
+            plc.writeArray(axisName, 'distance', command.distance, distances);
+            plc.writeArray(axisName, 'velocity', command.velocity, velocities);
             plc.writeInt(command.total, numel(distances));
             plc.writeInt(command.mode, mode);
-            plc.writeBool(command.execute, true);
         end
 
-        % ensureAxisPowered handles this operation.
+        function validateTestCommand(plc, command, statusNow)
+            required = {'includePreTest', 'preTestOnly', 'preCycleCount', ...
+                'preloadEnabled', 'preloadValue', 'preLoadValue', ...
+                'preUnloadValue', 'preUnloadToStart', 'preTestRate', ...
+                'preTestHoldTime', 'testRate', 'forceHoldTime', ...
+                'forceDropPercent', 'forceDropThreshold', ...
+                'cycleCount', 'loadMode', 'loadValues', 'unloadMode', ...
+                'unloadValues', 'stop1Mode', 'stop1Value', 'stop2Mode', ...
+                'stop2Value', 'postTestMode'};
+            for index = 1:numel(required)
+                if ~isfield(command, required{index})
+                    error('PLC:InvalidTestCommand', ...
+                        'Test command is missing %s.', required{index});
+                end
+            end
+
+            if ~isfinite(command.testRate) || command.testRate == 0 || ...
+                    ~isfinite(command.forceHoldTime) || command.forceHoldTime < 0 || ...
+                    ~isfinite(command.forceDropPercent) || ...
+                    command.forceDropPercent < 0 || command.forceDropPercent >= 100 || ...
+                    ~isfinite(command.forceDropThreshold) || ...
+                    command.forceDropThreshold < 0
+                error('PLC:InvalidTestCommand', ...
+                    ['Movement speed must be non-zero; wait time and force-drop ' ...
+                    'threshold must be non-negative; drop must be below 100%%.']);
+            end
+            if ~plc.isIntegerInRange(command.postTestMode, 0, 4)
+                error('PLC:InvalidTestCommand', 'Invalid post-test mode.');
+            end
+            if command.postTestMode == 1 && ~statusNow.savedPositionValid
+                error('PLC:NoSavedPosition', ...
+                    'Return-to-saved requires a saved PLC position.');
+            end
+
+            if command.preTestOnly && ~command.includePreTest
+                error('PLC:InvalidTestCommand', ...
+                    'Pre-test-only commands must include a pre-test.');
+            end
+            if command.includePreTest
+                preValues = [command.preloadValue, command.preLoadValue, ...
+                    command.preUnloadValue, command.preTestRate, ...
+                    command.preTestHoldTime];
+                if ~plc.isIntegerInRange(command.preCycleCount, 0, 100) || ...
+                        any(~isfinite(preValues)) || command.preTestRate == 0 || ...
+                        command.preTestHoldTime < 0
+                    error('PLC:InvalidTestCommand', ...
+                        'Invalid force pre-conditioning values.');
+                end
+            end
+
+            if command.preTestOnly
+                return;
+            end
+            if ~plc.isIntegerInRange(command.cycleCount, 0, 100)
+                error('PLC:InvalidTestCommand', ...
+                    'Cycle count must be an integer from 0 to 100.');
+            end
+            if command.cycleCount > 0
+                if ~ismember(command.loadMode, [1, 2]) || ...
+                        ~ismember(command.unloadMode, [1, 2])
+                    error('PLC:InvalidTestCommand', ...
+                        'Load and unload modes must be displacement or force.');
+                end
+                if numel(command.loadValues) ~= command.cycleCount || ...
+                        numel(command.unloadValues) ~= command.cycleCount || ...
+                        any(~isfinite(command.loadValues)) || ...
+                        any(~isfinite(command.unloadValues))
+                    error('PLC:InvalidTestCommand', ...
+                        'Load/unload arrays must match the cycle count.');
+                end
+            else
+                stopValues = [command.stop1Value, command.stop2Value];
+                if ~ismember(command.stop1Mode, [1, 2]) || ...
+                        ~ismember(command.stop2Mode, [0, 1, 2]) || ...
+                        any(~isfinite(stopValues))
+                    error('PLC:InvalidTestCommand', ...
+                        'Invalid single-test endpoint configuration.');
+                end
+            end
+        end
+
+        function writeAxisTestCommand(plc, axisName, values)
+            command = plc.handles.(axisName).command;
+            plc.writeArray(axisName, 'load', command.loadValues, values.loadValues);
+            plc.writeArray(axisName, 'unload', command.unloadValues, values.unloadValues);
+
+            plc.writeInt(command.mode, 3);
+            plc.writeBool(command.includePreTest, values.includePreTest);
+            plc.writeBool(command.preTestOnly, values.preTestOnly);
+            plc.writeInt(command.preCycleCount, values.preCycleCount);
+            plc.writeBool(command.preloadEnabled, values.preloadEnabled);
+            plc.writeLreal(command.preloadValue, values.preloadValue);
+            plc.writeLreal(command.preLoadValue, values.preLoadValue);
+            plc.writeLreal(command.preUnloadValue, values.preUnloadValue);
+            plc.writeBool(command.preUnloadToStart, values.preUnloadToStart);
+            plc.writeLreal(command.preTestRate, values.preTestRate);
+            plc.writeLreal(command.preTestHoldTime, values.preTestHoldTime);
+            plc.writeLreal(command.testRate, values.testRate);
+            plc.writeLreal(command.forceHoldTime, values.forceHoldTime);
+            plc.writeLreal(command.forceDropPercent, values.forceDropPercent);
+            plc.writeLreal(command.forceDropThreshold, values.forceDropThreshold);
+            plc.writeInt(command.cycleCount, values.cycleCount);
+            plc.writeInt(command.loadMode, values.loadMode);
+            plc.writeInt(command.unloadMode, values.unloadMode);
+            plc.writeInt(command.stop1Mode, values.stop1Mode);
+            plc.writeLreal(command.stop1Value, values.stop1Value);
+            plc.writeInt(command.stop2Mode, values.stop2Mode);
+            plc.writeLreal(command.stop2Value, values.stop2Value);
+            plc.writeInt(command.postTestMode, values.postTestMode);
+        end
+
+        function writeArray(plc, axisName, bufferName, handle, values)
+            values = double(values(:)');
+            if numel(values) > plc.COMMAND_ARRAY_LENGTH
+                error('PLC:ArrayTooLong', ...
+                    'PLC command arrays are limited to 100 entries.');
+            end
+            buffer = zeros(1, plc.COMMAND_ARRAY_LENGTH);
+            buffer(1:numel(values)) = values;
+            for index = 1:plc.COMMAND_ARRAY_LENGTH
+                plc.netBuffers.(axisName).(bufferName)(index) = buffer(index);
+            end
+            plc.client.WriteAny(handle, ...
+                plc.netBuffers.(axisName).(bufferName));
+        end
+
         function ensureAxisPowered(plc, axisName)
             statusNow = plc.readAxisStatus(axisName);
             if statusNow.powered
@@ -424,19 +756,19 @@ classdef Plc < handle
                     return;
                 end
             end
-            error('PLC:PowerTimeout', '%s axis did not power on within 5 seconds.', axisName);
+            error('PLC:PowerTimeout', ...
+                '%s axis did not power on within 5 seconds.', axisName);
         end
 
-        % writeCommandForAxes handles this operation.
         function writeCommandForAxes(plc, axes, commandName)
             plc.requireConnection();
             axes = plc.normalizeAxes(axes);
             for index = 1:numel(axes)
-                plc.writeBool(plc.handles.(axes{index}).command.(commandName), true);
+                plc.writeBool( ...
+                    plc.handles.(axes{index}).command.(commandName), true);
             end
         end
 
-        % normalizeAxes handles this operation.
         function axes = normalizeAxes(~, axes)
             if ischar(axes) || isstring(axes)
                 value = char(axes);
@@ -447,54 +779,50 @@ classdef Plc < handle
                 elseif strcmpi(value, 'Y only') || strcmpi(value, 'Y')
                     axes = {'Y'};
                 else
-                    error('PLC:InvalidAxes', 'Unknown axis selection: %s', value);
+                    error('PLC:InvalidAxes', ...
+                        'Unknown axis selection: %s', value);
                 end
             end
         end
 
-        % readBool handles this operation.
         function value = readBool(plc, handle)
-            value = logical(plc.client.ReadAny(handle, System.Type.GetType('System.Boolean')));
+            value = logical(plc.client.ReadAny( ...
+                handle, System.Type.GetType('System.Boolean')));
         end
 
-        % readInt handles this operation.
         function value = readInt(plc, handle)
-            value = int16(plc.client.ReadAny(handle, System.Type.GetType('System.Int16')));
+            value = int16(plc.client.ReadAny( ...
+                handle, System.Type.GetType('System.Int16')));
         end
 
-        % readUdint handles this operation.
         function value = readUdint(plc, handle)
-            value = uint32(plc.client.ReadAny(handle, System.Type.GetType('System.UInt32')));
+            value = uint32(plc.client.ReadAny( ...
+                handle, System.Type.GetType('System.UInt32')));
         end
 
-        % readLreal handles this operation.
         function value = readLreal(plc, handle)
-            value = double(plc.client.ReadAny(handle, System.Type.GetType('System.Double')));
+            value = double(plc.client.ReadAny( ...
+                handle, System.Type.GetType('System.Double')));
         end
 
-        % writeBool handles this operation.
         function writeBool(plc, handle, value)
             plc.client.WriteAny(handle, logical(value));
         end
 
-        % writeInt handles this operation.
         function writeInt(plc, handle, value)
             plc.client.WriteAny(handle, int16(value));
         end
 
-        % writeLreal handles this operation.
         function writeLreal(plc, handle, value)
             plc.client.WriteAny(handle, double(value));
         end
 
-        % requireConnection handles this operation.
         function requireConnection(plc)
-            if ~plc.connected || isempty(plc.client)
+            if ~plc.connected || plc.disconnecting || isempty(plc.client)
                 error('PLC:Disconnected', 'PLC is disconnected.');
             end
         end
 
-        % resetStreamingState handles this operation.
         function resetStreamingState(plc)
             plc.lastSampleCounter = struct('X', [], 'Y', []);
             plc.droppedSamples = struct('X', 0, 'Y', 0);
@@ -502,17 +830,34 @@ classdef Plc < handle
             plc.totalTimeY = 0;
         end
 
-        % deleteHandleTree handles this operation.
-        function deleteHandleTree(plc, value)
+        function deleteHandleTree(plc, value, client)
             if isstruct(value)
                 names = fieldnames(value);
                 for index = 1:numel(names)
-                    plc.deleteHandleTree(value.(names{index}));
+                    plc.deleteHandleTree(value.(names{index}), client);
                 end
             elseif ~isempty(value)
-                plc.client.DeleteVariableHandle(value);
+                try
+                    client.DeleteVariableHandle(value);
+                catch exception
+                    if ~plc.isExpectedDisconnectError(exception)
+                        warning('PLC:HandleCleanup', ...
+                            'Could not delete ADS handle: %s', exception.message);
+                    end
+                end
             end
+        end
+
+        function expected = isExpectedDisconnectError(~, exception)
+            message = lower(char(exception.message));
+            expected = contains(message, '0x710') || ...
+                contains(message, 'symbol could not be found') || ...
+                contains(message, 'invalid handle') || contains(message, '0x714');
+        end
+
+        function valid = isIntegerInRange(~, value, minimum, maximum)
+            valid = isscalar(value) && isfinite(value) && ...
+                value == round(value) && value >= minimum && value <= maximum;
         end
     end
 end
-

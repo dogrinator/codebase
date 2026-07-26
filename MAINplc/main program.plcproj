@@ -17,6 +17,9 @@
     <LibraryReferences>{13cac7e7-4110-46df-820b-016b8cd20f33}</LibraryReferences>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="DUTs\E_SafetyState.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="DUTs\ST_settings.TcDUT">
       <SubType>Code</SubType>
     </Compile>
