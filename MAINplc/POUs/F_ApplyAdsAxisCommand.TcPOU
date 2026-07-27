@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <POU Name="F_ApplyAdsAxisCommand" Id="{43591d8f-bc05-40ce-8a35-61263a5c4bd0}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION F_ApplyAdsAxisCommand : BOOL
+VAR_IN_OUT
+	stSource : ST_AdsAxisCommand;
+	stTarget : ST_MoveCommand;
+END_VAR
+VAR
+	nIndex : INT;
+END_VAR]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[stTarget.nMode := stSource.nMode;
+stTarget.fMoveDistance := stSource.fMoveDistance;
+stTarget.fMoveVelocity := stSource.fMoveVelocity;
+stTarget.fTargetForce := stSource.fTargetForce;
+stTarget.fForceDuration := stSource.fForceDuration;
+stTarget.bIncludePreTest := stSource.bIncludePreTest;
+stTarget.bPreTestOnly := stSource.bPreTestOnly;
+stTarget.nPreCycleCount := UINT_TO_INT(stSource.nPreCycleCount);
+stTarget.bPreloadEnabled := stSource.bPreloadEnabled;
+stTarget.fPreloadValue := stSource.fPreloadValue;
+stTarget.fPreCycleLoadValue := stSource.fPreCycleLoadValue;
+stTarget.fPreUnloadValue := stSource.fPreUnloadValue;
+stTarget.bPreUnloadToStart := stSource.bPreUnloadToStart;
+stTarget.fPreTestRate := stSource.fPreTestRate;
+stTarget.fPreTestHoldTime := stSource.fPreTestHoldTime;
+stTarget.fTestRate := stSource.fTestRate;
+stTarget.fForceHoldTime := stSource.fForceHoldTime;
+stTarget.nCycleCount := UINT_TO_INT(stSource.nCycleCount);
+stTarget.nLoadMode := stSource.nLoadMode;
+stTarget.nUnloadMode := stSource.nUnloadMode;
+stTarget.nStop1Mode := stSource.nStop1Mode;
+stTarget.fStop1Value := stSource.fStop1Value;
+stTarget.nStop2Mode := stSource.nStop2Mode;
+stTarget.fStop2Value := stSource.fStop2Value;
+stTarget.nPostTestMode := stSource.nPostTestMode;
+
+FOR nIndex := 1 TO 50 DO
+	stTarget.fLoadValues[nIndex] := stSource.fLoadValues[nIndex];
+	stTarget.fUnloadValues[nIndex] := stSource.fUnloadValues[nIndex];
+END_FOR
+
+F_ApplyAdsAxisCommand := TRUE;]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

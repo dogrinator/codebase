@@ -58,14 +58,15 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[
-// Commands are edge-triggered. End-stop inputs are normalized once in MAIN.
+// Commands are edge-triggered
 rtReset(CLK := bReset);
 rtHalt(CLK := bHalt);
 rtHome(CLK := bHome);
 
+// halt pulse is one cicle variable
 bHaltDonePulse := FALSE;
 
-// Reset a latched fault. Successful reset restores MATLAB ownership of bPower.
+// Reset a latched fault
 IF rtReset.Q AND bError AND eState = E_SafetyState.Idle THEN
 	bResetExecute := TRUE;
 END_IF
@@ -84,7 +85,7 @@ ELSIF bResetExecute AND fbReset.Error THEN
 	bFaultPowerInhibit := TRUE;
 END_IF
 
-// Latch genuine NC, wiring and motion-function-block faults.
+// Latch genuine NC, wiring and motion-function-block faults
 IF NOT bError THEN
 	IF stAxis.Status.Error THEN
 		bError := TRUE;
@@ -119,7 +120,7 @@ IF NOT bError THEN
 	END_IF
 END_IF
 
-// A normal halt always uses MC_Halt and never changes the power command.
+// Halt and switch to error stop
 IF rtHalt.Q AND eState <> E_SafetyState.ErrorStop THEN
 	eState := E_SafetyState.ProtectiveStop;
 END_IF
@@ -191,7 +192,7 @@ fbMoveTimeout(
 	IN := eState = E_SafetyState.MoveToZero,
 	PT := HOME_PARK_TIMEOUT);
 
-// Physical switches continuously block motion farther into the active limit.
+// Physical switches continuously block motion farther into the active limit
 fbPower(
 	Axis := stAxis,
 	Enable := bPower AND NOT bFaultPowerInhibit,
@@ -236,7 +237,10 @@ bProtectiveStop := eState = E_SafetyState.ProtectiveStop;
 ]]></ST>
     </Implementation>
     <LineIds Name="fb_safety">
-      <LineId Id="1" Count="175" />
+      <LineId Id="1" Count="4" />
+      <LineId Id="234" Count="0" />
+      <LineId Id="6" Count="170" />
+      <LineId Id="179" Count="0" />
     </LineIds>
   </POU>
 </TcPlcObject>

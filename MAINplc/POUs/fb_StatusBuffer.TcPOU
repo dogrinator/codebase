@@ -67,7 +67,7 @@ stSystemStatus.bTarWorking := bTarActive;
 
 // New head
 nNextHead := stSystemStatus.nBufferHead + 1;
-IF nNextHead > 150 THEN
+IF nNextHead > 50 THEN
     nNextHead := 1;
 END_IF
 

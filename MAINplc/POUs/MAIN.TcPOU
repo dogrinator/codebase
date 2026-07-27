@@ -43,11 +43,11 @@ END_VAR]]></Declaration>
 //////////   safety   //////////
 ////////////////////////////////
 
-// Refresh NC status before making any safety or motion decision.
+// Refresh NC status before making any safety or motion decision
 GVL_Axis.xAxis.ReadStatus();
 GVL_Axis.yAxis.ReadStatus();
 
-// Normalize the active-low physical switches.
+// Normalize the active-low physical switches
 bEndStopLxActive := NOT nEndStopLx;
 bEndStopHxActive := NOT nEndStopHx;
 bEndStopLyActive := NOT nEndStopLy;
@@ -139,8 +139,9 @@ stSystemStatusX.bStopped := fbSafetyX.bStopped;
 stSystemStatusX.bWorking := fbMovementControlerX.bBusy OR fbSafetyX.bHoming OR
 	fbSafetyX.bProtectiveStop OR stSystemStatusX.bTarWorking;
 stSystemStatusX.nOperationCounter := fbMovementControlerX.nOperationCounter;
-stSystemStatusX.nInterfaceVersion := 3;
+stSystemStatusX.nInterfaceVersion := 4;
 stSystemStatusX.bSavedPositionValid := fbMovementControlerX.bSavedPositionValid;
+stSystemStatusX.nTestPhase := fbMovementControlerX.nTestPhase;
 stSystemStatusX.bError := fbMovementControlerX.bError OR fbSafetyX.bError;
 IF fbSafetyX.bError THEN
 	stSystemStatusX.nErrorCode := fbSafetyX.nErrorCode;
@@ -158,8 +159,9 @@ stSystemStatusY.bStopped := fbSafetyY.bStopped;
 stSystemStatusY.bWorking := fbMovementControlerY.bBusy OR fbSafetyY.bHoming OR
 	fbSafetyY.bProtectiveStop OR stSystemStatusY.bTarWorking;
 stSystemStatusY.nOperationCounter := fbMovementControlerY.nOperationCounter;
-stSystemStatusY.nInterfaceVersion := 3;
+stSystemStatusY.nInterfaceVersion := 4;
 stSystemStatusY.bSavedPositionValid := fbMovementControlerY.bSavedPositionValid;
+stSystemStatusY.nTestPhase := fbMovementControlerY.nTestPhase;
 stSystemStatusY.bError := fbMovementControlerY.bError OR fbSafetyY.bError;
 IF fbSafetyY.bError THEN
 	stSystemStatusY.nErrorCode := fbSafetyY.nErrorCode;
@@ -210,6 +212,8 @@ stMoveCommandY.bRestorePosition := FALSE;
       <LineId Id="7073" Count="1" />
       <LineId Id="7072" Count="0" />
       <LineId Id="90" Count="47" />
+      <LineId Id="143" Count="7" />
+      <LineId Id="2" Count="0" />
     </LineIds>
   </POU>
 </TcPlcObject>

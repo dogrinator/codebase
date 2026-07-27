@@ -42,11 +42,10 @@ when the source DUT files are correct.
 | Motor velocity | mm/s |
 | Force | N |
 | Hold/duration | s |
-| Command arrays | exactly 100 allocated entries; active count 1–100 |
+| Mode 3 cycle arrays | exactly 50 allocated entries; active count 1–50 |
 
-All numeric inputs must be finite. Required rates must be nonzero. Hold times
-must be non-negative. Counts are integers in `1..100` (Mode 3 single uses
-`nCycleCount=0` by definition).
+MATLAB validates numeric inputs before pulsing `bExecute`. The PLC retains the
+structural `0..100` bounds check for Mode 3 cycle arrays.
 
 ## `ST_MoveCommand`
 
@@ -54,9 +53,8 @@ must be non-negative. Counts are integers in `1..100` (Mode 3 single uses
 
 | Field | Meaning |
 | --- | --- |
-| `fDistances[1..100]` | Mode 1 displacement or Mode 2 duration |
-| `fVelocities[1..100]` | Mode 1 velocity or Mode 2 target force |
-| `nTotalSteps` | Active Mode 1/2 entries |
+| `fMoveDistance`, `fMoveVelocity` | Mode 1 single relative move |
+| `fTargetForce`, `fForceDuration` | Mode 2 single PI-regulated force hold |
 | `nMode` | `1` relative, `2` force/time, `3` full test |
 | `bExecute` | Execute configured operation |
 | `bHalt`, `bPower`, `bReset`, `bHome`, `bStartTar` | Service commands |
@@ -73,14 +71,14 @@ MATLAB writes all fields for both selected axes before pulsing either
 | --- | --- |
 | `bIncludePreTest` | Include force pre-conditioning |
 | `bPreTestOnly` | Run pre-conditioning and post action without a main test |
-| `nPreCycleCount` | Force load/unload cycles, `1..100` |
+| `nPreCycleCount` | Force load/unload cycles, `0..50` |
 | `bPreloadEnabled` | Run one preload endpoint before cycles |
-| `fPreloadValue` | Preload force target |
-| `fPreLoadValue` | Per-cycle load force target |
+| `fPreloadValue` | Initial one-time preload target |
+| `fPreCycleLoadValue` | Repeated preconditioning load target |
 | `fPreUnloadValue` | Per-cycle unload force target |
 | `bPreUnloadToStart` | Return to captured sequence-start coordinate instead of force unload |
-| `fPreTestRate` | Signed force-control motor rate |
-| `fPreTestHoldTime` | PI hold for initial preload; stopped dwell for pre-conditioning endpoints |
+| `fPreTestRate` | Positive force-control speed magnitude |
+| `fPreTestHoldTime` | Required accumulated time inside force tolerance |
 
 The old `nPreTestMode` and `fPreTestValue` fields are removed.
 
@@ -88,12 +86,11 @@ The old `nPreTestMode` and `fPreTestValue` fields are removed.
 
 | Field | Meaning |
 | --- | --- |
-| `fTestRate` | Signed main-test rate |
-| `fForceHoldTime` | Stopped dwell after a non-preload force endpoint |
-| `fForceDropPercent`, `fForceDropThreshold` | Phase-local peak-force drop detection; zero disables |
-| `nCycleCount` | `0` single; `1..100` cyclic |
+| `fTestRate` | Positive main-test speed magnitude |
+| `fForceHoldTime` | Required accumulated time inside force tolerance |
+| `nCycleCount` | `0` single; `1..50` cyclic |
 | `nLoadMode`, `nUnloadMode` | `1` displacement, `2` force |
-| `fLoadValues[1..100]`, `fUnloadValues[1..100]` | Per-cycle levels |
+| `fLoadValues[1..50]`, `fUnloadValues[1..50]` | Per-cycle levels |
 | `nStop1Mode`, `nStop2Mode` | `0` off, `1` displacement, `2` force |
 | `fStop1Value`, `fStop2Value` | Single-test OR endpoint values |
 
@@ -113,14 +110,15 @@ variable arrays.
 | `4` | `zero_force` | Release to signed zero force |
 
 Post motion occurs only after normal completion. Saved return requires
-`bSavedPositionValid`. Zero-force release requires a known previous movement
-direction; otherwise error `2004` is raised.
+`bSavedPositionValid`. Zero-force release derives direction directly from the
+current force error.
 
 ## `ST_SystemStatus`
 
 | Field | Meaning |
 | --- | --- |
-| `nInterfaceVersion` | ADS contract version, currently `3` |
+| `nInterfaceVersion` | ADS contract version, currently `4` |
+| `nTestPhase` | `0` idle, `1` preconditioning, `2` test, `3` post-test |
 | `bWorking` | Axis has an active operation |
 | `nOperationCounter` | Increments once after successful operation completion |
 | `bError`, `nErrorCode`, `nAxisErrorID` | PLC and NC error state |
@@ -128,7 +126,7 @@ direction; otherwise error `2004` is raised.
 | `bSavedPositionValid` | PLC has a coordinate for save/restore/post |
 | `fActPosition` | Current coordinate |
 | `nBufferHead`, `nSampleCounter` | Circular-buffer metadata |
-| `fTenzoBuffer[1..150]`, `fPosBuffer[1..150]` | Force/position samples |
+| `fTenzoBuffer[1..50]`, `fPosBuffer[1..50]` | Force/position samples |
 | `fTenzoTarOffset`, `bTarWorking` | Tare state |
 
 `bHomed` is informational. MATLAB displays it but does not block commands.
@@ -153,14 +151,13 @@ and aborts without post-test. If direction is unknown, no blind move is made.
 
 ## Validation and errors
 
-The PLC defensively validates counts, modes, finite values, non-negative hold
-times, nonzero rates, and relief settings before motion.
+MATLAB owns experiment-value validation. The PLC retains structural array-bound
+checks, runtime safety limits, supported-mode checks, and motion errors.
 
 | Code | Meaning |
 | --- | --- |
 | `2002` | Saved position unavailable |
 | `2003` | Unsupported endpoint mode |
-| `2004` | Zero-force release direction unknown |
 | `2005` | Unsupported post action |
 | `2006` | Axis power unavailable |
 | `2007` | Invalid count/configuration/value |
@@ -168,7 +165,7 @@ times, nonzero rates, and relief settings before motion.
 | `2009` | Invalid restore numeric value |
 | `2101` | Overforce relief completed; reset required |
 | `2102` | Overforce relief direction unknown |
-| `2201..2203` | Controlled halt/relief motion failed |
+| `2201`, `2203` | Relative or velocity motion-function-block failure |
 
 Safety and homing codes `1001..1014` and the NC `nAxisErrorID` are decoded by
 MATLAB's `PlcErrorCatalog`.

@@ -1,0 +1,39 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <DUT Name="ST_AdsAxisCommand" Id="{5da1f483-83c8-469f-a05c-165fe1852351}">
+    <Declaration><![CDATA[
+{attribute 'pack_mode' := '1'}
+TYPE ST_AdsAxisCommand :
+	STRUCT
+		nMode : INT;               // 1=relative, 2=force/time, 3=complete test
+		nCycleCount : UINT;        // Mode 3 cycles; 0=single
+		bIncludePreTest : BOOL;
+		bPreTestOnly : BOOL;
+		nPreCycleCount : UINT;
+		bPreloadEnabled : BOOL;
+		bPreUnloadToStart : BOOL;
+		nLoadMode : INT;
+		nUnloadMode : INT;
+		nStop1Mode : INT;
+		nStop2Mode : INT;
+		nPostTestMode : INT;
+		fPreloadValue : LREAL;
+		fPreCycleLoadValue : LREAL;
+		fPreUnloadValue : LREAL;
+		fPreTestRate : LREAL;
+		fPreTestHoldTime : LREAL;
+		fTestRate : LREAL;
+		fForceHoldTime : LREAL;
+		fMoveDistance : LREAL;
+		fMoveVelocity : LREAL;
+		fTargetForce : LREAL;
+		fForceDuration : LREAL;
+		fStop1Value : LREAL;
+		fStop2Value : LREAL;
+		fLoadValues : ARRAY[1..50] OF LREAL;
+		fUnloadValues : ARRAY[1..50] OF LREAL;
+	END_STRUCT
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>
