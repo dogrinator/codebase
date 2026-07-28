@@ -10,6 +10,9 @@ VAR_INPUT
 	bSafetyError  : BOOL;
 	bProtectiveStop : BOOL;
 	bExternalBusy : BOOL;
+	bSyncEnabled  : BOOL;  // TRUE only for a PLC-owned biaxial test
+	bSyncRelease  : BOOL;  // Shared barrier release from MAIN
+	bSyncAbort    : BOOL;  // Stop this axis when the synchronized peer aborts
 	stSettings    : ST_settings;
 END_VAR
 
@@ -23,6 +26,9 @@ VAR_OUTPUT
 	nOperationCounter : UDINT;
 	bSavedPositionValid : BOOL;
 	nTestPhase : BYTE; // 0 idle, 1 pretest, 2 test, 3 post-test
+	nSyncPoint : BYTE; // 0 none, 1 pre, 2 load, 3 unload, 4 main, 5 post
+	nSyncCycle : INT;  // Cycle associated with the current sync point
+	bPeerAbortRequest : BOOL; // Abort synchronized peer while local relief continues
 END_VAR
 
 VAR
@@ -78,6 +84,9 @@ VAR
 	nLoadDirection          : INT;
 	nLastMotionDirection    : INT;
 	nReliefSourceDirection  : INT;
+	nEndpointSyncPoint      : BYTE;
+	nEndpointSyncCycle      : INT;
+	bForceEndpointReady     : BOOL;
 
 	// Optional OR criterion for the single test
 	bSinglePrimaryActive  : BOOL;
@@ -96,6 +105,12 @@ VAR
 	PHASE_PRETEST : BYTE := 1;
 	PHASE_TEST : BYTE := 2;
 	PHASE_POSTTEST : BYTE := 3;
+	SYNC_NONE : BYTE := 0;
+	SYNC_PRETEST_DONE : BYTE := 1;
+	SYNC_LOAD_DONE : BYTE := 2;
+	SYNC_UNLOAD_DONE : BYTE := 3;
+	SYNC_MAIN_DONE : BYTE := 4;
+	SYNC_POSTTEST_DONE : BYTE := 5;
 	rtBusyTrig : R_TRIG;
 END_VAR
 
@@ -109,6 +124,10 @@ END_VAR
 // =========================================================
 //                 Saved position and homing
 // =========================================================
+
+// Keep a synchronized peer stopped while this axis performs overforce relief.
+// The local controller must not receive its own request back as bSyncAbort.
+bPeerAbortRequest := nSeqState >= 910 AND nSeqState <= 912;
 
 rtSavePosition(CLK := stMoveCommand.bSavePosition);
 rtRestorePosition(CLK := stMoveCommand.bRestorePosition);
@@ -140,7 +159,8 @@ ELSIF bResetRequested AND NOT bError AND NOT bSafetyError THEN
 END_IF
 
 // Operator and safety stops abort the sequence without running post-test.
-IF stMoveCommand.bHalt OR (bProtectiveStop AND NOT stateHalt) THEN
+IF stMoveCommand.bHalt OR (bProtectiveStop AND NOT stateHalt) OR
+	(bSyncEnabled AND bSyncAbort) THEN
 	IF stMoveCommand.bHalt THEN
 		stMoveCommand.bHalt := FALSE;
 	END_IF
@@ -148,6 +168,9 @@ IF stMoveCommand.bHalt OR (bProtectiveStop AND NOT stateHalt) THEN
 	fbMC_MoveRelative1.Execute := FALSE;
 	bExecuteVelMove := FALSE;
 	bSinglePrimaryActive := FALSE;
+	bForceEndpointReady := FALSE;
+	nSyncPoint := SYNC_NONE;
+	nSyncCycle := 0;
 	stateHalt := TRUE;
 	nSeqState := 900;
 END_IF
@@ -158,6 +181,9 @@ IF bSafetyError THEN
 	fbMC_MoveRelative1.Execute := FALSE;
 	bExecuteVelMove := FALSE;
 	bSinglePrimaryActive := FALSE;
+	bForceEndpointReady := FALSE;
+	nSyncPoint := SYNC_NONE;
+	nSyncCycle := 0;
 	stateHalt := FALSE;
 	nSeqState := 999;
 END_IF
@@ -195,6 +221,9 @@ IF NOT bError AND NOT bSafetyError AND
 	fbMC_MoveRelative1.Execute := FALSE;
 	bExecuteVelMove := FALSE;
 	bSinglePrimaryActive := FALSE;
+	bForceEndpointReady := FALSE;
+	nSyncPoint := SYNC_NONE;
+	nSyncCycle := 0;
 	stateHalt := TRUE;
 	nSeqState := 910;
 END_IF
@@ -204,6 +233,9 @@ IF bError AND nSeqState <> 998 AND nSeqState <> 999 THEN
 	fbMC_MoveRelative1.Execute := FALSE;
 	bExecuteVelMove := FALSE;
 	bSinglePrimaryActive := FALSE;
+	bForceEndpointReady := FALSE;
+	nSyncPoint := SYNC_NONE;
+	nSyncCycle := 0;
 	stateHalt := TRUE;
 	nSeqState := 998;
 END_IF
@@ -537,6 +569,11 @@ CASE nSeqState OF
 		bExecuteVelMove := FALSE;
 		stateHalt := FALSE;
 		bSinglePrimaryActive := FALSE;
+		bForceEndpointReady := FALSE;
+		nSyncPoint := SYNC_NONE;
+		nSyncCycle := 0;
+		nEndpointSyncPoint := SYNC_NONE;
+		nEndpointSyncCycle := 0;
 
 		IF rtRestorePosition.Q THEN
 			IF bExternalBusy THEN
@@ -570,6 +607,8 @@ CASE nSeqState OF
 				fEndpointTargetPosition := fSavedPosition;
 				fTargetDist1 := fEndpointTargetPosition - fActPosition;
 				fTargetVel1 := ABS(stMoveCommand.fRestoreVelocity);
+				nEndpointSyncPoint := SYNC_NONE;
+				nEndpointSyncCycle := 0;
 				nAfterEndpointState := 56;
 				nSeqState := 300;
 			END_IF
@@ -612,7 +651,15 @@ CASE nSeqState OF
 			fEndpointTargetForce := stMoveCommand.fPreloadValue;
 			fEndpointRate := ABS(stMoveCommand.fPreTestRate);
 			fEndpointHoldTime := stMoveCommand.fPreTestHoldTime;
-			nAfterEndpointState := 11;
+			IF stMoveCommand.nPreCycleCount = 0 THEN
+				nEndpointSyncPoint := SYNC_PRETEST_DONE;
+				nEndpointSyncCycle := 0;
+				nAfterEndpointState := 18;
+			ELSE
+				nEndpointSyncPoint := SYNC_NONE;
+				nEndpointSyncCycle := 0;
+				nAfterEndpointState := 11;
+			END_IF
 			nSeqState := 310;
 		ELSE
 			nSeqState := 12;
@@ -628,6 +675,8 @@ CASE nSeqState OF
 			fEndpointTargetForce := stMoveCommand.fPreCycleLoadValue;
 			fEndpointRate := ABS(stMoveCommand.fPreTestRate);
 			fEndpointHoldTime := stMoveCommand.fPreTestHoldTime;
+			nEndpointSyncPoint := SYNC_NONE;
+			nEndpointSyncCycle := 0;
 			nAfterEndpointState := 13;
 			nSeqState := 310;
 		END_IF
@@ -637,13 +686,29 @@ CASE nSeqState OF
 			fEndpointTargetPosition := fSequenceStartPos;
 			fTargetDist1 := fEndpointTargetPosition - fActPosition;
 			fTargetVel1 := ABS(stMoveCommand.fPreTestRate);
-			nAfterEndpointState := 14;
+			IF nCurrentPreCycle = stMoveCommand.nPreCycleCount THEN
+				nEndpointSyncPoint := SYNC_PRETEST_DONE;
+				nEndpointSyncCycle := 0;
+				nAfterEndpointState := 18;
+			ELSE
+				nEndpointSyncPoint := SYNC_NONE;
+				nEndpointSyncCycle := 0;
+				nAfterEndpointState := 14;
+			END_IF
 			nSeqState := 300;
 		ELSE
 			fEndpointTargetForce := stMoveCommand.fPreUnloadValue;
 			fEndpointRate := ABS(stMoveCommand.fPreTestRate);
 			fEndpointHoldTime := stMoveCommand.fPreTestHoldTime;
-			nAfterEndpointState := 14;
+			IF nCurrentPreCycle = stMoveCommand.nPreCycleCount THEN
+				nEndpointSyncPoint := SYNC_PRETEST_DONE;
+				nEndpointSyncCycle := 0;
+				nAfterEndpointState := 18;
+			ELSE
+				nEndpointSyncPoint := SYNC_NONE;
+				nEndpointSyncCycle := 0;
+				nAfterEndpointState := 14;
+			END_IF
 			nSeqState := 310;
 		END_IF
 
@@ -651,7 +716,7 @@ CASE nSeqState OF
 		nCurrentPreCycle := nCurrentPreCycle + 1;
 		nSeqState := 12;
 
-	19: // The actual pre-test final position is the main-test origin.
+	18: // A final pre-test endpoint passed the shared barrier.
 		fPreTestFinalPos := fActPosition;
 		IF stMoveCommand.bPreTestOnly THEN
 			nTestPhase := PHASE_POSTTEST;
@@ -659,6 +724,22 @@ CASE nSeqState OF
 		ELSE
 			nTestPhase := PHASE_TEST;
 			nSeqState := 20;
+		END_IF
+
+	19: // No final endpoint exists, so wait at an explicit pre-test barrier.
+		nTestPhase := PHASE_PRETEST;
+		nSyncPoint := SYNC_PRETEST_DONE;
+		nSyncCycle := 0;
+		IF NOT bSyncEnabled OR bSyncRelease THEN
+			nSyncPoint := SYNC_NONE;
+			fPreTestFinalPos := fActPosition;
+			IF stMoveCommand.bPreTestOnly THEN
+				nTestPhase := PHASE_POSTTEST;
+				nSeqState := 50;
+			ELSE
+				nTestPhase := PHASE_TEST;
+				nSeqState := 20;
+			END_IF
 		END_IF
 
 	20: // A positive cycle count selects cyclic; zero selects single.
@@ -685,12 +766,16 @@ CASE nSeqState OF
 			ELSIF fTargetDist1 < -POSITION_EPSILON THEN
 				nLoadDirection := -1;
 			END_IF
+			nEndpointSyncPoint := SYNC_LOAD_DONE;
+			nEndpointSyncCycle := nCurrentCycle;
 			nAfterEndpointState := 110;
 			nSeqState := 300;
 		ELSIF stMoveCommand.nLoadMode = 2 THEN
 			fEndpointTargetForce := stMoveCommand.fLoadValues[nCurrentCycle];
 			fEndpointRate := ABS(stMoveCommand.fTestRate);
 			fEndpointHoldTime := stMoveCommand.fForceHoldTime;
+			nEndpointSyncPoint := SYNC_LOAD_DONE;
+			nEndpointSyncCycle := nCurrentCycle;
 			nAfterEndpointState := 110;
 			nSeqState := 310;
 		ELSE
@@ -706,13 +791,27 @@ CASE nSeqState OF
 				stMoveCommand.fUnloadValues[nCurrentCycle];
 			fTargetDist1 := fEndpointTargetPosition - fActPosition;
 			fTargetVel1 := ABS(stMoveCommand.fTestRate);
-			nAfterEndpointState := 120;
+			IF nCurrentCycle = stMoveCommand.nCycleCount THEN
+				nEndpointSyncPoint := SYNC_MAIN_DONE;
+				nAfterEndpointState := 121;
+			ELSE
+				nEndpointSyncPoint := SYNC_UNLOAD_DONE;
+				nAfterEndpointState := 120;
+			END_IF
+			nEndpointSyncCycle := nCurrentCycle;
 			nSeqState := 300;
 		ELSIF stMoveCommand.nUnloadMode = 2 THEN
 			fEndpointTargetForce := stMoveCommand.fUnloadValues[nCurrentCycle];
 			fEndpointRate := ABS(stMoveCommand.fTestRate);
 			fEndpointHoldTime := stMoveCommand.fForceHoldTime;
-			nAfterEndpointState := 120;
+			IF nCurrentCycle = stMoveCommand.nCycleCount THEN
+				nEndpointSyncPoint := SYNC_MAIN_DONE;
+				nAfterEndpointState := 121;
+			ELSE
+				nEndpointSyncPoint := SYNC_UNLOAD_DONE;
+				nAfterEndpointState := 120;
+			END_IF
+			nEndpointSyncCycle := nCurrentCycle;
 			nSeqState := 310;
 		ELSE
 			bError := TRUE;
@@ -724,6 +823,10 @@ CASE nSeqState OF
 	120:
 		nCurrentCycle := nCurrentCycle + 1;
 		nSeqState := 100;
+
+	121: // The final unload endpoint also serves as the main-test barrier.
+		nCurrentCycle := nCurrentCycle + 1;
+		nSeqState := 50;
 
 	// -----------------------------------------------------
 	// Mode 3 single test: criterion 1 is the primary endpoint
@@ -748,13 +851,17 @@ CASE nSeqState OF
 			ELSIF fTargetDist1 < -POSITION_EPSILON THEN
 				nLoadDirection := -1;
 			END_IF
-			nAfterEndpointState := 210;
+			nEndpointSyncPoint := SYNC_MAIN_DONE;
+			nEndpointSyncCycle := 0;
+			nAfterEndpointState := 50;
 			nSeqState := 300;
 		ELSIF stMoveCommand.nStop1Mode = 2 THEN
 			fEndpointTargetForce := stMoveCommand.fStop1Value;
 			fEndpointRate := ABS(stMoveCommand.fTestRate);
 			fEndpointHoldTime := stMoveCommand.fForceHoldTime;
-			nAfterEndpointState := 210;
+			nEndpointSyncPoint := SYNC_MAIN_DONE;
+			nEndpointSyncCycle := 0;
+			nAfterEndpointState := 50;
 			nSeqState := 310;
 		ELSE
 			bSinglePrimaryActive := FALSE;
@@ -764,14 +871,19 @@ CASE nSeqState OF
 			nSeqState := 998;
 		END_IF
 
-	210: // Primary endpoint completed normally.
-		bSinglePrimaryActive := FALSE;
-		nSeqState := 50;
-
 	220: // Optional OR criterion stopped the active primary move.
 		IF bHaltDone THEN
 			stateHalt := FALSE;
 			nVelocityState := 0;
+			nSeqState := 49;
+		END_IF
+
+	49: // A secondary criterion stopped the test before the primary endpoint.
+		nTestPhase := PHASE_TEST;
+		nSyncPoint := SYNC_MAIN_DONE;
+		nSyncCycle := 0;
+		IF NOT bSyncEnabled OR bSyncRelease THEN
+			nSyncPoint := SYNC_NONE;
 			nSeqState := 50;
 		END_IF
 
@@ -793,6 +905,8 @@ CASE nSeqState OF
 					fEndpointTargetPosition := fSavedPosition;
 					fTargetDist1 := fEndpointTargetPosition - fActPosition;
 					fTargetVel1 := ABS(stMoveCommand.fTestRate);
+					nEndpointSyncPoint := SYNC_POSTTEST_DONE;
+					nEndpointSyncCycle := 0;
 					nAfterEndpointState := 55;
 					nSeqState := 300;
 				ELSE
@@ -806,6 +920,8 @@ CASE nSeqState OF
 				fEndpointTargetPosition := fSequenceStartPos;
 				fTargetDist1 := fEndpointTargetPosition - fActPosition;
 				fTargetVel1 := ABS(stMoveCommand.fTestRate);
+				nEndpointSyncPoint := SYNC_POSTTEST_DONE;
+				nEndpointSyncCycle := 0;
 				nAfterEndpointState := 55;
 				nSeqState := 300;
 
@@ -813,6 +929,8 @@ CASE nSeqState OF
 				fEndpointTargetPosition := fPreTestFinalPos;
 				fTargetDist1 := fEndpointTargetPosition - fActPosition;
 				fTargetVel1 := ABS(stMoveCommand.fTestRate);
+				nEndpointSyncPoint := SYNC_POSTTEST_DONE;
+				nEndpointSyncCycle := 0;
 				nAfterEndpointState := 55;
 				nSeqState := 300;
 
@@ -820,6 +938,8 @@ CASE nSeqState OF
 				fEndpointTargetForce := 0.0;
 				fEndpointRate := ABS(stMoveCommand.fTestRate);
 				fEndpointHoldTime := 0.0;
+				nEndpointSyncPoint := SYNC_POSTTEST_DONE;
+				nEndpointSyncCycle := 0;
 				nAfterEndpointState := 55;
 				nSeqState := 310;
 
@@ -833,11 +953,22 @@ CASE nSeqState OF
 	51:
 		IF bHaltDone THEN
 			stateHalt := FALSE;
+			nSeqState := 54;
+		END_IF
+
+	54: // Stay mode still participates in the shared post-test barrier.
+		nTestPhase := PHASE_POSTTEST;
+		nSyncPoint := SYNC_POSTTEST_DONE;
+		nSyncCycle := 0;
+		IF NOT bSyncEnabled OR bSyncRelease THEN
+			nSyncPoint := SYNC_NONE;
 			nSeqState := 55;
 		END_IF
 
 	55:
 		nTestPhase := PHASE_IDLE;
+		nSyncPoint := SYNC_NONE;
+		nSyncCycle := 0;
 		bOperationCompleted := TRUE;
 		nSeqState := 0;
 
@@ -853,7 +984,13 @@ CASE nSeqState OF
 		mcRel1BufferMode := MC_Aborting;
 		fbMC_MoveRelative1.Execute := FALSE;
 		IF ABS(fTargetDist1) <= POSITION_EPSILON THEN
-			nSeqState := nAfterEndpointState;
+			IF bSyncEnabled AND nEndpointSyncPoint <> SYNC_NONE THEN
+				nSyncPoint := nEndpointSyncPoint;
+				nSyncCycle := nEndpointSyncCycle;
+				nSeqState := 303;
+			ELSE
+				nSeqState := nAfterEndpointState;
+			END_IF
 		ELSE
 			IF fTargetDist1 > 0.0 THEN
 				nLastMotionDirection := 1;
@@ -870,6 +1007,22 @@ CASE nSeqState OF
 	302:
 		IF fbMC_MoveRelative1.Done THEN
 			fbMC_MoveRelative1.Execute := FALSE;
+			IF bSyncEnabled AND nEndpointSyncPoint <> SYNC_NONE THEN
+				nSyncPoint := nEndpointSyncPoint;
+				nSyncCycle := nEndpointSyncCycle;
+				nSeqState := 303;
+			ELSE
+				nSeqState := nAfterEndpointState;
+			END_IF
+		END_IF
+
+	303: // Position is held by the powered NC loop while the peer catches up.
+		nSyncPoint := nEndpointSyncPoint;
+		nSyncCycle := nEndpointSyncCycle;
+		IF NOT bSyncEnabled OR bSyncRelease THEN
+			nSyncPoint := SYNC_NONE;
+			nSyncCycle := 0;
+			nEndpointSyncPoint := SYNC_NONE;
 			nSeqState := nAfterEndpointState;
 		END_IF
 
@@ -879,6 +1032,9 @@ CASE nSeqState OF
 	310:
 		bExecuteVelMove := FALSE;
 		fForceHoldElapsed := 0.0;
+		bForceEndpointReady := FALSE;
+		nSyncPoint := SYNC_NONE;
+		nSyncCycle := 0;
 		fEndpointStartError := fEndpointTargetForce - fForce;
 		nVelocityState := 0;
 		fCmdVelocity := ABS(fEndpointRate);
@@ -919,53 +1075,67 @@ CASE nSeqState OF
 		IF bHaltDone THEN
 			stateHalt := FALSE;
 			nVelocityState := 4;
-			IF fEndpointHoldTime <= 0.0 THEN
-				nSeqState := nAfterEndpointState;
-			ELSE
-				nSeqState := 314;
-			END_IF
+			nSeqState := 314;
 		END_IF
 
-	314: // Hold time counts only while stopped inside the force tolerance.
-		fForceError := fEndpointTargetForce - fForce;
+	314: // Hold and continue regulating while a synchronized peer catches up.
+		IF bForceEndpointReady AND bSyncRelease THEN
+			bForceEndpointReady := FALSE;
+			nSyncPoint := SYNC_NONE;
+			nSyncCycle := 0;
+			nEndpointSyncPoint := SYNC_NONE;
+			nSeqState := nAfterEndpointState;
+		ELSE
+			fForceError := fEndpointTargetForce - fForce;
 
-		IF ABS(fForceError) <= stSettings.fForceTolerance THEN
-			bExecuteVelMove := FALSE;
+			IF ABS(fForceError) <= stSettings.fForceTolerance THEN
+				bExecuteVelMove := FALSE;
 
-			IF nVelocityState <> 3 AND nVelocityState <> 4 THEN
-				stateHalt := TRUE;
-				nVelocityState := 3;
-			ELSIF nVelocityState = 3 AND bHaltDone THEN
-				stateHalt := FALSE;
-				nVelocityState := 4;
-			END_IF
-
-			IF nVelocityState = 4 THEN
-				fForceHoldElapsed := fForceHoldElapsed + CYCLE_TIME;
-				IF fForceHoldElapsed >= fEndpointHoldTime THEN
-					nSeqState := nAfterEndpointState;
+				IF nVelocityState <> 3 AND nVelocityState <> 4 THEN
+					stateHalt := TRUE;
+					nVelocityState := 3;
+				ELSIF nVelocityState = 3 AND bHaltDone THEN
+					stateHalt := FALSE;
+					nVelocityState := 4;
 				END_IF
+
+				IF nVelocityState = 4 AND NOT bForceEndpointReady THEN
+					fForceHoldElapsed := fForceHoldElapsed + CYCLE_TIME;
+					IF fForceHoldElapsed >= fEndpointHoldTime THEN
+						IF bSyncEnabled AND
+							nEndpointSyncPoint <> SYNC_NONE THEN
+							bForceEndpointReady := TRUE;
+							nSyncPoint := nEndpointSyncPoint;
+							nSyncCycle := nEndpointSyncCycle;
+						ELSE
+							nSeqState := nAfterEndpointState;
+						END_IF
+					END_IF
+				END_IF
+			ELSIF nVelocityState = 3 THEN
+				IF bHaltDone THEN
+					stateHalt := FALSE;
+					nVelocityState := 4;
+				END_IF
+			ELSIF nVelocityState = 4 THEN
+				// Keep elapsed hold time, but withdraw readiness while correcting.
+				bForceEndpointReady := FALSE;
+				nSyncPoint := SYNC_NONE;
+				nSyncCycle := 0;
+				fEndpointStartError := fForceError;
+				fCmdVelocity := ABS(fEndpointRate);
+				IF fForceError * INT_TO_LREAL(FORCE_POLARITY) >= 0.0 THEN
+					mcDirection := MC_Positive_Direction;
+					nLoadDirection := 1;
+					nLastMotionDirection := 1;
+				ELSE
+					mcDirection := MC_Negative_Direction;
+					nLoadDirection := -1;
+					nLastMotionDirection := -1;
+				END_IF
+				nVelocityState := 0;
+				nSeqState := 311;
 			END_IF
-		ELSIF nVelocityState = 3 THEN
-			IF bHaltDone THEN
-				stateHalt := FALSE;
-				nVelocityState := 4;
-			END_IF
-		ELSIF nVelocityState = 4 THEN
-			// Timer remains unchanged while the force is outside tolerance.
-			fEndpointStartError := fForceError;
-			fCmdVelocity := ABS(fEndpointRate);
-			IF fForceError * INT_TO_LREAL(FORCE_POLARITY) >= 0.0 THEN
-				mcDirection := MC_Positive_Direction;
-				nLoadDirection := 1;
-				nLastMotionDirection := 1;
-			ELSE
-				mcDirection := MC_Negative_Direction;
-				nLoadDirection := -1;
-				nLastMotionDirection := -1;
-			END_IF
-			nVelocityState := 0;
-			nSeqState := 311;
 		END_IF
 END_CASE
 ]]></ST>

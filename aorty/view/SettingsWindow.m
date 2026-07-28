@@ -1,4 +1,5 @@
 classdef SettingsWindow < handle
+    %SETTINGSWINDOW Edits and applies the fixed stand hardware configuration.
     %SETTINGSWINDOW Hardware configuration window and field binding.
 
     properties (SetAccess = private)
@@ -12,16 +13,17 @@ classdef SettingsWindow < handle
         camUI = struct()
         plcXUI = struct()
         plcYUI = struct()
+        applyButton
+        editControls = gobjects(0)
+        machineIdle = true
     end
 
     methods
-        % SettingsWindow handles this operation.
         function window = SettingsWindow(settings, parentFig)
             window.settings = settings;
             window.parentFig = parentFig;
         end
 
-        % show handles this operation.
         function show(window)
             if window.isOpen()
                 figure(window.fig);
@@ -49,10 +51,9 @@ classdef SettingsWindow < handle
                 window.configDrop.Value = 'default';
             end
             window.settings.loadHwConfig(window.configDrop.Value);
-            window.ensureTenzoOffsets();
-            uibutton(top, 'Text', 'Save', ...
+            saveButton = uibutton(top, 'Text', 'Save', ...
                 'ButtonPushedFcn', @(~, ~) window.saveConfig(false));
-            uibutton(top, 'Text', 'Save as', ...
+            saveAsButton = uibutton(top, 'Text', 'Save as', ...
                 'ButtonPushedFcn', @(~, ~) window.saveConfig(true));
 
             tabs = uitabgroup(root);
@@ -69,13 +70,18 @@ classdef SettingsWindow < handle
             bottom = uigridlayout(root, [1, 1]);
             bottom.ColumnWidth = {'1x'};
             bottom.Padding = 0;
-            uibutton(bottom, 'Text', 'Apply settings', ...
+            window.applyButton = uibutton(bottom, 'Text', 'Apply settings', ...
                 'FontWeight', 'bold', 'BackgroundColor', [0.72, 0.9, 0.72], ...
                 'ButtonPushedFcn', @(~, ~) window.applySettings());
+            window.editControls = [window.configDrop, saveButton, ...
+                saveAsButton, window.applyButton, ...
+                window.configFieldHandles(window.camUI), ...
+                window.configFieldHandles(window.plcXUI), ...
+                window.configFieldHandles(window.plcYUI)];
             window.refreshUI();
+            window.setMachineIdle(window.machineIdle);
         end
 
-        % close handles this operation.
         function close(window)
             if window.isOpen()
                 window.fig.CloseRequestFcn = '';
@@ -86,24 +92,36 @@ classdef SettingsWindow < handle
             window.camUI = struct();
             window.plcXUI = struct();
             window.plcYUI = struct();
+            window.applyButton = [];
+            window.editControls = gobjects(0);
         end
 
-        % isOpen handles this operation.
         function value = isOpen(window)
             value = ~isempty(window.fig) && isvalid(window.fig);
+        end
+
+        function setMachineIdle(window, idle)
+            window.machineIdle = logical(idle);
+            for index = 1:numel(window.editControls)
+                if isvalid(window.editControls(index))
+                    if window.machineIdle
+                        window.editControls(index).Enable = 'on';
+                    else
+                        window.editControls(index).Enable = 'off';
+                    end
+                end
+            end
         end
     end
 
     methods (Access = private)
-        % ensureConfigLoaded handles this operation.
+        %% Configuration and UI synchronization
         function ensureConfigLoaded(window)
             if ~isempty(window.settings.hwConfig)
-                window.ensureTenzoOffsets();
                 return;
             end
             try
                 window.settings.loadHwConfig('default');
-                window.ensureTenzoOffsets();
             catch exception
                 uialert(window.parentFig, exception.message, ...
                     'Cannot load hardware configuration');
@@ -111,7 +129,6 @@ classdef SettingsWindow < handle
             end
         end
 
-        % createAxisConfigFields handles this operation.
         function fields = createAxisConfigFields(window, tab, config)
             layout = uigridlayout(tab, [2, 1]);
             layout.RowHeight = {125, '1x'};
@@ -136,7 +153,6 @@ classdef SettingsWindow < handle
             end
         end
 
-        % createConfigFields handles this operation.
         function fields = createConfigFields(window, parent, config, preferredOrder)
             availableNames = fieldnames(config);
             names = preferredOrder(ismember(preferredOrder, availableNames));
@@ -151,10 +167,10 @@ classdef SettingsWindow < handle
                     'HorizontalAlignment', 'right');
                 fields.(name) = uieditfield(grid, 'numeric', ...
                     'Value', config.(name));
+                window.configureVisibleLimit(fields.(name), name);
             end
         end
 
-        % refreshUI handles this operation.
         function refreshUI(window)
             cfg = window.settings.hwConfig;
             window.pushFields(window.camUI, cfg.camera);
@@ -162,7 +178,6 @@ classdef SettingsWindow < handle
             window.pushFields(window.plcYUI, cfg.plc.yAxis);
         end
 
-        % pushFields handles this operation.
         function pushFields(~, fields, config)
             names = fieldnames(fields);
             for index = 1:numel(names)
@@ -173,7 +188,6 @@ classdef SettingsWindow < handle
             end
         end
 
-        % pullFields handles this operation.
         function config = pullFields(~, fields, config)
             names = fieldnames(fields);
             for index = 1:numel(names)
@@ -182,24 +196,22 @@ classdef SettingsWindow < handle
             end
         end
 
-        % loadConfig handles this operation.
         function loadConfig(window)
             try
                 window.settings.loadHwConfig(window.configDrop.Value);
-                window.ensureTenzoOffsets();
                 window.refreshUI();
             catch exception
                 uialert(window.fig, exception.message, 'Cannot load configuration');
             end
         end
 
-        % ensureTenzoOffsets handles this operation.
-        function ensureTenzoOffsets(window)
-            window.settings.normalizeHwConfig();
-        end
-
-        % saveConfig handles this operation.
         function saveConfig(window, saveAs)
+            if ~window.machineIdle
+                uialert(window.fig, ...
+                    'Hardware settings can only be changed while idle.', ...
+                    'Machine active');
+                return;
+            end
             filename = window.configDrop.Value;
             if saveAs
                 answer = inputdlg('Configuration name:', ...
@@ -220,7 +232,6 @@ classdef SettingsWindow < handle
             end
         end
 
-        % gatherConfig handles this operation.
         function gatherConfig(window)
             cfg = window.settings.hwConfig;
             cfg.camera = window.pullFields(window.camUI, cfg.camera);
@@ -229,8 +240,13 @@ classdef SettingsWindow < handle
             window.settings.hwConfig = cfg;
         end
 
-        % applySettings handles this operation.
         function applySettings(window)
+            if ~window.machineIdle
+                uialert(window.fig, ...
+                    'Hardware settings can only be applied while idle.', ...
+                    'Machine active');
+                return;
+            end
             try
                 window.gatherConfig();
                 window.settings.applyCameraConfig();
@@ -240,18 +256,40 @@ classdef SettingsWindow < handle
             end
         end
 
-        % nonEmptyItems handles this operation.
         function items = nonEmptyItems(~, items)
             if isempty(items)
                 items = {'default'};
             end
         end
 
-        % humanizeFieldName handles this operation.
         function label = humanizeFieldName(~, name)
             label = regexprep(name, '([a-z])([A-Z])', '$1 $2');
             label = strrep(label, '_', ' ');
             label(1) = upper(label(1));
+        end
+
+        function handles = configFieldHandles(~, fields)
+            names = fieldnames(fields);
+            handles = gobjects(1, numel(names));
+            for index = 1:numel(names)
+                handles(index) = fields.(names{index});
+            end
+        end
+
+        function configureVisibleLimit(~, control, name)
+            positive = {'exposureTimeAbs', 'acquisitionFrameRateAbs', ...
+                'fMaxVelocity', 'fMaxForce', 'fForceReliefDistance', ...
+                'fForceReliefVelocity'};
+            nonnegative = {'gainRaw', 'fIntegralLimit', ...
+                'fForceTolerance'};
+            if ismember(name, positive)
+                control.Limits = [0, Inf];
+                control.LowerLimitInclusive = 'off';
+                control.Tooltip = 'Value must be greater than 0.';
+            elseif ismember(name, nonnegative)
+                control.Limits = [0, Inf];
+                control.Tooltip = 'Value must be 0 or greater.';
+            end
         end
     end
 end

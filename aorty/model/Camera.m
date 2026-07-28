@@ -1,35 +1,27 @@
 classdef Camera < handle
-    % this class contains main functions to connect / disconnect to/from camera
-    % This function also contains reciving frames from camera and settings and setup
+    %CAMERA Owns the GigE camera and forwards frames to recording and preview.
 
     properties
-        % mandatory classes
-        model Model            % model for saving frames
+        model Model
 
-        % camera
-        cameraHW               % videoinput obj
-        cameraSrc              % camera settings
+        cameraHW
+        cameraSrc
 
-        latestFrame = [];      % Most recent frame for display
-        camStartTime           % Start timer for visualization
+        latestFrame = [];
+        camStartTime
         connected = false;
-        recordingPeriod = 0;   % 0 saves every frame
-        lastRecordingTime
         errorHandler = []
     end
 
     methods
-        % Camera handles this operation.
         function camera = Camera(model)
             camera.model = model;
         end
 
-        % connectCamera handles this operation.
         function connectCamera(camera, app, src)
             if src.Value == "ON"
                 try
                     camera.closeCam();
-                    camera.connected = false;
 
                     % Refresh the Image Acquisition Toolbox after a camera
                     % has been unplugged/reconnected. Without this, the
@@ -47,7 +39,8 @@ classdef Camera < handle
                     camera.cameraHW = videoinput('gige', deviceID, 'Mono8');
                     camera.cameraSrc = getselectedsource(camera.cameraHW);
 
-                    % Trigger reset
+                    % Trigger properties differ between camera firmware
+                    % versions, so unsupported selectors are skipped.
                     for sel = {'FrameStart','AcquisitionStart','FrameBurstStart'}
                         try
                             camera.cameraSrc.TriggerSelector = sel{1};
@@ -56,7 +49,6 @@ classdef Camera < handle
                         end
                     end
 
-                    % Network setup
                     if isprop(camera.cameraSrc,'PacketSize'),  camera.cameraSrc.PacketSize  = 8000; end
                     if isprop(camera.cameraSrc,'PacketDelay'), camera.cameraSrc.PacketDelay = 500;  end
 
@@ -64,12 +56,10 @@ classdef Camera < handle
                     camera.cameraHW.TriggerRepeat = Inf; % repeat forever
                     triggerconfig(camera.cameraHW, 'immediate');
 
-                    % Save data
                     camera.camStartTime = datetime('now');
                     camera.cameraHW.FramesAcquiredFcnCount = 1;
                     camera.cameraHW.FramesAcquiredFcn = @(s,ev) camera.acquireFrame(s);
 
-                    % Start display timer at fixed 15 Hz, independent of camera FPS.
                     camera.latestFrame = [];
                     flushdata(camera.cameraHW);
                     start(camera.cameraHW);
@@ -77,7 +67,6 @@ classdef Camera < handle
                     disp("Camera connected.");
                 catch ME
                     camera.closeCam();
-                    camera.connected = false;
                     uialert(app.fig, getReport(ME), 'Camera Error');
                     src.Value = "OFF";
                     if ~isempty(camera.errorHandler)
@@ -89,26 +78,19 @@ classdef Camera < handle
             end
         end
 
-        % Saving frame
         function acquireFrame(camera, src)
             try
-                % Guard against callbacks firing after delete(cam)
+                % A final callback may arrive while shutdown deletes the
+                % videoinput object.
                 if isempty(src) || ~isvalid(src), return; end
                 if src.FramesAvailable < 1,        return; end
 
-                % get new frame
                 [frame, relativeTime] = getdata(src, 1);
                 timeStamp = camera.camStartTime + seconds(relativeTime);
 
-                % Save
-                saveFrame = camera.recordingPeriod <= 0 || isempty(camera.lastRecordingTime) || ...
-                    seconds(timeStamp - camera.lastRecordingTime) >= camera.recordingPeriod;
-                if saveFrame
-                    camera.model.saveCameraFrame(frame, timeStamp);
-                    camera.lastRecordingTime = timeStamp;
-                end
+                camera.model.saveCameraFrame(frame, timeStamp);
 
-                % Downsample
+                % Preview downsampling does not affect recorded frames.
                 camera.latestFrame = frame(1:3:end, 1:3:end);
 
             catch ME
@@ -122,10 +104,8 @@ classdef Camera < handle
             end
         end
 
-        % Closing seq
         function closeCam(camera)
             camera.latestFrame = [];
-            camera.lastRecordingTime = [];
 
             if ~isempty(camera.cameraHW) && isvalid(camera.cameraHW)
                 try

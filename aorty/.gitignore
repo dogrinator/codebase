@@ -1,3 +1,19 @@
+# MATLAB editor backups and generated caches
 *.asv
-trash
-bin
+*.autosave
+*.m~
+slprj/
+codegen/
+
+# Local build and scratch directories
+trash/
+bin/
+
+# Offline tests stay available locally but are not published
+/tests/
+
+# Generated test and experiment output
+/testRecording/
+/test-results/
+/**/processed_frames/
+/**/processed_frames_manual_*/

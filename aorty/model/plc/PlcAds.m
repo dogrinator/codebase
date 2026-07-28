@@ -1,0 +1,431 @@
+classdef PlcAds < handle
+    %PLCADS Owns the TwinCAT ADS symbols and binary PLC data contract.
+    % The caller owns the client connection; this class owns only handles,
+    % transport buffers, packet decoding, and streaming state.
+
+    properties (Constant)
+        EXPECTED_INTERFACE_VERSION = uint32(5)
+        COMMAND_ARRAY_LENGTH = 50
+        STATUS_BUFFER_LENGTH = 50
+        STATUS_PACKET_SIZE = 856
+    end
+
+    properties (SetAccess = private)
+        droppedSamples = struct('X', 0, 'Y', 0)
+    end
+
+    properties (Access = private)
+        client
+        handles = struct()
+        ownedHandles = zeros(1, 0, 'int32')
+        netBuffers = struct()
+        lastSampleCounter = struct('X', [], 'Y', [])
+    end
+
+    methods
+        function ads = PlcAds(client)
+            ads.client = client;
+        end
+
+        function initialize(ads, testing)
+            % Every created handle is registered immediately so a partial
+            % initialization can always be cleaned up safely.
+            if nargin < 2
+                testing = false;
+            end
+            ads.releaseHandles();
+            try
+                ads.handles.X = ads.createAxisHandles('X');
+                ads.handles.Y = ads.createAxisHandles('Y');
+                ads.handles.biaxialStart = ...
+                    ads.makeHandle('MAIN.bStartBiaxialTest');
+                ads.readAxisStatus('X');
+                ads.readAxisStatus('Y');
+                for axisName = {'X', 'Y'}
+                    axis = axisName{1};
+                    if testing
+                        ads.netBuffers.(axis).load = ...
+                            zeros(1, ads.COMMAND_ARRAY_LENGTH);
+                        ads.netBuffers.(axis).unload = ...
+                            zeros(1, ads.COMMAND_ARRAY_LENGTH);
+                    else
+                        ads.netBuffers.(axis).load = NET.createArray( ...
+                            'System.Double', ads.COMMAND_ARRAY_LENGTH);
+                        ads.netBuffers.(axis).unload = NET.createArray( ...
+                            'System.Double', ads.COMMAND_ARRAY_LENGTH);
+                    end
+                end
+                ads.resetStreamingState();
+            catch exception
+                ads.releaseHandles();
+                rethrow(exception);
+            end
+        end
+
+        function releaseHandles(ads)
+            handlesToDelete = ads.ownedHandles;
+            ads.ownedHandles = zeros(1, 0, 'int32');
+            ads.handles = struct();
+            ads.netBuffers = struct();
+            for index = 1:numel(handlesToDelete)
+                try
+                    ads.client.DeleteVariableHandle(handlesToDelete(index));
+                catch exception
+                    if ~ads.isExpectedDisconnectError(exception)
+                        warning('PLC:HandleCleanup', ...
+                            'Could not delete ADS handle: %s', exception.message);
+                    end
+                end
+            end
+            ads.resetStreamingState();
+        end
+
+        function resetStreamingState(ads)
+            ads.lastSampleCounter = struct('X', [], 'Y', []);
+            ads.droppedSamples = struct('X', 0, 'Y', 0);
+        end
+
+        function [forceData, positionData, statusNow] = readAxisSnapshot(ads, axisName)
+            statusNow = ads.readAxisStatus(axisName);
+            counterAfter = statusNow.sampleCounter;
+            head = double(statusNow.bufferHead);
+            previous = ads.lastSampleCounter.(axisName);
+            if isempty(previous)
+                ads.lastSampleCounter.(axisName) = double(counterAfter);
+                forceData = [];
+                positionData = [];
+                return;
+            end
+
+            % A backwards jump away from UDINT wrap means the PLC restarted.
+            if double(counterAfter) < double(previous) && ...
+                    double(previous) < (2^32 - ads.STATUS_BUFFER_LENGTH)
+                ads.lastSampleCounter.(axisName) = double(counterAfter);
+                forceData = [];
+                positionData = [];
+                return;
+            end
+
+            count = mod(double(counterAfter) - double(previous), 2^32);
+            ads.lastSampleCounter.(axisName) = double(counterAfter);
+            if count == 0
+                forceData = [];
+                positionData = [];
+                return;
+            end
+            if count > ads.STATUS_BUFFER_LENGTH
+                ads.droppedSamples.(axisName) = ...
+                    ads.droppedSamples.(axisName) + ...
+                    count - ads.STATUS_BUFFER_LENGTH;
+                count = ads.STATUS_BUFFER_LENGTH;
+            end
+
+            startIndex = mod(head - count, ads.STATUS_BUFFER_LENGTH) + 1;
+            indices = mod((startIndex - 1) + (0:count - 1), ...
+                ads.STATUS_BUFFER_LENGTH) + 1;
+            forceData = statusNow.forceBuffer(indices);
+            positionData = statusNow.positionBuffer(indices);
+        end
+
+        function statusNow = readAxisStatus(ads, axisName)
+            bytes = ads.readStatusPacket(ads.handles.(axisName).status);
+
+            % Byte offsets below are the packed version-5 layout generated
+            % in main program.tmc. Keep this map synchronized with the DUT.
+            statusNow = struct( ...
+                'positionBuffer', ads.decodeLrealArray(bytes, 0, 50), ...
+                'forceBuffer', ads.decodeLrealArray(bytes, 400, 50), ...
+                'bufferHead', ads.decodeInt(bytes, 800), ...
+                'sampleCounter', ads.decodeUdint(bytes, 804), ...
+                'operationCounter', ads.decodeUdint(bytes, 808), ...
+                'interfaceVersion', ads.decodeUdint(bytes, 812), ...
+                'tareOffset', ads.decodeLreal(bytes, 816), ...
+                'position', ads.decodeLreal(bytes, 824), ...
+                'working', ads.decodeBool(bytes, 832), ...
+                'tareWorking', ads.decodeBool(bytes, 833), ...
+                'error', ads.decodeBool(bytes, 834), ...
+                'errorCode', ads.decodeUdint(bytes, 836), ...
+                'axisErrorID', ads.decodeUdint(bytes, 840), ...
+                'powered', ads.decodeBool(bytes, 844), ...
+                'homing', ads.decodeBool(bytes, 845), ...
+                'homed', ads.decodeBool(bytes, 846), ...
+                'stopped', ads.decodeBool(bytes, 847), ...
+                'savedPositionValid', ads.decodeBool(bytes, 848), ...
+                'testPhase', uint8(bytes(850)));
+            if statusNow.interfaceVersion ~= ads.EXPECTED_INTERFACE_VERSION
+                error('PLC:InterfaceVersion', ...
+                    ['PLC/MATLAB interface mismatch on %s. MATLAB expects ' ...
+                    'version %u, but PLC reports %u.'], axisName, ...
+                    ads.EXPECTED_INTERFACE_VERSION, ...
+                    statusNow.interfaceVersion);
+            end
+            if statusNow.bufferHead < 1 || ...
+                    statusNow.bufferHead > ads.STATUS_BUFFER_LENGTH
+                error('PLC:InvalidStatusPacket', ...
+                    '%s status has invalid buffer head %d.', ...
+                    axisName, statusNow.bufferHead);
+            end
+            if statusNow.testPhase > 3
+                error('PLC:InvalidStatusPacket', ...
+                    '%s status has invalid test phase %u.', ...
+                    axisName, statusNow.testPhase);
+            end
+        end
+
+        function writeBasicCommand(ads, axisName, mode, ...
+                firstValue, secondValue)
+            command = ads.handles.(axisName).command;
+            ads.writeInt(command.mode, mode);
+            if mode == 1
+                ads.writeLreal(command.moveDistance, firstValue);
+                ads.writeLreal(command.moveVelocity, secondValue);
+            else
+                ads.writeLreal(command.targetForce, firstValue);
+                ads.writeLreal(command.forceDuration, secondValue);
+            end
+        end
+
+        function writeAxisTestCommand(ads, axisName, values)
+            command = ads.handles.(axisName).command;
+            ads.writeArray(axisName, 'load', ...
+                command.loadValues, values.loadValues);
+            ads.writeArray(axisName, 'unload', ...
+                command.unloadValues, values.unloadValues);
+
+            ads.writeInt(command.mode, 3);
+            ads.writeBool(command.includePreTest, values.includePreTest);
+            ads.writeBool(command.preTestOnly, values.preTestOnly);
+            ads.writeInt(command.preCycleCount, values.preCycleCount);
+            ads.writeBool(command.preloadEnabled, values.preloadEnabled);
+            ads.writeLreal(command.preloadValue, values.preloadValue);
+            ads.writeLreal(command.preCycleLoadValue, ...
+                values.preCycleLoadValue);
+            ads.writeLreal(command.preUnloadValue, values.preUnloadValue);
+            ads.writeBool(command.preUnloadToStart, ...
+                values.preUnloadToStart);
+            ads.writeLreal(command.preTestRate, values.preTestRate);
+            ads.writeLreal(command.preTestHoldTime, ...
+                values.preTestHoldTime);
+            ads.writeLreal(command.testRate, values.testRate);
+            ads.writeLreal(command.forceHoldTime, values.forceHoldTime);
+            ads.writeInt(command.cycleCount, values.cycleCount);
+            ads.writeInt(command.loadMode, values.loadMode);
+            ads.writeInt(command.unloadMode, values.unloadMode);
+            ads.writeInt(command.stop1Mode, values.stop1Mode);
+            ads.writeLreal(command.stop1Value, values.stop1Value);
+            ads.writeInt(command.stop2Mode, values.stop2Mode);
+            ads.writeLreal(command.stop2Value, values.stop2Value);
+            ads.writeInt(command.postTestMode, values.postTestMode);
+        end
+
+        function writeCommand(ads, axisName, commandName, value)
+            if nargin < 4
+                value = true;
+            end
+            ads.writeBool( ...
+                ads.handles.(axisName).command.(commandName), value);
+        end
+
+        function prepareRestore(ads, axisName, velocity)
+            command = ads.handles.(axisName).command;
+            ads.writeInt(command.mode, 3);
+            ads.writeLreal(command.restoreVelocity, velocity);
+        end
+
+        function writeAxisConfig(ads, axisCfg, axisName)
+            settings = ads.handles.(upper(char(axisName))).settings;
+            ads.writeLreal(settings.tenzoCons, axisCfg.fTenzoCons);
+            ads.writeLreal(settings.tenzoOffset, axisCfg.fTenzoOffset);
+            ads.writeLreal(settings.kp, axisCfg.fKp);
+            ads.writeLreal(settings.ki, axisCfg.fKi);
+            ads.writeLreal(settings.integralLimit, axisCfg.fIntegralLimit);
+            ads.writeLreal(settings.forceTolerance, axisCfg.fForceTolerance);
+            ads.writeLreal(settings.maxVelocity, axisCfg.fMaxVelocity);
+            ads.writeLreal(settings.maxForce, axisCfg.fMaxForce);
+            ads.writeLreal(settings.forceReliefDistance, ...
+                axisCfg.fForceReliefDistance);
+            ads.writeLreal(settings.forceReliefVelocity, ...
+                axisCfg.fForceReliefVelocity);
+        end
+
+        function pulseExecute(ads, axisName)
+            ads.writeCommand(axisName, 'execute', true);
+        end
+
+        function pulseBiaxialStart(ads)
+            ads.writeBool(ads.handles.biaxialStart, true);
+        end
+    end
+
+    methods (Access = private)
+        function handles = createAxisHandles(ads, axisName)
+            statusRoot = sprintf('MAIN.stSystemStatus%s', axisName);
+            commandRoot = sprintf('MAIN.stMoveCommand%s.', axisName);
+            settingsRoot = sprintf('MAIN.stSettings%s.', axisName);
+
+            handles.status = ads.makeHandle(statusRoot);
+            handles.command = struct( ...
+                'moveDistance', ads.makeHandle([commandRoot, 'fMoveDistance']), ...
+                'moveVelocity', ads.makeHandle([commandRoot, 'fMoveVelocity']), ...
+                'targetForce', ads.makeHandle([commandRoot, 'fTargetForce']), ...
+                'forceDuration', ads.makeHandle([commandRoot, 'fForceDuration']), ...
+                'mode', ads.makeHandle([commandRoot, 'nMode']), ...
+                'execute', ads.makeHandle([commandRoot, 'bExecute']), ...
+                'halt', ads.makeHandle([commandRoot, 'bHalt']), ...
+                'power', ads.makeHandle([commandRoot, 'bPower']), ...
+                'reset', ads.makeHandle([commandRoot, 'bReset']), ...
+                'home', ads.makeHandle([commandRoot, 'bHome']), ...
+                'tare', ads.makeHandle([commandRoot, 'bStartTar']), ...
+                'savePosition', ads.makeHandle([commandRoot, 'bSavePosition']), ...
+                'restorePosition', ...
+                    ads.makeHandle([commandRoot, 'bRestorePosition']), ...
+                'restoreVelocity', ...
+                    ads.makeHandle([commandRoot, 'fRestoreVelocity']), ...
+                'includePreTest', ...
+                    ads.makeHandle([commandRoot, 'bIncludePreTest']), ...
+                'preTestOnly', ...
+                    ads.makeHandle([commandRoot, 'bPreTestOnly']), ...
+                'preCycleCount', ...
+                    ads.makeHandle([commandRoot, 'nPreCycleCount']), ...
+                'preloadEnabled', ...
+                    ads.makeHandle([commandRoot, 'bPreloadEnabled']), ...
+                'preloadValue', ...
+                    ads.makeHandle([commandRoot, 'fPreloadValue']), ...
+                'preCycleLoadValue', ...
+                    ads.makeHandle([commandRoot, 'fPreCycleLoadValue']), ...
+                'preUnloadValue', ...
+                    ads.makeHandle([commandRoot, 'fPreUnloadValue']), ...
+                'preUnloadToStart', ...
+                    ads.makeHandle([commandRoot, 'bPreUnloadToStart']), ...
+                'preTestRate', ...
+                    ads.makeHandle([commandRoot, 'fPreTestRate']), ...
+                'preTestHoldTime', ...
+                    ads.makeHandle([commandRoot, 'fPreTestHoldTime']), ...
+                'testRate', ads.makeHandle([commandRoot, 'fTestRate']), ...
+                'forceHoldTime', ...
+                    ads.makeHandle([commandRoot, 'fForceHoldTime']), ...
+                'cycleCount', ...
+                    ads.makeHandle([commandRoot, 'nCycleCount']), ...
+                'loadMode', ads.makeHandle([commandRoot, 'nLoadMode']), ...
+                'loadValues', ads.makeHandle([commandRoot, 'fLoadValues']), ...
+                'unloadMode', ads.makeHandle([commandRoot, 'nUnloadMode']), ...
+                'unloadValues', ...
+                    ads.makeHandle([commandRoot, 'fUnloadValues']), ...
+                'stop1Mode', ads.makeHandle([commandRoot, 'nStop1Mode']), ...
+                'stop1Value', ads.makeHandle([commandRoot, 'fStop1Value']), ...
+                'stop2Mode', ads.makeHandle([commandRoot, 'nStop2Mode']), ...
+                'stop2Value', ads.makeHandle([commandRoot, 'fStop2Value']), ...
+                'postTestMode', ...
+                    ads.makeHandle([commandRoot, 'nPostTestMode']));
+
+            handles.settings = struct( ...
+                'tenzoCons', ads.makeHandle([settingsRoot, 'fTenzoCons']), ...
+                'tenzoOffset', ads.makeHandle([settingsRoot, 'fTenzoOffset']), ...
+                'kp', ads.makeHandle([settingsRoot, 'fKp']), ...
+                'ki', ads.makeHandle([settingsRoot, 'fKi']), ...
+                'integralLimit', ...
+                    ads.makeHandle([settingsRoot, 'fIntegralLimit']), ...
+                'forceTolerance', ...
+                    ads.makeHandle([settingsRoot, 'fForceTolerance']), ...
+                'maxVelocity', ...
+                    ads.makeHandle([settingsRoot, 'fMaxVelocity']), ...
+                'maxForce', ads.makeHandle([settingsRoot, 'fMaxForce']), ...
+                'forceReliefDistance', ...
+                    ads.makeHandle([settingsRoot, 'fForceReliefDistance']), ...
+                'forceReliefVelocity', ...
+                    ads.makeHandle([settingsRoot, 'fForceReliefVelocity']));
+        end
+
+        function handle = makeHandle(ads, symbol)
+            handle = int32(ads.client.CreateVariableHandle(char(symbol)));
+            ads.ownedHandles(end + 1) = handle;
+        end
+
+        function writeArray(ads, axisName, bufferName, handle, values)
+            values = double(values(:)');
+            if numel(values) > ads.COMMAND_ARRAY_LENGTH
+                error('PLC:ArrayTooLong', ...
+                    'PLC command arrays are limited to 50 entries.');
+            end
+            buffer = zeros(1, ads.COMMAND_ARRAY_LENGTH);
+            buffer(1:numel(values)) = values;
+            for index = 1:ads.COMMAND_ARRAY_LENGTH
+                ads.netBuffers.(axisName).(bufferName)(index) = buffer(index);
+            end
+            ads.client.WriteAny(handle, ...
+                ads.netBuffers.(axisName).(bufferName));
+        end
+
+        function bytes = readStatusPacket(ads, handle)
+            if ismethod(ads.client, 'ReadStatusPacket')
+                bytes = uint8(ads.client.ReadStatusPacket( ...
+                    handle, ads.STATUS_PACKET_SIZE));
+            else
+                stream = TwinCAT.Ads.AdsStream(ads.STATUS_PACKET_SIZE);
+                cleanup = onCleanup(@() stream.Dispose());
+                bytesRead = double(ads.client.Read( ...
+                    handle, stream, 0, ads.STATUS_PACKET_SIZE));
+                bytes = uint8(stream.ToArray());
+                clear cleanup;
+            end
+            bytes = bytes(:)';
+            if numel(bytes) ~= ads.STATUS_PACKET_SIZE || ...
+                    (~ismethod(ads.client, 'ReadStatusPacket') && ...
+                    bytesRead ~= ads.STATUS_PACKET_SIZE)
+                error('PLC:InvalidStatusPacket', ...
+                    'PLC status packet must contain exactly %d bytes.', ...
+                    ads.STATUS_PACKET_SIZE);
+            end
+        end
+
+        function writeBool(ads, handle, value)
+            ads.client.WriteAny(handle, logical(value));
+        end
+
+        function writeInt(ads, handle, value)
+            ads.client.WriteAny(handle, int16(value));
+        end
+
+        function writeLreal(ads, handle, value)
+            ads.client.WriteAny(handle, double(value));
+        end
+
+        function expected = isExpectedDisconnectError(~, exception)
+            message = lower(char(exception.message));
+            expected = contains(message, '0x710') || ...
+                contains(message, 'symbol could not be found') || ...
+                contains(message, 'invalid handle') || ...
+                contains(message, '0x714');
+        end
+    end
+
+    methods (Static, Access = private)
+        function values = decodeLrealArray(bytes, byteOffset, count)
+            first = byteOffset + 1;
+            last = byteOffset + count * 8;
+            values = double(typecast(uint8(bytes(first:last)), 'double'));
+        end
+
+        function value = decodeLreal(bytes, byteOffset)
+            first = byteOffset + 1;
+            value = double(typecast( ...
+                uint8(bytes(first:first + 7)), 'double'));
+        end
+
+        function value = decodeInt(bytes, byteOffset)
+            first = byteOffset + 1;
+            value = int16(typecast( ...
+                uint8(bytes(first:first + 1)), 'int16'));
+        end
+
+        function value = decodeUdint(bytes, byteOffset)
+            first = byteOffset + 1;
+            value = uint32(typecast( ...
+                uint8(bytes(first:first + 3)), 'uint32'));
+        end
+
+        function value = decodeBool(bytes, byteOffset)
+            value = logical(bytes(byteOffset + 1));
+        end
+    end
+end

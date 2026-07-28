@@ -32,6 +32,15 @@ classdef GeneralTestDefinition
                 {'x', 'y', 'both'}, 'axisMode');
             testType = GeneralTestDefinition.textChoice(definition.testType, ...
                 {'single', 'cyclic'}, 'testType');
+            removed = {'forceDropPercent', 'forceDropThreshold'};
+            if isfield(definition, 'single')
+                GeneralTestDefinition.rejectFields( ...
+                    definition.single, removed, 'single');
+            end
+            if isfield(definition, 'cyclic')
+                GeneralTestDefinition.rejectFields( ...
+                    definition.cyclic, removed, 'cyclic');
+            end
 
             GeneralTestDefinition.validatePreTest(definition.preTest);
             if ~isfield(definition, testType)
@@ -48,15 +57,18 @@ classdef GeneralTestDefinition
                 {'stay', 'saved', 'sequence_start', 'pretest_final', ...
                 'zero_force'}, 'postTest');
             GeneralTestDefinition.requireFields(definition.camera, ...
-                {'enabled', 'period'}, 'camera');
+                {'enabled', 'samplingPeriod', 'includePrePost'}, ...
+                'camera');
+            GeneralTestDefinition.rejectFields(definition.camera, ...
+                {'period'}, 'camera');
             GeneralTestDefinition.booleanValue(definition.camera.enabled, ...
                 'camera.enabled');
-            GeneralTestDefinition.nonnegativeScalar(definition.camera.period, ...
-                'camera.period');
-            if definition.camera.enabled && definition.camera.period <= 0
-                error('GeneralTest:InvalidCamera', ...
-                    'camera.period must be positive when the camera is enabled.');
-            end
+            GeneralTestDefinition.booleanValue( ...
+                definition.camera.includePrePost, ...
+                'camera.includePrePost');
+            GeneralTestDefinition.nonnegativeScalar( ...
+                definition.camera.samplingPeriod, ...
+                'camera.samplingPeriod');
         end
 
         function text = summary(definition)
@@ -89,7 +101,7 @@ classdef GeneralTestDefinition
             GeneralTestDefinition.booleanValue(value.cyclic, 'preTest.cyclic');
             GeneralTestDefinition.booleanValue(value.unloadToStart, ...
                 'preTest.unloadToStart');
-            GeneralTestDefinition.integerRange(value.cycles, 1, 100, ...
+            GeneralTestDefinition.integerRange(value.cycles, 1, 50, ...
                 'preTest.cycles');
             GeneralTestDefinition.axisScalar(value.rate, 'preTest.rate', true);
             GeneralTestDefinition.axisScalar(value.holdTime, ...
@@ -120,7 +132,6 @@ classdef GeneralTestDefinition
             GeneralTestDefinition.axisScalar(value.rate, 'single.rate', true);
             GeneralTestDefinition.axisScalar(value.holdTime, ...
                 'single.holdTime', false);
-            GeneralTestDefinition.validateOptionalForceDrop(value, 'single');
         end
 
         function validateCyclic(value, axisMode)
@@ -138,7 +149,6 @@ classdef GeneralTestDefinition
                 'cyclic.loadValues');
             GeneralTestDefinition.axisArrays(value.unloadValues, ...
                 'cyclic.unloadValues');
-            GeneralTestDefinition.validateOptionalForceDrop(value, 'cyclic');
             active = {'x', 'y'};
             if ~strcmp(axisMode, 'both'), active = {axisMode}; end
             count = [];
@@ -146,10 +156,10 @@ classdef GeneralTestDefinition
                 axis = active{index};
                 loadCount = numel(value.loadValues.(axis));
                 unloadCount = numel(value.unloadValues.(axis));
-                if loadCount < 1 || loadCount > 100 || loadCount ~= unloadCount
+                if loadCount < 1 || loadCount > 50 || loadCount ~= unloadCount
                     error('GeneralTest:InvalidCycles', ...
                         ['Active-axis load/unload arrays must have matching ' ...
-                        'lengths from 1 to 100.']);
+                        'lengths from 1 to 50.']);
                 end
                 if isempty(count), count = loadCount; end
                 if count ~= loadCount
@@ -167,7 +177,7 @@ classdef GeneralTestDefinition
             end
         end
 
-        function axisScalar(value, path, mustBeNonzero)
+        function axisScalar(value, path, mustBePositive)
             GeneralTestDefinition.requireFields(value, {'x', 'y'}, path);
             for axis = {'x', 'y'}
                 number = value.(axis{1});
@@ -175,9 +185,9 @@ classdef GeneralTestDefinition
                     error('GeneralTest:InvalidNumber', ...
                         '%s.%s must be a finite number.', path, axis{1});
                 end
-                if mustBeNonzero && number == 0
+                if mustBePositive && number <= 0
                     error('GeneralTest:InvalidRate', ...
-                        '%s.%s must be non-zero.', path, axis{1});
+                        '%s.%s must be greater than 0.', path, axis{1});
                 end
                 if contains(path, 'holdTime') && number < 0
                     error('GeneralTest:InvalidHold', ...
@@ -194,6 +204,10 @@ classdef GeneralTestDefinition
                     error('GeneralTest:InvalidArray', ...
                         '%s.%s must contain only finite numbers.', path, axis{1});
                 end
+                if numel(numbers) > 50
+                    error('GeneralTest:InvalidCycles', ...
+                        '%s.%s may contain at most 50 values.', path, axis{1});
+                end
             end
         end
 
@@ -205,23 +219,11 @@ classdef GeneralTestDefinition
             end
         end
 
-        function validateOptionalForceDrop(value, path)
-            if isfield(value, 'forceDropPercent')
-                percent = value.forceDropPercent;
-                if ~isnumeric(percent) || ~isscalar(percent) || ...
-                        ~isfinite(percent) || percent < 0 || percent >= 100
-                    error('GeneralTest:InvalidForceDrop', ...
-                        '%s.forceDropPercent must be from 0 up to, but not including, 100.', ...
-                        path);
-                end
-            end
-            if isfield(value, 'forceDropThreshold')
-                GeneralTestDefinition.axisScalar(value.forceDropThreshold, ...
-                    [path, '.forceDropThreshold'], false);
-                if value.forceDropThreshold.x < 0 || ...
-                        value.forceDropThreshold.y < 0
-                    error('GeneralTest:InvalidForceDrop', ...
-                        '%s.forceDropThreshold values must be non-negative.', path);
+        function rejectFields(value, fields, path)
+            for index = 1:numel(fields)
+                if isfield(value, fields{index})
+                    error('GeneralTest:UnsupportedField', ...
+                        '%s.%s is not supported.', path, fields{index});
                 end
             end
         end

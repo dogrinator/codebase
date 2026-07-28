@@ -1,21 +1,17 @@
 classdef Settings < handle
-
-    %SETTINGS Application component.
+    %SETTINGS Loads, saves, validates, and applies operator configuration.
     properties
-        % load mandatory structs for settings send/recive
         plc    Plc 
         camera Camera
 
-        % help variables
         hwPath
         appPath
 
-        hwConfig  = []; % loaded hw config
-        appConfig = []; % loaded test config
+        hwConfig  = [];
+        appConfig = [];
     end
 
     methods
-        % Settings handles this operation.
         function settings = Settings(plc, camera)
             settings.plc = plc;
             settings.camera = camera;
@@ -24,118 +20,136 @@ classdef Settings < handle
             settings.appPath = fullfile(applicationRoot, '.config', 'appConfig');
         end
 
-        %% PLC settings
+        %% Hardware configuration
         function configList = listHwConfigs(settings)
-            % list all avalibe configs
-            pattern = fullfile(settings.hwPath, "*.json");
-            files = dir(pattern);
-            configList = erase({files.name}, ".json");
+            configList = Settings.listJsonFiles(settings.hwPath);
         end
 
-        % loadHwConfig handles this operation.
         function loadHwConfig(settings, filename)
-            filename = filename + ".json";
-            fullFilename = fullfile( settings.hwPath, filename);
-            txt = fileread(fullFilename);
-            settings.hwConfig = jsondecode(txt);
-            settings.normalizeHwConfig();
+            config = Settings.readJson(settings.hwPath, filename);
+            Settings.validateHardwareConfig(config);
+            settings.hwConfig = config;
         end
 
-        % saveHwConfig handles this operation.
         function saveHwConfig(settings, filename)
-            filename = filename + ".json";
-            fullFilename = fullfile( settings.hwPath, filename);
-            jsonTxt = jsonencode(settings.hwConfig, PrettyPrint=true);
-            fid = fopen(fullFilename, 'w');
-            
-            if fid == -1
-                error('Could not open file: %s', fullFilename);
-            end
-
-            fprintf(fid, '%s', jsonTxt);
-            fclose(fid);
+            Settings.validateHardwareConfig(settings.hwConfig);
+            Settings.writeJson( ...
+                settings.hwPath, filename, settings.hwConfig);
         end
 
-        % applyCameraConfig handles this operation.
         function applyCameraConfig(settings)
-           % Settings Updates
-            if ~isempty(settings.camera.cameraSrc) && isvalid(settings.camera.cameraSrc) && ~isempty(settings.hwConfig)
+            if ~isempty(settings.camera.cameraSrc) && ...
+                    isvalid(settings.camera.cameraSrc) && ...
+                    ~isempty(settings.hwConfig)
+                if isfield(settings.hwConfig.camera, 'gainRaw') && ...
+                        ~isprop(settings.camera.cameraSrc, 'GainRaw')
+                    error('Camera:UnsupportedGainSetting', ...
+                        ['This camera does not expose GainRaw. Remove ' ...
+                        'gainRaw from the hardware configuration.']);
+                end
                 settings.camera.cameraSrc.ExposureTimeAbs = settings.hwConfig.camera.exposureTimeAbs;
-                % settings.camera.cameraSrc.GainRaw = settings.hwConfig.camera.gainRaw;
+                if isfield(settings.hwConfig.camera, 'gainRaw')
+                    settings.camera.cameraSrc.GainRaw = ...
+                        settings.hwConfig.camera.gainRaw;
+                end
                 settings.camera.cameraSrc.AcquisitionFrameRateAbs = settings.hwConfig.camera.acquisitionFrameRateAbs;
                 settings.camera.cameraSrc.AcquisitionFrameRateEnable = 'True';
-                disp('Camera settings aplied');
+                disp('Camera settings applied.');
             else
-                disp('Camera disconnected or config not loaded');
+                disp('Camera disconnected or configuration not loaded.');
             end
         end
 
-        % applyPlcConfig handles this operation.
         function applyPlcConfig(settings)
             if settings.plc.connected && ~isempty(settings.hwConfig)
+                statuses = settings.plc.pollStatus();
+                if statuses.X.working || statuses.Y.working
+                    error('PLC:AxisUnavailable', ...
+                        'Hardware settings can only be applied while both axes are idle.');
+                end
+                PlcCommandValidator.axisConfig( ...
+                    settings.hwConfig.plc.xAxis);
+                PlcCommandValidator.axisConfig( ...
+                    settings.hwConfig.plc.yAxis);
                 settings.plc.writeAxisConfig(settings.hwConfig.plc.xAxis, 'X')
                 settings.plc.writeAxisConfig(settings.hwConfig.plc.yAxis, "Y")
-                disp('Plc settings aplied');
+                disp('PLC settings applied.');
             else
-                disp('Plc disconnected or config not loaded');
+                disp('PLC disconnected or configuration not loaded.');
             end
         end
 
-        function normalizeHwConfig(settings)
-            if isempty(settings.hwConfig) || ~isfield(settings.hwConfig, 'plc')
-                return;
-            end
-            for axisName = {'xAxis', 'yAxis'}
-                name = axisName{1};
-                if ~isfield(settings.hwConfig.plc, name)
-                    continue;
-                end
-                axisCfg = settings.hwConfig.plc.(name);
-                if ~isfield(axisCfg, 'fTenzoOffset')
-                    axisCfg.fTenzoOffset = 0;
-                end
-                if ~isfield(axisCfg, 'fForceReliefDistance')
-                    axisCfg.fForceReliefDistance = 1.0;
-                end
-                if ~isfield(axisCfg, 'fForceReliefVelocity')
-                    axisCfg.fForceReliefVelocity = 1.0;
-                end
-                if isfield(axisCfg, 'fMaxPosition')
-                    axisCfg = rmfield(axisCfg, 'fMaxPosition');
-                end
-                settings.hwConfig.plc.(name) = axisCfg;
-            end
-        end
-
-        %% App settings
+        %% Test presets
         function configList = listAppConfigs(settings)
-            pattern = fullfile(settings.appPath, "*.json");
-            files = dir(pattern);
-            configList = erase({files.name}, ".json");
+            configList = Settings.listJsonFiles(settings.appPath);
         end
 
-        % loadAppConfig handles this operation.
         function loadAppConfig(settings, filename)
-            filename = filename + ".json";
-            fullFilename = fullfile( settings.appPath, filename);
-            txt = fileread(fullFilename);
-            settings.appConfig = jsondecode(txt);
+            settings.appConfig = ...
+                Settings.readJson(settings.appPath, filename);
         end
 
-        % saveAppConfig handles this operation.
         function saveAppConfig(settings, filename)
-            filename = filename + ".json";
-            fullFilename = fullfile(settings.appPath, filename);
-            jsonTxt = jsonencode(settings.appConfig, PrettyPrint=true);
-            fid = fopen(fullFilename, 'w');
+            Settings.writeJson( ...
+                settings.appPath, filename, settings.appConfig);
+        end
+    end
 
-            if fid == -1
-                error('Could not open file: %s', fullFilename);
-            end
-
-            fprintf(fid, '%s', jsonTxt);
-            fclose(fid);
+    methods (Static, Access = private)
+        function names = listJsonFiles(folder)
+            files = dir(fullfile(folder, '*.json'));
+            names = erase({files.name}, '.json');
         end
 
+        function value = readJson(folder, name)
+            filename = fullfile(folder, char(string(name) + ".json"));
+            try
+                value = jsondecode(fileread(filename));
+            catch exception
+                error('Settings:InvalidJson', ...
+                    'Cannot read %s: %s', filename, exception.message);
+            end
+        end
+
+        function writeJson(folder, name, value)
+            filename = fullfile(folder, char(string(name) + ".json"));
+            fid = fopen(filename, 'w');
+            if fid == -1
+                error('Settings:WriteFailed', ...
+                    'Could not open %s for writing.', filename);
+            end
+            cleanup = onCleanup(@() fclose(fid));
+            written = fprintf(fid, '%s', ...
+                jsonencode(value, PrettyPrint=true));
+            if written < 0
+                error('Settings:WriteFailed', ...
+                    'Could not write %s.', filename);
+            end
+        end
+
+        function validateHardwareConfig(config)
+            PlcCommandValidator.requireExactFields( ...
+                config, {'plc', 'camera'}, 'hardware configuration');
+            PlcCommandValidator.requireExactFields( ...
+                config.plc, {'xAxis', 'yAxis'}, ...
+                'hardware configuration.plc');
+            PlcCommandValidator.axisConfig(config.plc.xAxis);
+            PlcCommandValidator.axisConfig(config.plc.yAxis);
+            PlcCommandValidator.requireExactFields(config.camera, ...
+                {'exposureTimeAbs', 'gainRaw', ...
+                    'acquisitionFrameRateAbs'}, ...
+                'hardware configuration.camera');
+            cameraValues = [config.camera.exposureTimeAbs, ...
+                config.camera.gainRaw, ...
+                config.camera.acquisitionFrameRateAbs];
+            if any(~isfinite(cameraValues)) || ...
+                    config.camera.exposureTimeAbs <= 0 || ...
+                    config.camera.gainRaw < 0 || ...
+                    config.camera.acquisitionFrameRateAbs <= 0
+                error('Settings:InvalidHardwareConfig', ...
+                    ['Camera exposure and frame rate must be positive; ' ...
+                    'gainRaw must be non-negative.']);
+            end
+        end
     end
 end

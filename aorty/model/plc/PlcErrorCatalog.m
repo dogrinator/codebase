@@ -1,8 +1,8 @@
 classdef PlcErrorCatalog
+    %PLCERRORCATALOG Converts PLC error codes into operator messages.
     %PLCERRORCATALOG Translates PLC application and NC errors for the UI.
 
     methods (Static)
-        % describe handles this operation.
         function message = describe(axisName, errorCode, axisErrorID)
             switch double(errorCode)
                 case 1001, detail = 'Power function block error';
@@ -19,16 +19,15 @@ classdef PlcErrorCatalog
                 case 2001, detail = 'Unsupported movement mode';
                 case 2002, detail = 'Saved-position return requested without a saved position';
                 case 2003, detail = 'Unsupported endpoint or criterion mode';
-                case 2004, detail = 'Zero-force unload has no known release direction';
                 case 2005, detail = 'Unsupported post-test mode';
                 case 2006, detail = 'Execute requested while axis power is off';
                 case 2007, detail = 'Invalid command count, value, or PLC setting';
                 case 2008, detail = 'Command conflicts with another operation';
                 case 2009, detail = 'Invalid numeric command or configuration';
+                case 2010, detail = 'Biaxial commands are unavailable or incompatible';
                 case 2101, detail = 'Maximum force reached; relief movement completed';
                 case 2102, detail = 'Maximum force reached; relief direction unknown';
                 case 2201, detail = 'Relative movement block 1 error';
-                case 2202, detail = 'Relative movement block 2 error';
                 case 2203, detail = 'Velocity movement error';
                 otherwise
                     detail = sprintf('Unknown PLC error %u', uint32(errorCode));
@@ -37,7 +36,6 @@ classdef PlcErrorCatalog
                 upper(char(axisName)), detail, uint32(axisErrorID));
         end
 
-        % messagesForStatuses handles this operation.
         function messages = messagesForStatuses(statuses)
             messages = {};
             for axis = {'X', 'Y'}

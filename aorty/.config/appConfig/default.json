@@ -13,8 +13,7 @@
     "preload": {
       "enabled": false,
       "value": {"x": 0, "y": 0, "lock": true}
-    },
-    "cameraPeriod": {"enabled": false, "value": 0.1}
+    }
   },
   "single": {
     "includePre": false,
@@ -24,11 +23,11 @@
     "secondary": {"x": 0, "y": 0, "lock": true},
     "rate": {"x": 1, "y": 1, "lock": true},
     "holdTime": {"x": 0, "y": 0, "lock": true},
-    "strainMode": false,
-    "stopAtFailure": false,
-    "forceDrop": 10,
-    "failureThreshold": {"x": 0, "y": 0, "lock": true},
-    "cameraPeriod": {"enabled": false, "value": 0.1}
+    "postProcess": {
+      "enabled": false,
+      "samplingPeriod": 0.1,
+      "includePrePost": false
+    }
   },
   "cyclic": {
     "includePre": false,
@@ -39,7 +38,11 @@
     "unload": {"x": 0, "y": 0, "lock": true},
     "rate": {"x": 1, "y": 1, "lock": true},
     "holdTime": {"x": 0, "y": 0, "lock": true},
-    "cameraPeriod": {"enabled": false, "value": 0.1}
+    "postProcess": {
+      "enabled": false,
+      "samplingPeriod": 0.1,
+      "includePrePost": false
+    }
   },
   "general": {
     "testFile": "No file selected"

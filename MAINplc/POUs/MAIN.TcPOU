@@ -37,6 +37,23 @@ VAR
 	bEndStopLyActive : BOOL;
 	bEndStopHyActive : BOOL;
 
+	// PLC-owned synchronized start and barrier coordinator
+	bStartBiaxialTest : BOOL; // ADS one-shot after both axis commands are prepared
+	bBiaxialSyncActive : BOOL;
+	bBiaxialSyncRelease : BOOL;
+	bBiaxialSyncAbort : BOOL;
+	bBiaxialCommonAbort : BOOL;
+	bBiaxialAbortX : BOOL;
+	bBiaxialAbortY : BOOL;
+	bBiaxialFinishAfterScan : BOOL;
+	bBiaxialStartValid : BOOL;
+	bBiaxialStartError : BOOL;
+	nBiaxialStartErrorCode : UDINT;
+
+	// Position origin used by the sample written in the current scan
+	fBufferStartPositionX : LREAL;
+	fBufferStartPositionY : LREAL;
+
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[////////////////////////////////
@@ -79,6 +96,24 @@ fbSafetyY(
 ////////// Update data /////////
 ////////////////////////////////
 
+// The buffer runs before the movement controller so force feedback remains
+// current in this scan. On an operation-start scan, use the actual position
+// immediately; the controller captures the same value later in this scan.
+fBufferStartPositionX := fbMovementControlerX.fTestStartPos;
+fBufferStartPositionY := fbMovementControlerY.fTestStartPos;
+
+IF NOT fbMovementControlerX.bBusy AND
+	(stMoveCommandX.bExecute OR stMoveCommandX.bRestorePosition OR
+	 bStartBiaxialTest) THEN
+	fBufferStartPositionX := GVL_Axis.xAxis.NcToPlc.ActPos;
+END_IF
+
+IF NOT fbMovementControlerY.bBusy AND
+	(stMoveCommandY.bExecute OR stMoveCommandY.bRestorePosition OR
+	 bStartBiaxialTest) THEN
+	fBufferStartPositionY := GVL_Axis.yAxis.NcToPlc.ActPos;
+END_IF
+
 fbSystemBufferX(
 	stSystemStatus:= stSystemStatusX,
 	bBlockTar:= fbMovementControlerX.bBusy OR fbSafetyX.bHoming,
@@ -87,7 +122,7 @@ fbSystemBufferX(
 	fTenzoOffset:= stSettingsX.fTenzoOffset,
 	bStartTar:= stMoveCommandX.bStartTar,
 	fActPosition:= GVL_Axis.xAxis.NcToPlc.ActPos,
-	fStartPosition:= fbMovementControlerX.fTestStartPos);
+	fStartPosition:= fBufferStartPositionX);
 	
 fbSystemBufferY(
 	stSystemStatus:= stSystemStatusY,
@@ -97,11 +132,145 @@ fbSystemBufferY(
 	fTenzoOffset:= stSettingsY.fTenzoOffset,
 	bStartTar:= stMoveCommandY.bStartTar,
 	fActPosition:= GVL_Axis.yAxis.NcToPlc.ActPos,
-	fStartPosition:= fbMovementControlerY.fTestStartPos);
+	fStartPosition:= fBufferStartPositionY);
 
 /////////////////////////////////////
 ////////// Main Move Logic //////////
 /////////////////////////////////////
+
+// A shared request starts both axes in one PLC scan. Single-axis tests keep
+// using their individual bExecute fields and never enable these barriers.
+bBiaxialSyncRelease := FALSE;
+bBiaxialSyncAbort := FALSE;
+bBiaxialCommonAbort := FALSE;
+bBiaxialAbortX := FALSE;
+bBiaxialAbortY := FALSE;
+bBiaxialFinishAfterScan := FALSE;
+
+IF (stMoveCommandX.bReset OR stMoveCommandY.bReset) AND
+	NOT bBiaxialSyncActive THEN
+	bBiaxialStartError := FALSE;
+	nBiaxialStartErrorCode := 0;
+END_IF
+
+IF bStartBiaxialTest THEN
+	bStartBiaxialTest := FALSE;
+	bBiaxialStartValid :=
+		NOT bBiaxialSyncActive AND
+		NOT fbMovementControlerX.bBusy AND
+		NOT fbMovementControlerY.bBusy AND
+		NOT fbMovementControlerX.bError AND
+		NOT fbMovementControlerY.bError AND
+		NOT fbSafetyX.bError AND NOT fbSafetyY.bError AND
+		NOT fbSafetyX.bHoming AND NOT fbSafetyY.bHoming AND
+		NOT stSystemStatusX.bTarWorking AND
+		NOT stSystemStatusY.bTarWorking AND
+		fbSafetyX.bPowerStatus AND fbSafetyY.bPowerStatus AND
+		stMoveCommandX.nMode = 3 AND stMoveCommandY.nMode = 3 AND
+		stMoveCommandX.nCycleCount >= 0 AND
+		stMoveCommandX.nCycleCount <= 50 AND
+		stMoveCommandY.nCycleCount >= 0 AND
+		stMoveCommandY.nCycleCount <= 50 AND
+		stMoveCommandX.nPreCycleCount >= 0 AND
+		stMoveCommandX.nPreCycleCount <= 50 AND
+		stMoveCommandY.nPreCycleCount >= 0 AND
+		stMoveCommandY.nPreCycleCount <= 50 AND
+		stMoveCommandX.nCycleCount = stMoveCommandY.nCycleCount AND
+		stMoveCommandX.bIncludePreTest =
+			stMoveCommandY.bIncludePreTest AND
+		stMoveCommandX.bPreTestOnly = stMoveCommandY.bPreTestOnly AND
+		stMoveCommandX.nPreCycleCount =
+			stMoveCommandY.nPreCycleCount AND
+		stMoveCommandX.bPreloadEnabled =
+			stMoveCommandY.bPreloadEnabled AND
+		stMoveCommandX.bPreUnloadToStart =
+			stMoveCommandY.bPreUnloadToStart AND
+		stMoveCommandX.nPostTestMode =
+			stMoveCommandY.nPostTestMode AND
+		NOT (stMoveCommandX.bPreTestOnly AND
+			NOT stMoveCommandX.bIncludePreTest);
+
+	IF bBiaxialStartValid THEN
+		IF stMoveCommandX.nPostTestMode < 0 OR
+			stMoveCommandX.nPostTestMode > 4 THEN
+			bBiaxialStartValid := FALSE;
+		ELSIF stMoveCommandX.nPostTestMode = 1 AND
+			(NOT fbMovementControlerX.bSavedPositionValid OR
+			 NOT fbMovementControlerY.bSavedPositionValid) THEN
+			bBiaxialStartValid := FALSE;
+		ELSIF NOT stMoveCommandX.bPreTestOnly AND
+			stMoveCommandX.nCycleCount = 0 AND
+			((stMoveCommandX.nStop1Mode < 1) OR
+			 (stMoveCommandX.nStop1Mode > 2) OR
+			 (stMoveCommandY.nStop1Mode < 1) OR
+			 (stMoveCommandY.nStop1Mode > 2) OR
+			 (stMoveCommandX.nStop2Mode < 0) OR
+			 (stMoveCommandX.nStop2Mode > 2) OR
+			 (stMoveCommandY.nStop2Mode < 0) OR
+			 (stMoveCommandY.nStop2Mode > 2)) THEN
+			bBiaxialStartValid := FALSE;
+		ELSIF NOT stMoveCommandX.bPreTestOnly AND
+			stMoveCommandX.nCycleCount > 0 AND
+			((stMoveCommandX.nLoadMode < 1) OR
+			 (stMoveCommandX.nLoadMode > 2) OR
+			 (stMoveCommandY.nLoadMode < 1) OR
+			 (stMoveCommandY.nLoadMode > 2) OR
+			 (stMoveCommandX.nUnloadMode < 1) OR
+			 (stMoveCommandX.nUnloadMode > 2) OR
+			 (stMoveCommandY.nUnloadMode < 1) OR
+			 (stMoveCommandY.nUnloadMode > 2)) THEN
+			bBiaxialStartValid := FALSE;
+		END_IF
+	END_IF
+
+	IF bBiaxialStartValid THEN
+		bBiaxialStartError := FALSE;
+		nBiaxialStartErrorCode := 0;
+		bBiaxialSyncActive := TRUE;
+		stMoveCommandX.bExecute := TRUE;
+		stMoveCommandY.bExecute := TRUE;
+	ELSE
+		bBiaxialStartError := TRUE;
+		nBiaxialStartErrorCode := 2010;
+	END_IF
+END_IF
+
+IF bBiaxialSyncActive THEN
+	// Ignore a ProtectiveStop produced by the controller's own stateHalt.
+	// Operator/end-stop stops still abort both axes. During overforce relief,
+	// only the peer receives the controller's explicit abort request.
+	bBiaxialCommonAbort :=
+		fbMovementControlerX.bError OR fbMovementControlerY.bError OR
+		fbSafetyX.bError OR fbSafetyY.bError OR
+		(fbSafetyX.bProtectiveStop AND
+		 NOT fbMovementControlerX.stateHalt) OR
+		(fbSafetyY.bProtectiveStop AND
+		 NOT fbMovementControlerY.stateHalt) OR
+		(bEndStopLxActive AND GVL_Axis.xAxis.Status.NegativeDirection) OR
+		(bEndStopHxActive AND GVL_Axis.xAxis.Status.PositiveDirection) OR
+		(bEndStopLyActive AND GVL_Axis.yAxis.Status.NegativeDirection) OR
+		(bEndStopHyActive AND GVL_Axis.yAxis.Status.PositiveDirection) OR
+		stMoveCommandX.bHalt OR stMoveCommandY.bHalt;
+
+	bBiaxialAbortX := bBiaxialCommonAbort OR
+		fbMovementControlerY.bPeerAbortRequest;
+	bBiaxialAbortY := bBiaxialCommonAbort OR
+		fbMovementControlerX.bPeerAbortRequest;
+	bBiaxialSyncAbort := bBiaxialCommonAbort OR
+		fbMovementControlerX.bPeerAbortRequest OR
+		fbMovementControlerY.bPeerAbortRequest;
+
+	IF NOT bBiaxialSyncAbort AND
+		fbMovementControlerX.nSyncPoint <> 0 AND
+		fbMovementControlerX.nSyncPoint =
+			fbMovementControlerY.nSyncPoint AND
+		fbMovementControlerX.nSyncCycle =
+			fbMovementControlerY.nSyncCycle THEN
+		bBiaxialSyncRelease := TRUE;
+		bBiaxialFinishAfterScan :=
+			fbMovementControlerX.nSyncPoint = 5;
+	END_IF
+END_IF
 
 fbMovementControlerX(
 	Axis := GVL_Axis.xAxis,
@@ -113,6 +282,9 @@ fbMovementControlerX(
 	bSafetyError := fbSafetyX.bError,
 	bProtectiveStop := fbSafetyX.bProtectiveStop,
 	bExternalBusy := fbSafetyX.bHoming OR stSystemStatusX.bTarWorking,
+	bSyncEnabled := bBiaxialSyncActive,
+	bSyncRelease := bBiaxialSyncRelease,
+	bSyncAbort := bBiaxialAbortX,
     fForce := stSystemStatusX.fTenzoBuffer[stSystemStatusX.nBufferHead]);
 
 fbMovementControlerY(
@@ -125,7 +297,21 @@ fbMovementControlerY(
 	bSafetyError := fbSafetyY.bError,
 	bProtectiveStop := fbSafetyY.bProtectiveStop,
 	bExternalBusy := fbSafetyY.bHoming OR stSystemStatusY.bTarWorking,
+	bSyncEnabled := bBiaxialSyncActive,
+	bSyncRelease := bBiaxialSyncRelease,
+	bSyncAbort := bBiaxialAbortY,
 	fForce := stSystemStatusY.fTenzoBuffer[stSystemStatusY.nBufferHead]);
+
+IF bBiaxialFinishAfterScan OR
+	(bBiaxialSyncAbort AND NOT fbMovementControlerX.bBusy AND
+		NOT fbMovementControlerY.bBusy) THEN
+	bBiaxialSyncActive := FALSE;
+	bBiaxialSyncRelease := FALSE;
+	bBiaxialSyncAbort := FALSE;
+	bBiaxialCommonAbort := FALSE;
+	bBiaxialAbortX := FALSE;
+	bBiaxialAbortY := FALSE;
+END_IF
 
 ///////////////////////////////////////////////////
 ////// ADS status contract for each axis //////////
@@ -139,13 +325,17 @@ stSystemStatusX.bStopped := fbSafetyX.bStopped;
 stSystemStatusX.bWorking := fbMovementControlerX.bBusy OR fbSafetyX.bHoming OR
 	fbSafetyX.bProtectiveStop OR stSystemStatusX.bTarWorking;
 stSystemStatusX.nOperationCounter := fbMovementControlerX.nOperationCounter;
-stSystemStatusX.nInterfaceVersion := 4;
+stSystemStatusX.nInterfaceVersion := 5;
 stSystemStatusX.bSavedPositionValid := fbMovementControlerX.bSavedPositionValid;
 stSystemStatusX.nTestPhase := fbMovementControlerX.nTestPhase;
-stSystemStatusX.bError := fbMovementControlerX.bError OR fbSafetyX.bError;
+stSystemStatusX.bError := fbMovementControlerX.bError OR fbSafetyX.bError OR
+	bBiaxialStartError;
 IF fbSafetyX.bError THEN
 	stSystemStatusX.nErrorCode := fbSafetyX.nErrorCode;
 	stSystemStatusX.nAxisErrorID := fbSafetyX.nAxisErrorID;
+ELSIF bBiaxialStartError THEN
+	stSystemStatusX.nErrorCode := nBiaxialStartErrorCode;
+	stSystemStatusX.nAxisErrorID := 0;
 ELSE
 	stSystemStatusX.nErrorCode := fbMovementControlerX.nErrorCode;
 	stSystemStatusX.nAxisErrorID := fbMovementControlerX.nAxisErrorID;
@@ -159,13 +349,17 @@ stSystemStatusY.bStopped := fbSafetyY.bStopped;
 stSystemStatusY.bWorking := fbMovementControlerY.bBusy OR fbSafetyY.bHoming OR
 	fbSafetyY.bProtectiveStop OR stSystemStatusY.bTarWorking;
 stSystemStatusY.nOperationCounter := fbMovementControlerY.nOperationCounter;
-stSystemStatusY.nInterfaceVersion := 4;
+stSystemStatusY.nInterfaceVersion := 5;
 stSystemStatusY.bSavedPositionValid := fbMovementControlerY.bSavedPositionValid;
 stSystemStatusY.nTestPhase := fbMovementControlerY.nTestPhase;
-stSystemStatusY.bError := fbMovementControlerY.bError OR fbSafetyY.bError;
+stSystemStatusY.bError := fbMovementControlerY.bError OR fbSafetyY.bError OR
+	bBiaxialStartError;
 IF fbSafetyY.bError THEN
 	stSystemStatusY.nErrorCode := fbSafetyY.nErrorCode;
 	stSystemStatusY.nAxisErrorID := fbSafetyY.nAxisErrorID;
+ELSIF bBiaxialStartError THEN
+	stSystemStatusY.nErrorCode := nBiaxialStartErrorCode;
+	stSystemStatusY.nAxisErrorID := 0;
 ELSE
 	stSystemStatusY.nErrorCode := fbMovementControlerY.nErrorCode;
 	stSystemStatusY.nAxisErrorID := fbMovementControlerY.nAxisErrorID;

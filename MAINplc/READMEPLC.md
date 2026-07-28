@@ -1,18 +1,20 @@
-# TwinCAT PLC interface version 3
+# TwinCAT PLC interface version 5
 
 ## Purpose
 
 The TwinCAT program controls independent X and Y axes. MATLAB communicates
 through `MAIN.stMoveCommandX/Y`, `MAIN.stSystemStatusX/Y`, and
-`MAIN.stSettingsX/Y`. The PLC task period is 10 ms.
+`MAIN.stSettingsX/Y`. `aorty/model/Plc.m` owns application-level validation
+and command construction, while `aorty/model/PlcAds.m` owns the version 5 ADS
+symbols and binary transport. The PLC task period is 10 ms.
 
 The PLC owns the complete test sequence:
 
 ```text
 capture sequence start
-  -> optional force preload
+  -> optional initial force preload
   -> optional constant force pre-cycles
-  -> capture actual pre-test final position
+  -> synchronize and capture actual pre-test final position
   -> single or cyclic main test
   -> post-test action
   -> increment operation counter
@@ -29,10 +31,13 @@ and skip post-test motion.
 2. Resolve libraries and build the PLC project.
 3. Confirm the build has no errors.
 4. Commit the regenerated TMC and download the matching PLC program.
-5. Verify MATLAB connects with interface version 3.
+5. Verify MATLAB connects with interface version 5.
 
-Never hand-edit the TMC. A stale TMC will expose the previous ADS layout even
-when the source DUT files are correct.
+Never hand-edit the TMC. A stale TMC exposes the previous ADS layout even when
+the source DUT files are correct.
+
+The checked-in `main program.tmc` is generated from the interface version 5
+source contract. Regenerate it in TwinCAT/XAE whenever a DUT or POU changes.
 
 ## Units and limits
 
@@ -42,10 +47,10 @@ when the source DUT files are correct.
 | Motor velocity | mm/s |
 | Force | N |
 | Hold/duration | s |
-| Mode 3 cycle arrays | exactly 50 allocated entries; active count 1–50 |
+| Mode 3 cycle arrays | exactly 50 allocated entries; active count 1-50 |
 
-MATLAB validates numeric inputs before pulsing `bExecute`. The PLC retains the
-structural `0..100` bounds check for Mode 3 cycle arrays.
+MATLAB validates experiment inputs before requesting execution. The PLC
+retains structural bounds checks, including the `0..50` Mode 3 cycle count.
 
 ## `ST_MoveCommand`
 
@@ -56,14 +61,16 @@ structural `0..100` bounds check for Mode 3 cycle arrays.
 | `fMoveDistance`, `fMoveVelocity` | Mode 1 single relative move |
 | `fTargetForce`, `fForceDuration` | Mode 2 single PI-regulated force hold |
 | `nMode` | `1` relative, `2` force/time, `3` full test |
-| `bExecute` | Execute configured operation |
+| `bExecute` | Execute a configured single-axis operation |
 | `bHalt`, `bPower`, `bReset`, `bHome`, `bStartTar` | Service commands |
 | `bSavePosition` | Capture PLC-owned current coordinate |
 | `bRestorePosition` | Restore saved coordinate directly while idle |
 | `fRestoreVelocity` | Positive restore speed |
 
-MATLAB writes all fields for both selected axes before pulsing either
-`bExecute`. Service booleans are one-shot commands cleared by `MAIN`.
+For X-only or Y-only operation, MATLAB writes the selected command before
+pulsing its `bExecute`. For Both, MATLAB writes both commands and uses
+`MAIN.bStartBiaxialTest` instead of either individual Execute field. Service
+booleans are one-shot commands cleared by `MAIN`.
 
 ### Force pre-conditioning
 
@@ -72,32 +79,39 @@ MATLAB writes all fields for both selected axes before pulsing either
 | `bIncludePreTest` | Include force pre-conditioning |
 | `bPreTestOnly` | Run pre-conditioning and post action without a main test |
 | `nPreCycleCount` | Force load/unload cycles, `0..50` |
-| `bPreloadEnabled` | Run one preload endpoint before cycles |
-| `fPreloadValue` | Initial one-time preload target |
-| `fPreCycleLoadValue` | Repeated preconditioning load target |
+| `bPreloadEnabled` | Run one initial preload endpoint before cycles |
+| `fPreloadValue` | Independent one-time initial preload target |
+| `fPreCycleLoadValue` | Repeated pre-cycle load target |
 | `fPreUnloadValue` | Per-cycle unload force target |
 | `bPreUnloadToStart` | Return to captured sequence-start coordinate instead of force unload |
 | `fPreTestRate` | Positive force-control speed magnitude |
 | `fPreTestHoldTime` | Required accumulated time inside force tolerance |
 
-The old `nPreTestMode` and `fPreTestValue` fields are removed.
+Initial preload and repeated pre-cycle load are separate values. The old
+`nPreTestMode` and `fPreTestValue` contracts are not used. MATLAB commands use
+`preloadValue` for the initial target and `preCycleLoadValue` for the repeated
+target; the legacy `preLoadValue` key is rejected.
 
-### Main single/cyclic test
+### Main Single/Cyclic test
 
 | Field | Meaning |
 | --- | --- |
 | `fTestRate` | Positive main-test speed magnitude |
 | `fForceHoldTime` | Required accumulated time inside force tolerance |
-| `nCycleCount` | `0` single; `1..50` cyclic |
+| `nCycleCount` | `0` Single; `1..50` Cyclic |
 | `nLoadMode`, `nUnloadMode` | `1` displacement, `2` force |
 | `fLoadValues[1..50]`, `fUnloadValues[1..50]` | Per-cycle levels |
 | `nStop1Mode`, `nStop2Mode` | `0` off, `1` displacement, `2` force |
 | `fStop1Value`, `fStop2Value` | Single-test OR endpoint values |
 
-Displacement values are relative to the actual pre-test-final coordinate.
-Load and unload modes are independent, so mixed force/displacement cycles are
-supported. The Cyclic UI repeats constant values; General JSON supplies
-variable arrays.
+Displacement values are positions relative to the actual pre-test-final
+coordinate captured at the synchronized main-test transition. That coordinate
+is `0 mm`. Load and unload modes are independent, so mixed
+force/displacement cycles are supported. The Cyclic UI repeats constant
+values; General JSON supplies variable arrays.
+
+Force-drop and arm-above-force fields are removed from the interface and must
+not be included in commands.
 
 ### Post-test
 
@@ -113,12 +127,55 @@ Post motion occurs only after normal completion. Saved return requires
 `bSavedPositionValid`. Zero-force release derives direction directly from the
 current force error.
 
+## Biaxial start and synchronization
+
+MATLAB writes and validates both complete axis commands without pulsing their
+individual Execute fields. It then pulses the ADS one-shot
+`MAIN.bStartBiaxialTest`. The PLC validates both prepared commands and starts
+both movement controllers in one PLC scan. If either command is invalid,
+neither axis moves.
+
+The request is accepted only when both axes are ready and powered and both
+commands use Mode 3 with matching:
+
+- Single/Cyclic test type and cycle count.
+- Pre-test inclusion, pre-test-only state, pre-cycle count, preload inclusion,
+  unload-to-start selection, and phase structure.
+- Post-test mode.
+
+Per-axis targets, rates, endpoint modes, and stop values may differ.
+Incompatible or unavailable prepared commands report error `2010`.
+
+The PLC coordinator releases these shared barriers only when both movement
+controllers report the same synchronization point and cycle:
+
+- Pre-test completion before either axis enters Test.
+- Every Cyclic load endpoint.
+- Every Cyclic unload endpoint.
+- Main-test completion before either axis enters Post-test.
+- Post-test completion before either axis returns to Idle and completes its
+  operation counter.
+
+At a force endpoint, the configured hold time completes first; regulation then
+continues inside tolerance while the peer catches up. At a position endpoint,
+the powered NC position loop holds the axis at standstill. The final pre-test
+position is captured at the shared release, giving both main-test displacement
+origins the same synchronized transition.
+
+The faster axis remains in phase 1, 2, or 3 until its peer reaches the same
+barrier. Both axes return to phase 0 together. An axis error, safety or
+protective stop, operator halt, or overforce abort is propagated immediately
+to the peer. The coordinator clears only after both axes are safely stopped.
+
+X-only and Y-only tests never enable the coordinator and continue to use their
+own `bExecute` fields without waiting for an inactive peer.
+
 ## `ST_SystemStatus`
 
 | Field | Meaning |
 | --- | --- |
-| `nInterfaceVersion` | ADS contract version, currently `4` |
-| `nTestPhase` | `0` idle, `1` preconditioning, `2` test, `3` post-test |
+| `nInterfaceVersion` | ADS contract version, currently `5` |
+| `nTestPhase` | `0` Idle, `1` Pre-test, `2` Test, `3` Post-test |
 | `bWorking` | Axis has an active operation |
 | `nOperationCounter` | Increments once after successful operation completion |
 | `bError`, `nErrorCode`, `nAxisErrorID` | PLC and NC error state |
@@ -130,8 +187,10 @@ current force error.
 | `fTenzoTarOffset`, `bTarWorking` | Tare state |
 
 `bHomed` is informational. MATLAB displays it but does not block commands.
-Completion requires `bWorking=FALSE`, no `bError`, and a changed
-`nOperationCounter`.
+Single-axis completion requires `bWorking=FALSE`, no `bError`, and a changed
+`nOperationCounter`. Biaxial completion waits for both axes to meet that rule.
+MATLAB shows the current phase beside PLC connection and shows both values if
+the axis phases differ.
 
 ## `ST_Settings`
 
@@ -151,8 +210,9 @@ and aborts without post-test. If direction is unknown, no blind move is made.
 
 ## Validation and errors
 
-MATLAB owns experiment-value validation. The PLC retains structural array-bound
-checks, runtime safety limits, supported-mode checks, and motion errors.
+MATLAB owns experiment-value validation. The PLC retains structural
+array-bound checks, runtime safety limits, supported-mode checks, and motion
+errors.
 
 | Code | Meaning |
 | --- | --- |
@@ -163,6 +223,7 @@ checks, runtime safety limits, supported-mode checks, and motion errors.
 | `2007` | Invalid count/configuration/value |
 | `2008` | Conflicting command while busy |
 | `2009` | Invalid restore numeric value |
+| `2010` | Biaxial commands are unavailable or incompatible |
 | `2101` | Overforce relief completed; reset required |
 | `2102` | Overforce relief direction unknown |
 | `2201`, `2203` | Relative or velocity motion-function-block failure |
@@ -178,7 +239,7 @@ Required root fields are:
 - `axisMode`: `x`, `y`, or `both`
 - `testType`: `single` or `cyclic`
 - `preTest`
-- the selected `single` or `cyclic` object
+- The selected `single` or `cyclic` object
 - `postTest`
 - `camera`
 
@@ -186,18 +247,58 @@ Every axis-specific scalar is `{"x": number, "y": number}`.
 
 `preTest` requires `enabled`, `cyclic`, `cycles`, `rate`, `holdTime`,
 `preload` (`enabled`, `value`), `load`, `unload`, and `unloadToStart`.
+`preload.value` is the initial one-time preload and `load` is the independent
+pre-cycle load target.
 
 `single` requires `primaryMode`, `primaryValue`, `secondaryMode`,
 `secondaryValue`, `rate`, and `holdTime`.
 
 `cyclic` requires `loadMode`, `unloadMode`, `rate`, `holdTime`,
 `loadValues`, and `unloadValues`. Active-axis arrays must have matching
-lengths from 1 to 100; that length is the cycle count.
+lengths from 1 to 50; that length is the cycle count.
 
-`postTest` uses the stable values in the table above. `camera` requires
-`enabled` and `period`; period must be positive when enabled. The imported
-definition is authoritative. See
+`postTest` uses the stable values in the table above. `camera` requires:
+
+```json
+{
+  "enabled": true,
+  "samplingPeriod": 0.1,
+  "includePrePost": true
+}
+```
+
+`enabled` controls automatic TIFF post-processing, not raw camera capture.
+`samplingPeriod` is the non-negative minimum TIFF interval; `0` exports every
+eligible frame. `includePrePost` selects phases 1-3 instead of phase 2 only.
+Raw camera acquisition remains at the configured hardware FPS. The former
+`period` key, removed force-drop keys, and counts or arrays over 50 are
+rejected without legacy conversion.
+
+The imported definition is authoritative. See
 `../aorty/examples/general_test_example.json`.
+
+## Recording and TIFF compatibility
+
+MATLAB records every acquired camera frame at the configured hardware FPS.
+`camTimestamps.csv` uses:
+
+```text
+Index,Timestamp,TestPhase
+```
+
+The phase is the latest `nTestPhase` received by the existing 0.5-second PLC
+poll. Automatic and manual post-processing filter eligible phases before
+applying their minimum TIFF interval, and restart interval sampling at phase
+transitions. Recordings without a valid phase column are rejected.
+
+Automatic processing is available for Single and Cyclic tests and writes
+`processed_frames`. Standalone Pre-test records raw data without automatic
+TIFF output. Manual processing writes a unique
+`processed_frames_manual_<timestamp>` folder.
+
+The TIFF filename pattern, overlay, complete `Description` header
+names/order/format/values, base time, and delta calculations are a strict
+external integration contract and must not be changed.
 
 ## Commissioning checklist
 
@@ -205,21 +306,23 @@ Perform initially at conservative speed/force settings with the mechanical
 safety system ready:
 
 1. Build TwinCAT and regenerate symbols; deploy the matching project.
-2. Connect MATLAB; verify interface version 3 on X and Y.
+2. Connect MATLAB; verify interface version 5 on X and Y.
 3. Apply settings and confirm relief distance/velocity.
-4. Check powered, busy, stopped, homing, homed, error, and saved indicators.
+4. Check powered, busy, stopped, homing, homed, error, saved, and phase
+   indicators.
 5. Save and restore each axis, then Both.
 6. Tare each load cell.
 7. Home each axis; confirm homed is informational.
 8. Jog positive/negative at low speed and confirm sign conventions.
 9. Run standalone pre-test with preload, force unload, and unload-to-start.
-10. Run displacement and force single tests with optional OR endpoint.
-11. Run all constant cyclic combinations, including mixed modes.
+10. Run displacement and force Single tests with an optional OR endpoint.
+11. Run all constant Cyclic combinations, including mixed modes.
 12. Import and run the example variable General JSON.
-13. Exercise every post action.
-14. During a biaxial test, force one-axis failure and confirm the peer halts.
-15. Verify STOP/reset and both end stops.
-16. Carefully provoke conservative overforce protection and confirm relief
+13. Exercise every post-test action.
+14. During a biaxial test, confirm both start together and wait at every
+    configured barrier.
+15. Force one-axis failure and confirm the peer halts without deadlock.
+16. Verify STOP/reset and both end stops.
+17. Carefully provoke conservative overforce protection and confirm relief
     moves opposite loading and skips post-test.
-17. Check recording status and post-processed output for completed and
-    aborted tests.
+18. Check raw phase recording plus automatic and manual post-processed output.
