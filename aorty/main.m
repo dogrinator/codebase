@@ -1,9 +1,7 @@
-% Add the MVC folders so classes can be found regardless of the current
-% MATLAB working directory.
+% Add the complete application tree so extracted support components are
+% available regardless of the current MATLAB working directory.
 projectRoot = fileparts(mfilename('fullpath'));
-addpath(fullfile(projectRoot, 'model'));
-addpath(fullfile(projectRoot, 'controller'));
-addpath(fullfile(projectRoot, 'view'));
+addpath(genpath(projectRoot));
 
 % Keep one application instance per MATLAB session. Force-closing the old
 % figure would bypass View.shutdown and leave its timers and hardware alive.
