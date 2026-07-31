@@ -16,14 +16,15 @@ VAR_INPUT
 	
 	// Position buffer
 	fActPosition   : LREAL;
-	fStartPosition : LREAL;
 END_VAR
 VAR
     fbStartTarRiseClp : R_TRIG;   // Detects the moment tare button is pressed
     bTarActive        : BOOL;     // Flag indicating taring is in progress
     nTarCounter       : INT;      // Counts up to 100 samples
     fTarAccumulator   : LREAL;    // Holds the running sum of samples
-    fCurrentCalculated: LREAL;    // The current weight before tare constant
+END_VAR
+VAR_TEMP
+    fCurrentCalculated: LREAL;    // Current force before the tare offset
 	nNextHead        : INT;
 END_VAR]]></Declaration>
     <Implementation>
@@ -31,7 +32,7 @@ END_VAR]]></Declaration>
 // Calculate the current weight snapshot
 fCurrentCalculated := (DINT_TO_LREAL(nRawTenzo) * fTenzoCons) + fTenzoOffset;
 
-// Taring Logic
+// Tare logic
 // Reject a tare command received while motion or homing is active.
 IF bStartTar AND bBlockTar THEN
 	bStartTar := FALSE;
@@ -51,7 +52,7 @@ IF bTarActive THEN
     fTarAccumulator := fTarAccumulator + fCurrentCalculated;
     nTarCounter     := nTarCounter + 1;
     
-    // After 100 
+    // After 100 samples
     IF nTarCounter >= 100 THEN
         // Calculate the mean
         stSystemStatus.fTenzoTarOffset := - (fTarAccumulator / 100.0); 
@@ -62,7 +63,7 @@ IF bTarActive THEN
     END_IF
 END_IF
 
-// Flag sys is working so no mowement will be done
+// Block movement while tare calculation is active.
 stSystemStatus.bTarWorking := bTarActive;
 
 // New head
@@ -73,9 +74,9 @@ END_IF
 
 // Buffering data
 stSystemStatus.fTenzoBuffer[nNextHead] := fCurrentCalculated + stSystemStatus.fTenzoTarOffset;
-stSystemStatus.fPosBuffer[nNextHead] := fActPosition - fStartPosition;
+stSystemStatus.fPosBuffer[nNextHead] := fActPosition;
 
-// Matlab status helpers
+// MATLAB status helpers
 stSystemStatus.nBufferHead := nNextHead;
 stSystemStatus.nSampleCounter := stSystemStatus.nSampleCounter + 1;
 

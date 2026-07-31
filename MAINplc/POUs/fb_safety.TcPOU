@@ -33,7 +33,7 @@ VAR
 	fbReset        : MC_Reset;
 	fbHalt         : MC_Halt;
 	fbHome         : MC_Home;
-	fbMoveToZero   : MC_MoveRelative;
+	fbMoveToZero   : MC_MoveAbsolute;
 
 	rtReset        : R_TRIG;
 	rtHalt         : R_TRIG;
@@ -46,7 +46,7 @@ VAR
 	bFaultPowerInhibit : BOOL;
 	bResetExecute      : BOOL;
 	bHaltDonePulse     : BOOL;
-	fHomeParkDistance  : LREAL;
+	stHomeOptions      : ST_HomingOptions;
 END_VAR
 
 VAR CONSTANT
@@ -54,6 +54,18 @@ VAR CONSTANT
 	HOME_PARK_VELOCITY : LREAL := 5.0;
 	HOME_TIMEOUT       : TIME := T#10M;
 	HOME_PARK_TIMEOUT  : TIME := T#10S;
+	ERROR_POWER_FB       : UDINT := 1001;
+	ERROR_RESET_FB       : UDINT := 1002;
+	ERROR_HALT_FB        : UDINT := 1003;
+	ERROR_HOME_FB        : UDINT := 1004;
+	ERROR_AXIS           : UDINT := 1005;
+	ERROR_LIMITS_CONFLICT: UDINT := 1006;
+	ERROR_PARK_FB        : UDINT := 1008;
+	ERROR_HOME_TIMEOUT   : UDINT := 1011;
+	ERROR_PARK_TIMEOUT   : UDINT := 1012;
+	ERROR_UPPER_LIMIT    : UDINT := 1013;
+	ERROR_HOME_LIMIT     : UDINT := 1014;
+	ERROR_HOME_COORDINATE: UDINT := 1015;
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -63,7 +75,7 @@ rtReset(CLK := bReset);
 rtHalt(CLK := bHalt);
 rtHome(CLK := bHome);
 
-// halt pulse is one cicle variable
+// Halt completion is exposed as a one-cycle pulse.
 bHaltDonePulse := FALSE;
 
 // Reset a latched fault
@@ -80,7 +92,7 @@ IF bResetExecute AND fbReset.Done THEN
 ELSIF bResetExecute AND fbReset.Error THEN
 	bResetExecute := FALSE;
 	bError := TRUE;
-	nErrorCode := 1002;
+	nErrorCode := ERROR_RESET_FB;
 	nAxisErrorID := fbReset.ErrorID;
 	bFaultPowerInhibit := TRUE;
 END_IF
@@ -89,32 +101,32 @@ END_IF
 IF NOT bError THEN
 	IF stAxis.Status.Error THEN
 		bError := TRUE;
-		nErrorCode := 1005;
+		nErrorCode := ERROR_AXIS;
 		nAxisErrorID := stAxis.Status.ErrorID;
 		eState := E_SafetyState.ErrorStop;
 	ELSIF bEndStopL AND bEndStopH THEN
 		bError := TRUE;
-		nErrorCode := 1006;
+		nErrorCode := ERROR_LIMITS_CONFLICT;
 		nAxisErrorID := 0;
 		eState := E_SafetyState.ErrorStop;
 	ELSIF fbPower.Error THEN
 		bError := TRUE;
-		nErrorCode := 1001;
+		nErrorCode := ERROR_POWER_FB;
 		nAxisErrorID := fbPower.ErrorID;
 		eState := E_SafetyState.ErrorStop;
 	ELSIF fbHalt.Error THEN
 		bError := TRUE;
-		nErrorCode := 1003;
+		nErrorCode := ERROR_HALT_FB;
 		nAxisErrorID := fbHalt.ErrorID;
 		eState := E_SafetyState.ErrorStop;
 	ELSIF fbHome.Error THEN
 		bError := TRUE;
-		nErrorCode := 1004;
+		nErrorCode := ERROR_HOME_FB;
 		nAxisErrorID := fbHome.ErrorID;
 		eState := E_SafetyState.ErrorStop;
 	ELSIF fbMoveToZero.Error THEN
 		bError := TRUE;
-		nErrorCode := 1008;
+		nErrorCode := ERROR_PARK_FB;
 		nAxisErrorID := fbMoveToZero.ErrorID;
 		eState := E_SafetyState.ErrorStop;
 	END_IF
@@ -138,30 +150,43 @@ CASE eState OF
 	E_SafetyState.Homing:
 		IF fbHomeTimeout.Q THEN
 			bError := TRUE;
-			nErrorCode := 1011;
+			nErrorCode := ERROR_HOME_TIMEOUT;
 			nAxisErrorID := 0;
 			eState := E_SafetyState.ErrorStop;
 		ELSIF fbHome.Done THEN
 			IF bEndStopL THEN
 				bError := TRUE;
-				nErrorCode := 1014;
+				nErrorCode := ERROR_HOME_LIMIT;
+				nAxisErrorID := 0;
+				eState := E_SafetyState.ErrorStop;
+			ELSIF NOT stAxis.Status.Homed OR
+				stAxis.NcToPlc.ActPos < -10.0 OR
+				stAxis.NcToPlc.ActPos > 0.5 THEN
+				// Reject an invalid coordinate instead of commanding a long move.
+				bError := TRUE;
+				nErrorCode := ERROR_HOME_COORDINATE;
 				nAxisErrorID := 0;
 				eState := E_SafetyState.ErrorStop;
 			ELSE
-				fHomeParkDistance := HOME_PARK_POSITION - stAxis.NcToPlc.ActPos;
 				eState := E_SafetyState.MoveToZero;
 			END_IF
 		END_IF
 
 	E_SafetyState.MoveToZero:
-		IF bEndStopH THEN
+		IF stAxis.Status.NegativeDirection THEN
+			// Parking from the lower reference toward zero must be positive.
 			bError := TRUE;
-			nErrorCode := 1013;
+			nErrorCode := ERROR_HOME_COORDINATE;
+			nAxisErrorID := 0;
+			eState := E_SafetyState.ErrorStop;
+		ELSIF bEndStopH THEN
+			bError := TRUE;
+			nErrorCode := ERROR_UPPER_LIMIT;
 			nAxisErrorID := 0;
 			eState := E_SafetyState.ErrorStop;
 		ELSIF fbMoveTimeout.Q THEN
 			bError := TRUE;
-			nErrorCode := 1012;
+			nErrorCode := ERROR_PARK_TIMEOUT;
 			nAxisErrorID := 0;
 			eState := E_SafetyState.ErrorStop;
 		ELSIF fbMoveToZero.Done THEN
@@ -204,20 +229,32 @@ fbReset(
 	Axis := stAxis,
 	Execute := bResetExecute);
 
+// Make both homing directions explicit:
+// search toward the lower switch, then move positively away from it.
+stHomeOptions.SearchDirection :=
+	MC_Direction.MC_Negative_Direction;
+stHomeOptions.SearchVelocity := 0.5;
+stHomeOptions.SyncDirection :=
+	MC_Direction.MC_Positive_Direction;
+stHomeOptions.SyncVelocity := 0.5;
+stHomeOptions.ReferenceMode :=
+	E_EncoderReferenceMode.ENCODERREFERENCEMODE_PLCCAM;
+
 // TwinCAT NC owns the complete reference-cam search and release sequence.
-// Position is omitted so the NC-configured reference position (-5 mm) is used.
 fbHome(
 	Axis := stAxis,
 	Execute := eState = E_SafetyState.Homing,
+	Position := -5.0,
 	HomingMode := MC_DefaultHoming,
 	BufferMode := MC_Aborting,
+	Options := stHomeOptions,
 	bCalibrationCam := bEndStopL);
 
 // Park at the safe working origin after TwinCAT has established the reference.
 fbMoveToZero(
 	Axis := stAxis,
 	Execute := eState = E_SafetyState.MoveToZero,
-	Distance := fHomeParkDistance,
+	Position := HOME_PARK_POSITION,
 	Velocity := HOME_PARK_VELOCITY,
 	BufferMode := MC_Aborting);
 
@@ -239,7 +276,11 @@ bProtectiveStop := eState = E_SafetyState.ProtectiveStop;
     <LineIds Name="fb_safety">
       <LineId Id="1" Count="4" />
       <LineId Id="234" Count="0" />
-      <LineId Id="6" Count="170" />
+      <LineId Id="6" Count="86" />
+      <LineId Id="291" Count="0" />
+      <LineId Id="93" Count="58" />
+      <LineId Id="290" Count="0" />
+      <LineId Id="152" Count="24" />
       <LineId Id="179" Count="0" />
     </LineIds>
   </POU>

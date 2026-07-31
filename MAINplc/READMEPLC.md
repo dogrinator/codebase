@@ -1,19 +1,20 @@
-# TwinCAT PLC interface version 5
+# TwinCAT PLC interface version 6
 
 ## Purpose
 
 The TwinCAT program controls independent X and Y axes. MATLAB communicates
 through `MAIN.stMoveCommandX/Y`, `MAIN.stSystemStatusX/Y`, and
 `MAIN.stSettingsX/Y`. `aorty/model/Plc.m` owns application-level validation
-and command construction, while `aorty/model/PlcAds.m` owns the version 5 ADS
+and command construction, while `aorty/model/PlcAds.m` owns the ADS
 symbols and binary transport. The PLC task period is 10 ms.
 
 The PLC owns the complete test sequence:
 
 ```text
-capture sequence start
-  -> optional initial force preload
-  -> optional constant force pre-cycles
+capture fallback test start
+  -> optional initial force pretension
+  -> synchronize both axes and overwrite test start after pretension
+  -> optional synchronized constant force pre-cycles
   -> synchronize and capture actual pre-test final position
   -> single or cyclic main test
   -> post-test action
@@ -31,12 +32,12 @@ and skip post-test motion.
 2. Resolve libraries and build the PLC project.
 3. Confirm the build has no errors.
 4. Commit the regenerated TMC and download the matching PLC program.
-5. Verify MATLAB connects with interface version 5.
+5. Verify the ADS client connects with interface version 6.
 
 Never hand-edit the TMC. A stale TMC exposes the previous ADS layout even when
 the source DUT files are correct.
 
-The checked-in `main program.tmc` is generated from the interface version 5
+The checked-in `main program.tmc` must be generated from the interface version 6
 source contract. Regenerate it in TwinCAT/XAE whenever a DUT or POU changes.
 
 ## Units and limits
@@ -59,18 +60,27 @@ retains structural bounds checks, including the `0..50` Mode 3 cycle count.
 | Field | Meaning |
 | --- | --- |
 | `fMoveDistance`, `fMoveVelocity` | Mode 1 single relative move |
-| `fTargetForce`, `fForceDuration` | Mode 2 single PI-regulated force hold |
+| `fTargetForce`, `fForceDuration` | Mode 2 target and accumulated in-tolerance hold time |
 | `nMode` | `1` relative, `2` force/time, `3` full test |
 | `bExecute` | Execute a configured single-axis operation |
-| `bHalt`, `bPower`, `bReset`, `bHome`, `bStartTar` | Service commands |
+| `bPower` | Maintained motor-enable request |
+| `bHalt`, `bReset`, `bHome`, `bStartTar` | One-shot service commands |
 | `bSavePosition` | Capture PLC-owned current coordinate |
 | `bRestorePosition` | Restore saved coordinate directly while idle |
 | `fRestoreVelocity` | Positive restore speed |
 
 For X-only or Y-only operation, MATLAB writes the selected command before
 pulsing its `bExecute`. For Both, MATLAB writes both commands and uses
-`MAIN.bStartBiaxialTest` instead of either individual Execute field. Service
-booleans are one-shot commands cleared by `MAIN`.
+`MAIN.bStartBiaxialTest` instead of either individual Execute field. `bPower`
+remains asserted while power is requested. `MAIN` clears Home, Reset, Save,
+Restore, and the biaxial-start request. The movement controller consumes Halt
+and Execute; the status-buffer controller clears Tare after completion or
+rejection.
+
+Mode 2 begins timing only after the force is within `fForceTolerance` and the
+axis has completed its controlled halt. Time accumulated inside tolerance is
+paused, not reset, while the controller corrects a force excursion. Completion
+requires the configured total accumulated in-tolerance time.
 
 ### Force pre-conditioning
 
@@ -83,21 +93,36 @@ booleans are one-shot commands cleared by `MAIN`.
 | `fPreloadValue` | Independent one-time initial preload target |
 | `fPreCycleLoadValue` | Repeated pre-cycle load target |
 | `fPreUnloadValue` | Per-cycle unload force target |
-| `bPreUnloadToStart` | Return to captured sequence-start coordinate instead of force unload |
+| `bPreUnloadToStart` | Return to the test-start coordinate captured after pretension instead of force unload |
 | `fPreTestRate` | Positive force-control speed magnitude |
-| `fPreTestHoldTime` | Required accumulated time inside force tolerance |
+| `fPreTestForceTolerance` | Force deadband shared by preload and cyclic pre-conditioning endpoints |
+| `fPreloadHoldTime` | Required accumulated time at the initial preload/pretension endpoint |
+| `fPreCycleHoldTime` | Required accumulated time at cyclic pre-conditioning endpoints |
 
 Initial preload and repeated pre-cycle load are separate values. The old
 `nPreTestMode` and `fPreTestValue` contracts are not used. MATLAB commands use
 `preloadValue` for the initial target and `preCycleLoadValue` for the repeated
 target; the legacy `preLoadValue` key is rejected.
 
+The phase-specific force tolerances and hold times are PLC command fields and
+must be finite and non-negative. The ADS client must use the exact interface
+version 6 field names and layout described here.
+
+`fTestStartPos` is initialized when Mode 3 is accepted. If pretension is
+enabled, both axes complete pretension at a shared barrier and then overwrite
+that reference with their actual positions. Cyclic pre-test unload-to-start
+returns to this post-pretension reference. Without pretension, the accepted
+command position remains the reference.
+
 ### Main Single/Cyclic test
 
 | Field | Meaning |
 | --- | --- |
 | `fTestRate` | Positive main-test speed magnitude |
-| `fForceHoldTime` | Required accumulated time inside force tolerance |
+| `fSingleForceTolerance` | Force deadband for single-test force criteria |
+| `fSingleForceHoldTime` | Required accumulated time at the single-test primary force endpoint |
+| `fCyclicForceTolerance` | Force deadband for cyclic force endpoints |
+| `fCyclicForceHoldTime` | Required accumulated time at cyclic load/unload force endpoints |
 | `nCycleCount` | `0` Single; `1..50` Cyclic |
 | `nLoadMode`, `nUnloadMode` | `1` displacement, `2` force |
 | `fLoadValues[1..50]`, `fUnloadValues[1..50]` | Per-cycle levels |
@@ -119,7 +144,7 @@ not be included in commands.
 | --- | --- | --- |
 | `0` | `stay` | Stay at final position |
 | `1` | `saved` | Return to PLC saved coordinate |
-| `2` | `sequence_start` | Return to coordinate captured before pre-test |
+| `2` | `sequence_start` | Return to the test-start coordinate captured after pretension |
 | `3` | `pretest_final` | Return to actual position after pre-test |
 | `4` | `zero_force` | Release to signed zero force |
 
@@ -149,23 +174,31 @@ Incompatible or unavailable prepared commands report error `2010`.
 The PLC coordinator releases these shared barriers only when both movement
 controllers report the same synchronization point and cycle:
 
+- Pretension completion before either axis enters cyclic pre-test.
+- Every pre-test cyclic load endpoint, matched by pre-cycle number.
+- Every intermediate pre-test cyclic unload endpoint, matched by pre-cycle
+  number; the final unload uses the pre-test-completion barrier.
 - Pre-test completion before either axis enters Test.
-- Every Cyclic load endpoint.
-- Every Cyclic unload endpoint.
+- Every main Cyclic load endpoint.
+- Every main Cyclic unload endpoint.
 - Main-test completion before either axis enters Post-test.
 - Post-test completion before either axis returns to Idle and completes its
   operation counter.
 
-At a force endpoint, the configured hold time completes first; regulation then
+At a force endpoint, the phase-specific configured hold time completes first; regulation then
 continues inside tolerance while the peer catches up. At a position endpoint,
 the powered NC position loop holds the axis at standstill. The final pre-test
 position is captured at the shared release, giving both main-test displacement
 origins the same synchronized transition.
 
-The faster axis remains in phase 1, 2, or 3 until its peer reaches the same
-barrier. Both axes return to phase 0 together. An axis error, safety or
-protective stop, operator halt, or overforce abort is propagated immediately
-to the peer. The coordinator clears only after both axes are safely stopped.
+The faster axis remains in its active system status until its peer reaches the
+same barrier. Both axes return to Idle together. Synchronization point `6`
+marks completion of the optional pretension endpoint. An axis error, safety or
+protective stop, operator halt, or overforce latches the coordinator in its
+Aborting state. Common aborts stop both axes; local overforce relief stops only
+the peer. Abort outputs remain asserted until both controllers report idle, so
+different stopping times cannot leave synchronization active or restart an
+axis that has already stopped.
 
 X-only and Y-only tests never enable the coordinator and continue to use their
 own `bExecute` fields without waiting for an inactive peer.
@@ -174,23 +207,44 @@ own `bExecute` fields without waiting for an inactive peer.
 
 | Field | Meaning |
 | --- | --- |
-| `nInterfaceVersion` | ADS contract version, currently `5` |
-| `nTestPhase` | `0` Idle, `1` Pre-test, `2` Test, `3` Post-test |
+| `nInterfaceVersion` | ADS contract version, currently `6` |
+| `nSystemStatus` | High-level numeric system status; see the table below |
 | `bWorking` | Axis has an active operation |
 | `nOperationCounter` | Increments once after successful operation completion |
 | `bError`, `nErrorCode`, `nAxisErrorID` | PLC and NC error state |
 | `bPowered`, `bStopped`, `bHoming`, `bHomed` | Machine state |
 | `bSavedPositionValid` | PLC has a coordinate for save/restore/post |
-| `fActPosition` | Current coordinate |
+| `fActPosition` | Current absolute NC coordinate |
 | `nBufferHead`, `nSampleCounter` | Circular-buffer metadata |
-| `fTenzoBuffer[1..50]`, `fPosBuffer[1..50]` | Force/position samples |
+| `fTenzoBuffer[1..50]`, `fPosBuffer[1..50]` | Force and absolute NC position samples |
 | `fTenzoTarOffset`, `bTarWorking` | Tare state |
 
 `bHomed` is informational. MATLAB displays it but does not block commands.
 Single-axis completion requires `bWorking=FALSE`, no `bError`, and a changed
 `nOperationCounter`. Biaxial completion waits for both axes to meet that rule.
-MATLAB shows the current phase beside PLC connection and shows both values if
-the axis phases differ.
+`nSystemStatus` uses these stable integer values:
+
+| Value | Meaning |
+| ---: | --- |
+| `0` | Idle |
+| `1` | Error |
+| `2` | Homing |
+| `3` | Halt/stopping, protective stop, or overforce relief |
+| `4` | Taring |
+| `5` | Basic relative or saved-position movement |
+| `6` | Mode 2 constant-force operation |
+| `10` | Pretension |
+| `11` | Cyclic pre-test |
+| `20` | Single main test |
+| `21` | Cyclic main test |
+| `30` | Post-test |
+
+Status priority is Error, Homing, Halt/stopping, Taring, then the active
+controller operation. The existing diagnostic booleans remain available.
+
+The version 6 circular-buffer contract is exactly 50 samples and position
+samples are not zeroed at operation start. ADS clients must use
+`nSystemStatus`, the 50-element buffer layout, and interface version 6.
 
 ## `ST_Settings`
 
@@ -216,6 +270,7 @@ errors.
 
 | Code | Meaning |
 | --- | --- |
+| `2001` | Unsupported movement mode |
 | `2002` | Saved position unavailable |
 | `2003` | Unsupported endpoint mode |
 | `2005` | Unsupported post action |
@@ -228,7 +283,7 @@ errors.
 | `2102` | Overforce relief direction unknown |
 | `2201`, `2203` | Relative or velocity motion-function-block failure |
 
-Safety and homing codes `1001..1014` and the NC `nAxisErrorID` are decoded by
+Safety and homing codes `1001..1015` and the NC `nAxisErrorID` are decoded by
 MATLAB's `PlcErrorCatalog`.
 
 ## General Test JSON schema 1
@@ -269,13 +324,15 @@ lengths from 1 to 50; that length is the cycle count.
 
 `enabled` controls automatic TIFF post-processing, not raw camera capture.
 `samplingPeriod` is the non-negative minimum TIFF interval; `0` exports every
-eligible frame. `includePrePost` selects phases 1-3 instead of phase 2 only.
+eligible frame. In the version 6 mapping, `includePrePost` selects statuses
+`10`, `11`, `20`, `21`, and `30` instead of main-test statuses `20` and `21`
+only.
 Raw camera acquisition remains at the configured hardware FPS. The former
 `period` key, removed force-drop keys, and counts or arrays over 50 are
 rejected without legacy conversion.
 
-The imported definition is authoritative. See
-`../aorty/examples/general_test_example.json`.
+The imported definition is authoritative. The example JSON is maintained in
+the external MATLAB project rather than this PLC checkout.
 
 ## Recording and TIFF compatibility
 
@@ -283,11 +340,12 @@ MATLAB records every acquired camera frame at the configured hardware FPS.
 `camTimestamps.csv` uses:
 
 ```text
-Index,Timestamp,TestPhase
+Index,Timestamp,SystemStatus
 ```
 
-The phase is the latest `nTestPhase` received by the existing 0.5-second PLC
-poll. Automatic and manual post-processing filter eligible phases before
+The status is the latest `nSystemStatus` received by the PLC poll. MATLAB must
+be updated for interface version 6 before recording. Automatic and manual
+post-processing filter eligible states before
 applying their minimum TIFF interval, and restart interval sampling at phase
 transitions. Recordings without a valid phase column are rejected.
 
@@ -306,9 +364,9 @@ Perform initially at conservative speed/force settings with the mechanical
 safety system ready:
 
 1. Build TwinCAT and regenerate symbols; deploy the matching project.
-2. Connect MATLAB; verify interface version 5 on X and Y.
+2. Connect an updated ADS client; verify interface version 6 on X and Y.
 3. Apply settings and confirm relief distance/velocity.
-4. Check powered, busy, stopped, homing, homed, error, saved, and phase
+4. Check powered, busy, stopped, homing, homed, error, saved, and system-status
    indicators.
 5. Save and restore each axis, then Both.
 6. Tare each load cell.

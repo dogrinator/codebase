@@ -135,6 +135,28 @@ Both workflows preserve the integration-sensitive TIFF contract exactly:
 `Description` keys/order/format/values, and the existing base-time and delta
 calculations.
 
+### Required TIFF file layout
+
+The TIFF writer must produce the legacy Basler-compatible layout expected by
+the downstream analysis software:
+
+- Classic little-endian TIFF (`II`) with the IFD starting at byte `8`.
+- Exactly `13` IFD entries and no next IFD.
+- A `1024`-byte header; the uncompressed Mono8 pixel data starts at byte
+  `1024`.
+- The text overlay is stored in the metadata area beginning at byte `256` and
+  must preserve the complete `Description` content and ordering.
+- Pixel data is a single-channel `uint8` image, written row by row without
+  compression.
+- The image dimensions must fit in unsigned 16-bit TIFF width and height
+  fields.
+- The output filename remains `processed_frame_%04d.tiff`.
+
+MATLAB's default `imwrite` TIFF output is not suitable for this contract,
+because it may emit compressed or RGB data and place the IFD at a different
+location. Any future implementation must preserve the byte offsets and
+metadata contract above.
+
 ## General Test JSON
 
 Schema version 1 supports `single` and `cyclic` tests for X, Y, or Both.

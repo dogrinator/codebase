@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <POU Name="fb_BiaxialCoordinator" Id="{9e4a5a85-a7c1-4e41-a7f7-e6a28107e25e}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK fb_BiaxialCoordinator
+VAR_INPUT
+	bStartRequest       : BOOL;
+	bResetRequest       : BOOL;
+	bAxesReady          : BOOL;
+	bCommonAbortRequest : BOOL;
+	bBusyX              : BOOL;
+	bBusyY              : BOOL;
+	bSavedPositionValidX: BOOL;
+	bSavedPositionValidY: BOOL;
+	nSyncPointX         : BYTE;
+	nSyncPointY         : BYTE;
+	nSyncCycleX         : INT;
+	nSyncCycleY         : INT;
+	bPeerAbortRequestX  : BOOL;
+	bPeerAbortRequestY  : BOOL;
+END_VAR
+
+VAR_IN_OUT
+	stCommandX : ST_MoveCommand;
+	stCommandY : ST_MoveCommand;
+END_VAR
+
+VAR_OUTPUT
+	bStartBoth      : BOOL;
+	bSyncActive     : BOOL;
+	bSyncRelease    : BOOL;
+	bAbortX         : BOOL;
+	bAbortY         : BOOL;
+	bStartError     : BOOL;
+	nStartErrorCode : UDINT;
+END_VAR
+
+VAR
+	eState      : E_BiaxialState := E_BiaxialState.Idle;
+END_VAR
+
+VAR_TEMP
+	bStartValid : BOOL;
+END_VAR
+
+VAR CONSTANT
+	ERROR_BIAXIAL_START : UDINT := 2010;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+// Pulse outputs are reset every scan. Abort outputs are deliberately retained
+// while eState is Aborting.
+bStartBoth := FALSE;
+bSyncRelease := FALSE;
+
+IF bResetRequest AND eState = E_BiaxialState.Idle THEN
+	bStartError := FALSE;
+	nStartErrorCode := 0;
+END_IF
+
+CASE eState OF
+	E_BiaxialState.Idle:
+		bSyncActive := FALSE;
+		bAbortX := FALSE;
+		bAbortY := FALSE;
+
+		IF bStartRequest THEN
+			// Preserve the established structural/compatibility checks. MATLAB
+			// remains responsible for experiment-value validation.
+			bStartValid :=
+				bAxesReady AND
+				stCommandX.nMode = 3 AND stCommandY.nMode = 3 AND
+				stCommandX.nCycleCount >= 0 AND
+				stCommandX.nCycleCount <= 50 AND
+				stCommandY.nCycleCount >= 0 AND
+				stCommandY.nCycleCount <= 50 AND
+				stCommandX.nPreCycleCount >= 0 AND
+				stCommandX.nPreCycleCount <= 50 AND
+				stCommandY.nPreCycleCount >= 0 AND
+				stCommandY.nPreCycleCount <= 50 AND
+				stCommandX.nCycleCount = stCommandY.nCycleCount AND
+				stCommandX.bIncludePreTest =
+					stCommandY.bIncludePreTest AND
+				stCommandX.bPreTestOnly = stCommandY.bPreTestOnly AND
+				stCommandX.nPreCycleCount =
+					stCommandY.nPreCycleCount AND
+				stCommandX.bPreloadEnabled =
+					stCommandY.bPreloadEnabled AND
+				stCommandX.bPreUnloadToStart =
+					stCommandY.bPreUnloadToStart AND
+				stCommandX.nPostTestMode =
+					stCommandY.nPostTestMode AND
+				NOT (stCommandX.bPreTestOnly AND
+					NOT stCommandX.bIncludePreTest);
+
+			IF bStartValid THEN
+				IF stCommandX.nPostTestMode < 0 OR
+					stCommandX.nPostTestMode > 4 THEN
+					bStartValid := FALSE;
+				ELSIF stCommandX.nPostTestMode = 1 AND
+					(NOT bSavedPositionValidX OR
+					 NOT bSavedPositionValidY) THEN
+					bStartValid := FALSE;
+				ELSIF NOT stCommandX.bPreTestOnly AND
+					stCommandX.nCycleCount = 0 AND
+					((stCommandX.nStop1Mode < 1) OR
+					 (stCommandX.nStop1Mode > 2) OR
+					 (stCommandY.nStop1Mode < 1) OR
+					 (stCommandY.nStop1Mode > 2) OR
+					 (stCommandX.nStop2Mode < 0) OR
+					 (stCommandX.nStop2Mode > 2) OR
+					 (stCommandY.nStop2Mode < 0) OR
+					 (stCommandY.nStop2Mode > 2)) THEN
+					bStartValid := FALSE;
+				ELSIF NOT stCommandX.bPreTestOnly AND
+					stCommandX.nCycleCount > 0 AND
+					((stCommandX.nLoadMode < 1) OR
+					 (stCommandX.nLoadMode > 2) OR
+					 (stCommandY.nLoadMode < 1) OR
+					 (stCommandY.nLoadMode > 2) OR
+					 (stCommandX.nUnloadMode < 1) OR
+					 (stCommandX.nUnloadMode > 2) OR
+					 (stCommandY.nUnloadMode < 1) OR
+					 (stCommandY.nUnloadMode > 2)) THEN
+					bStartValid := FALSE;
+				END_IF
+			END_IF
+
+			IF bStartValid THEN
+				bStartError := FALSE;
+				nStartErrorCode := 0;
+				bStartBoth := TRUE;
+				bSyncActive := TRUE;
+				eState := E_BiaxialState.Running;
+			ELSE
+				bStartError := TRUE;
+				nStartErrorCode := ERROR_BIAXIAL_START;
+			END_IF
+		END_IF
+
+	E_BiaxialState.Running:
+		bSyncActive := TRUE;
+
+		IF bCommonAbortRequest THEN
+			bAbortX := TRUE;
+			bAbortY := TRUE;
+			eState := E_BiaxialState.Aborting;
+		ELSIF bPeerAbortRequestX OR bPeerAbortRequestY THEN
+			// A local relief request stops only the synchronized peer.
+			bAbortX := bPeerAbortRequestY;
+			bAbortY := bPeerAbortRequestX;
+			eState := E_BiaxialState.Aborting;
+		ELSIF nSyncPointX <> TO_BYTE(E_SyncPoint.None) AND
+			nSyncPointX = nSyncPointY AND
+			nSyncCycleX = nSyncCycleY THEN
+			bSyncRelease := TRUE;
+			IF nSyncPointX =
+				TO_BYTE(E_SyncPoint.PostTestDone) THEN
+				eState := E_BiaxialState.Completing;
+			END_IF
+		END_IF
+
+	E_BiaxialState.Aborting:
+		bSyncActive := TRUE;
+		IF NOT bBusyX AND NOT bBusyY THEN
+			bAbortX := FALSE;
+			bAbortY := FALSE;
+			bSyncActive := FALSE;
+			eState := E_BiaxialState.Idle;
+		END_IF
+
+	E_BiaxialState.Completing:
+		bSyncActive := TRUE;
+		IF NOT bBusyX AND NOT bBusyY THEN
+			bSyncActive := FALSE;
+			eState := E_BiaxialState.Idle;
+		END_IF
+END_CASE
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>

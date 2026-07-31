@@ -12,13 +12,13 @@
 		fForceDuration : LREAL;
 	
 		// Command and service controls
-		nMode       : INT;  // 1=buffered relative moves, 2=force/time, 3=test sequence
+		nMode       : INT;  // 1=relative move, 2=force/time, 3=test sequence
 		bExecute    : BOOL; // Start movement
 		bHalt       : BOOL; // Panic stop
-		bPower      : BOOL; // Enable motorov
+		bPower      : BOOL; // Maintained motor-enable request
 		bReset      : BOOL; // Reset errors
-		bHome       : BOOL; // Do homing seq
-		bStartTar   : BOOL; // Do Tar seq
+		bHome       : BOOL; // Start homing sequence
+		bStartTar   : BOOL; // Start tare sequence
 		bSavePosition : BOOL; // Capture the current axis position while idle
 		bRestorePosition : BOOL; // Return to the saved coordinate while idle
 		fRestoreVelocity : LREAL; // Saved-position return speed [mm/s]
@@ -33,11 +33,16 @@
 		fPreUnloadValue : LREAL; // Signed force unload target [N]
 		bPreUnloadToStart : BOOL; // Return to sequence-start position instead of force unload
 		fPreTestRate     : LREAL; // Positive motor speed magnitude [mm/s]
-		fPreTestHoldTime : LREAL; // In-tolerance hold time for pre-test force endpoints [s]
+		fPreTestForceTolerance : LREAL := 0.1; // Force deadband for pre-test endpoints [N]
+		fPreloadHoldTime : LREAL := 0.0; // Hold time for the initial preload endpoint [s]
+		fPreCycleHoldTime : LREAL := 0.0; // Hold time for cyclic pre-conditioning endpoints [s]
 
-		// Shared test settings
+		// Main test settings
 		fTestRate      : LREAL; // Positive motor speed magnitude [mm/s]
-		fForceHoldTime : LREAL; // stopped dwell after a non-preload force endpoint [s]
+		fSingleForceTolerance : LREAL := 0.1; // Force deadband for single-test endpoints [N]
+		fSingleForceHoldTime : LREAL := 0.0; // Hold time for the single-test primary force endpoint [s]
+		fCyclicForceTolerance : LREAL := 0.1; // Force deadband for cyclic endpoints [N]
+		fCyclicForceHoldTime : LREAL := 0.0; // Hold time for cyclic force endpoints [s]
 
 		// Test selection: >0=cyclic count, 0=single test
 		nCycleCount : INT;

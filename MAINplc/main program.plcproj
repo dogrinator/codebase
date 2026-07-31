@@ -17,7 +17,16 @@
     <LibraryReferences>{13cac7e7-4110-46df-820b-016b8cd20f33}</LibraryReferences>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="DUTs\E_BiaxialState.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="DUTs\E_PlcSystemStatus.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="DUTs\E_SafetyState.TcDUT">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="DUTs\E_SyncPoint.TcDUT">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="DUTs\ST_settings.TcDUT">
@@ -36,7 +45,13 @@
     <Compile Include="PlcTask.TcTTO">
       <SubType>Code</SubType>
     </Compile>
-    <Compile Include="POUs\fb_MovementControler.TcPOU">
+    <Compile Include="POUs\fb_MovementController.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="POUs\fb_AxisStatusPublisher.TcPOU">
+      <SubType>Code</SubType>
+    </Compile>
+    <Compile Include="POUs\fb_BiaxialCoordinator.TcPOU">
       <SubType>Code</SubType>
     </Compile>
     <Compile Include="POUs\fb_safety.TcPOU">

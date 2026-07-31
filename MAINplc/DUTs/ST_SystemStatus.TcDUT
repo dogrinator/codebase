@@ -3,12 +3,12 @@
   <DUT Name="ST_SystemStatus" Id="{1f1ade43-23d7-4c7e-a80f-ab809b514cde}">
     <Declaration><![CDATA[TYPE ST_SystemStatus :
 	STRUCT
-		fPosBuffer   : ARRAY[1..50] OF LREAL; // FIFO position data
-		fTenzoBuffer : ARRAY[1..50] OF LREAL; // FIFO tenzo data
+		fPosBuffer   : ARRAY[1..50] OF LREAL; // Circular absolute-position samples
+		fTenzoBuffer : ARRAY[1..50] OF LREAL; // Circular force samples
 		nBufferHead  : INT := 50;             // Index of latest completely written sample
-		nSampleCounter    : UDINT := 0;       // Monotonic counter for dropped-sample detection
+		nSampleCounter    : UDINT := 0;       // Wrapping sample counter for drop detection
 		nOperationCounter : UDINT := 0;       // Incremented after each completed motion command
-		nInterfaceVersion : UDINT := 5;       // MATLAB/PLC ADS contract version
+		nInterfaceVersion : UDINT := 6;       // MATLAB/PLC ADS contract version
 		fTenzoTarOffset   : LREAL := 0.0;     // Calculated tar offset
 		fActPosition : LREAL := 0.0;          // Absolute NC axis position
 		
@@ -22,7 +22,7 @@
 		bHomed       : BOOL;                   // NC axis reports a valid home reference
 		bStopped     : BOOL;                   // Axis is at standstill
 		bSavedPositionValid : BOOL;            // A return-to-saved reference is available
-		nTestPhase   : BYTE := 0;              // 0 idle, 1 pretest, 2 test, 3 post-test
+		nSystemStatus : INT := 0;              // High-level numeric system status
 	END_STRUCT
 END_TYPE
 ]]></Declaration>

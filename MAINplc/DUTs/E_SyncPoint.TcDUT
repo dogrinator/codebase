@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <DUT Name="E_SyncPoint" Id="{0c8d3a6d-ee82-4635-ad37-e895f2adee1a}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+TYPE E_SyncPoint :
+(
+	None := 0,
+	PreTestDone := 1,
+	LoadDone := 2,
+	UnloadDone := 3,
+	MainDone := 4,
+	PostTestDone := 5,
+	PretensionDone := 6
+);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

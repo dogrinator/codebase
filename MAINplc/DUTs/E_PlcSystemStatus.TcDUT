@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <DUT Name="E_PlcSystemStatus" Id="{79242f3b-aae6-43b4-b3b1-90de0c72bd33}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+TYPE E_PlcSystemStatus :
+(
+	Idle := 0,
+	Error := 1,
+	Homing := 2,
+	Stopping := 3,
+	Taring := 4,
+	BasicMove := 5,
+	ForceMode := 6,
+	Pretension := 10,
+	PreTestCyclic := 11,
+	SingleTest := 20,
+	CyclicTest := 21,
+	PostTest := 30
+);
+END_TYPE
+]]></Declaration>
+  </DUT>
+</TcPlcObject>

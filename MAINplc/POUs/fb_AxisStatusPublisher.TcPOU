@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <POU Name="fb_AxisStatusPublisher" Id="{b4724a7a-5bd4-4216-9c60-1c50ffcb9b40}" SpecialFunc="None">
+    <Declaration><![CDATA[FUNCTION_BLOCK fb_AxisStatusPublisher
+VAR_INPUT
+	fActPosition       : LREAL;
+	bPowerStatus       : BOOL;
+	bHoming            : BOOL;
+	bHomed             : BOOL;
+	bStopped           : BOOL;
+	bProtectiveStop    : BOOL;
+	bSafetyError       : BOOL;
+	nSafetyErrorCode   : UDINT;
+	nSafetyAxisErrorID : UDINT;
+	bMovementBusy      : BOOL;
+	bMovementError     : BOOL;
+	nMovementStatus    : INT;
+	nMovementErrorCode : UDINT;
+	nMovementAxisErrorID : UDINT;
+	nOperationCounter  : UDINT;
+	bSavedPositionValid: BOOL;
+	bStartError        : BOOL;
+	nStartErrorCode    : UDINT;
+END_VAR
+
+VAR_IN_OUT
+	stSystemStatus : ST_SystemStatus;
+END_VAR
+
+VAR CONSTANT
+	INTERFACE_VERSION : UDINT := 6;
+END_VAR
+]]></Declaration>
+    <Implementation>
+      <ST><![CDATA[
+stSystemStatus.fActPosition := fActPosition;
+stSystemStatus.bPowered := bPowerStatus;
+stSystemStatus.bHoming := bHoming;
+stSystemStatus.bHomed := bHomed;
+stSystemStatus.bStopped := bStopped;
+stSystemStatus.bWorking := bMovementBusy OR bHoming OR
+	bProtectiveStop OR stSystemStatus.bTarWorking;
+stSystemStatus.nOperationCounter := nOperationCounter;
+stSystemStatus.nInterfaceVersion := INTERFACE_VERSION;
+stSystemStatus.bSavedPositionValid := bSavedPositionValid;
+stSystemStatus.bError := bMovementError OR bSafetyError OR bStartError;
+
+IF stSystemStatus.bError THEN
+	stSystemStatus.nSystemStatus :=
+		TO_INT(E_PlcSystemStatus.Error);
+ELSIF bHoming THEN
+	stSystemStatus.nSystemStatus :=
+		TO_INT(E_PlcSystemStatus.Homing);
+ELSIF nMovementStatus =
+	TO_INT(E_PlcSystemStatus.Stopping) OR
+	bProtectiveStop THEN
+	stSystemStatus.nSystemStatus :=
+		TO_INT(E_PlcSystemStatus.Stopping);
+ELSIF stSystemStatus.bTarWorking THEN
+	stSystemStatus.nSystemStatus :=
+		TO_INT(E_PlcSystemStatus.Taring);
+ELSE
+	stSystemStatus.nSystemStatus := nMovementStatus;
+END_IF
+
+IF bSafetyError THEN
+	stSystemStatus.nErrorCode := nSafetyErrorCode;
+	stSystemStatus.nAxisErrorID := nSafetyAxisErrorID;
+ELSIF bStartError THEN
+	stSystemStatus.nErrorCode := nStartErrorCode;
+	stSystemStatus.nAxisErrorID := 0;
+ELSE
+	stSystemStatus.nErrorCode := nMovementErrorCode;
+	stSystemStatus.nAxisErrorID := nMovementAxisErrorID;
+END_IF
+]]></ST>
+    </Implementation>
+  </POU>
+</TcPlcObject>
