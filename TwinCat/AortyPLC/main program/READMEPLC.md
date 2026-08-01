@@ -5,7 +5,7 @@
 The TwinCAT program controls independent X and Y axes. MATLAB communicates
 through `MAIN.stMoveCommandX/Y`, `MAIN.stSystemStatusX/Y`, and
 `MAIN.stSettingsX/Y`. `aorty/model/Plc.m` owns application-level validation
-and command construction, while `aorty/model/plc/PlcAds.m` owns the ADS
+and command construction, while `aorty/model/PlcAds.m` owns the ADS
 symbols and binary transport. The PLC task period is 10 ms.
 
 The PLC owns the complete test sequence:
@@ -104,13 +104,9 @@ Initial preload and repeated pre-cycle load are separate values. The old
 `preloadValue` for the initial target and `preCycleLoadValue` for the repeated
 target; the legacy `preLoadValue` key is rejected.
 
-MATLAB writes every phase-specific tolerance and hold time before execution;
-all must be finite and non-negative. Presets and General JSON store independent
-preload and pre-cycle tolerances, while the PLC exposes one
-`fPreTestForceTolerance` per axis. If both phases run on an active axis, MATLAB
-requires the two values to be exactly equal before any ADS write. If only one
-phase runs, MATLAB uses that phase's value. X and Y remain independent, and an
-inactive-axis mismatch is ignored.
+The phase-specific force tolerances and hold times are PLC command fields and
+must be finite and non-negative. The ADS client must use the exact interface
+version 6 field names and layout described here.
 
 `fTestStartPos` is initialized when Mode 3 is accepted. If pretension is
 enabled, both axes complete pretension at a shared barrier and then overwrite
@@ -254,11 +250,6 @@ The version 6 circular-buffer contract is exactly 50 samples and position
 samples are not zeroed at operation start. ADS clients must use
 `nSystemStatus`, the 50-element buffer layout, and interface version 6.
 
-On each connected-to-disconnected transition, MATLAB clears both live graph
-histories, resets both graph clocks and time windows, and discards unread
-acquisition samples. Repeated disconnected polls are harmless, and the first
-samples after reconnection begin a fresh plot timeline.
-
 ## `ST_Settings`
 
 MATLAB writes all fields for both axes:
@@ -313,21 +304,17 @@ Required root fields are:
 
 Every axis-specific scalar is `{"x": number, "y": number}`.
 
-`preTest` requires `enabled`, `cyclic`, `cycles`, `rate`,
-`cyclicForceTolerance`, `holdTime`, `preload` (`enabled`, `value`,
-`forceTolerance`, `holdTime`), `load`, `unload`, and `unloadToStart`.
+`preTest` requires `enabled`, `cyclic`, `cycles`, `rate`, `holdTime`,
+`preload` (`enabled`, `value`), `load`, `unload`, and `unloadToStart`.
 `preload.value` is the initial one-time preload and `load` is the independent
-pre-cycle load target. `preTest.holdTime` is the pre-cycle endpoint hold time.
+pre-cycle load target.
 
 `single` requires `primaryMode`, `primaryValue`, `secondaryMode`,
-`secondaryValue`, `rate`, `forceTolerance`, and `holdTime`.
+`secondaryValue`, `rate`, and `holdTime`.
 
-`cyclic` requires `loadMode`, `unloadMode`, `rate`, `forceTolerance`,
-`holdTime`, `loadValues`, and `unloadValues`. Active-axis arrays must have
-matching lengths from 1 to 50; that length is the cycle count. Every tolerance
-and hold-time value is finite, per-axis, and non-negative. Old schema-1 files
-missing these fields and legacy command-field names are rejected without
-migration.
+`cyclic` requires `loadMode`, `unloadMode`, `rate`, `holdTime`,
+`loadValues`, and `unloadValues`. Active-axis arrays must have matching
+lengths from 1 to 50; that length is the cycle count.
 
 `postTest` uses the stable values in the table above. `camera` requires:
 
@@ -354,35 +341,21 @@ the external MATLAB project rather than this PLC checkout.
 ## Recording and TIFF compatibility
 
 MATLAB records every acquired camera frame at the configured hardware FPS.
-Each test recording contains:
+`camTimestamps.csv` uses:
 
 ```text
-cam.bin
-recording.h5
+Index,Timestamp,SystemStatus
 ```
 
-`cam.bin` remains a headerless sequence of fixed-size Mono8 frames for the
-fastest possible camera path. `recording.h5` schema version 1 stores camera
-index/timestamp/status rows, independent X and Y PLC samples, camera
-dimensions, final recording state, and runtime camera, PLC, command, and
-post-processing settings. PLC samples use elapsed time from the dated local
-recording start, and the X and Y datasets may have different lengths.
-
-The camera status is the latest `nSystemStatus` received by the PLC poll.
-MATLAB uses the first active axis, X for Both, and Idle `0` when no test axis
-is active.
-Automatic and manual post-processing filter eligible states before applying
-their minimum TIFF interval, and restart interval sampling whenever status
-changes or eligible rows have a gap. Only the version-1 HDF5 recording
-format is accepted; legacy CSV recordings require an older application or a
-separate converter. A readable interrupted recording is recovered up to the
-last complete frame/timestamp pair.
+The status is the latest `nSystemStatus` received by the PLC poll. MATLAB must
+be updated for interface version 6 before recording. Automatic and manual
+post-processing filter eligible states before
+applying their minimum TIFF interval, and restart interval sampling at phase
+transitions. Recordings without a valid phase column are rejected.
 
 Automatic processing is available for Single and Cyclic tests and writes
-`processed_frames`. The standalone Pre-test `Record pre-test data` checkbox
-defaults to checked. Checked prompts for a folder and records raw data;
-unchecked starts without a folder prompt or files. Neither mode starts
-automatic TIFF output. Manual processing writes a unique
+`processed_frames`. Standalone Pre-test records raw data without automatic
+TIFF output. Manual processing writes a unique
 `processed_frames_manual_<timestamp>` folder.
 
 The TIFF filename pattern, overlay, complete `Description` header
@@ -414,5 +387,4 @@ safety system ready:
 16. Verify STOP/reset and both end stops.
 17. Carefully provoke conservative overforce protection and confirm relief
     moves opposite loading and skips post-test.
-18. Check raw SystemStatus recording plus automatic and manual
-    post-processed output.
+18. Check raw phase recording plus automatic and manual post-processed output.

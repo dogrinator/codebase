@@ -23,17 +23,20 @@ aorty/
   .config/hwConfig/            PLC/camera settings
   examples/general_test_example.json
   tests/                       Offline MATLAB and ADS-contract tests
-MAINplc/
-  DUTs/                        ADS command, status, and settings structures
-  POUs/                        PLC motion, safety, and synchronization logic
-  READMEPLC.md                 Complete PLC contract and commissioning guide
+TwinCat/AortyPLC/
+  aortyPLC.tsproj              Complete TwinCAT system, NC, and I/O project
+  main program/
+    DUTs/                      ADS command, status, and settings structures
+    POUs/                      PLC motion, safety, and synchronization logic
+    READMEPLC.md               Complete PLC contract and commissioning guide
 ```
 
 ## Requirements
 
 - MATLAB with UI support and .NET interoperability.
 - Beckhoff TwinCAT ADS assembly used by `aorty/model/plc/PlcAds.m`.
-- TwinCAT PLC project in `MAINplc`, built and deployed with generated symbols.
+- TwinCAT project in `TwinCat/AortyPLC`, built and deployed with generated
+  symbols.
 - Camera and Image Acquisition Toolbox only when camera capture is required.
 - Computer Vision Toolbox (the `insertText` function) only when annotated
   TIFF export is required.
@@ -280,9 +283,9 @@ the generated metadata with every required version 6 field and array size.
 
 ## Generated TwinCAT symbols
 
-`MAINplc/main program.tmc` is generated metadata. After changing a DUT, build
-the PLC project in TwinCAT/XAE and commit the regenerated file. Do not edit it
-by hand.
+`TwinCat/AortyPLC/main program/main program.tmc` is generated metadata. After
+changing a DUT, build the PLC project in TwinCAT/XAE and commit the regenerated
+file. Do not edit it by hand.
 
 The checked-in TMC describes the 856-byte version-6 status structure,
 50-element buffers, and `nSystemStatus` at byte offset 850. Because the PLC
@@ -294,4 +297,5 @@ does not need TwinCAT build tools for offline tests.
 
 The UI STOP is a controlled software halt, not a safety-rated emergency stop.
 Use the machine's approved safety system, conservative first-run settings,
-and the commissioning checklist in `MAINplc/READMEPLC.md`.
+and the commissioning checklist in
+`TwinCat/AortyPLC/main program/READMEPLC.md`.

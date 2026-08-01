@@ -2,8 +2,6 @@
 *.asv
 *.autosave
 *.m~
-slprj/
-codegen/
 
 # Local build and scratch directories
 trash/
