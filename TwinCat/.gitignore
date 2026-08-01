@@ -269,6 +269,10 @@ __pycache__/
 **/_Repository/
 **/.TcGit/
 
+# TwinCAT user-specific state
+*.~u
+*.project.~u
+
 *.tsproj.bak
 *.tsproj.b?k
 *.tsproj.orig
