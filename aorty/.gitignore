@@ -7,9 +7,6 @@
 trash/
 bin/
 
-# Offline tests stay available locally but are not published
-/tests/
-
 # Generated test and experiment output
 /testRecording/
 /test-results/
