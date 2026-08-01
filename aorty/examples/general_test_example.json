@@ -7,10 +7,13 @@
     "cyclic": true,
     "cycles": 2,
     "rate": {"x": 1.0, "y": 1.0},
+    "cyclicForceTolerance": {"x": 0.1, "y": 0.1},
     "holdTime": {"x": 0.2, "y": 0.2},
     "preload": {
       "enabled": true,
-      "value": {"x": 0.5, "y": 0.5}
+      "value": {"x": 0.5, "y": 0.5},
+      "forceTolerance": {"x": 0.1, "y": 0.1},
+      "holdTime": {"x": 0.2, "y": 0.2}
     },
     "load": {"x": 5.0, "y": 5.0},
     "unload": {"x": 0.5, "y": 0.5},
@@ -20,6 +23,7 @@
     "loadMode": "force",
     "unloadMode": "displacement",
     "rate": {"x": 1.0, "y": 1.0},
+    "forceTolerance": {"x": 0.1, "y": 0.1},
     "holdTime": {"x": 0.1, "y": 0.1},
     "loadValues": {
       "x": [5.0, 7.5, 10.0],

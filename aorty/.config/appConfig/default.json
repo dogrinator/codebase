@@ -3,26 +3,83 @@
     "axisMode": "Both"
   },
   "pre": {
-    "rate": {"x": 1, "y": 1, "lock": true},
-    "holdTime": {"x": 0, "y": 0, "lock": true},
+    "rate": {
+      "x": 1,
+      "y": 1,
+      "lock": false
+    },
+    "record": true,
     "cyclic": true,
-    "cycles": 4,
-    "load": {"x": 10, "y": 10, "lock": true},
-    "unload": {"x": 0, "y": 0, "lock": true},
+    "cycles": 1,
+    "load": {
+      "x": 0,
+      "y": 0,
+      "lock": false
+    },
+    "unload": {
+      "x": 0,
+      "y": 0,
+      "lock": false
+    },
     "unloadToStart": false,
+    "cyclicForceTolerance": {
+      "x": 0.1,
+      "y": 0.1,
+      "lock": false
+    },
+    "holdTime": {
+      "x": 0,
+      "y": 0,
+      "lock": false
+    },
     "preload": {
-      "enabled": false,
-      "value": {"x": 0, "y": 0, "lock": true}
+      "enabled": true,
+      "value": {
+        "x": 15,
+        "y": 15,
+        "lock": true
+      },
+      "forceTolerance": {
+        "x": 0.1,
+        "y": 0.1,
+        "lock": true
+      },
+      "holdTime": {
+        "x": 10,
+        "y": 10,
+        "lock": true
+      }
     }
   },
   "single": {
     "includePre": false,
-    "primaryMode": "Force",
-    "primary": {"x": 10, "y": 10, "lock": true},
+    "primaryMode": "Displacement",
+    "primary": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
     "secondaryMode": "None",
-    "secondary": {"x": 0, "y": 0, "lock": true},
-    "rate": {"x": 1, "y": 1, "lock": true},
-    "holdTime": {"x": 0, "y": 0, "lock": true},
+    "secondary": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
+    "rate": {
+      "x": 1,
+      "y": 1,
+      "lock": true
+    },
+    "forceTolerance": {
+      "x": 0.1,
+      "y": 0.1,
+      "lock": true
+    },
+    "holdTime": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
     "postProcess": {
       "enabled": false,
       "samplingPeriod": 0.1,
@@ -33,11 +90,32 @@
     "includePre": false,
     "cycles": 1,
     "loadMode": "Displacement",
-    "load": {"x": 1, "y": 1, "lock": true},
+    "load": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
     "unloadMode": "Displacement",
-    "unload": {"x": 0, "y": 0, "lock": true},
-    "rate": {"x": 1, "y": 1, "lock": true},
-    "holdTime": {"x": 0, "y": 0, "lock": true},
+    "unload": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
+    "rate": {
+      "x": 1,
+      "y": 1,
+      "lock": true
+    },
+    "forceTolerance": {
+      "x": 0.1,
+      "y": 0.1,
+      "lock": true
+    },
+    "holdTime": {
+      "x": 0,
+      "y": 0,
+      "lock": true
+    },
     "postProcess": {
       "enabled": false,
       "samplingPeriod": 0.1,

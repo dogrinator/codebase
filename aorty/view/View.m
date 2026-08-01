@@ -8,7 +8,7 @@ classdef View < handle
         plcSwitch
         settingsCamBtn
         postProcessButton
-        testPhaseLabel
+        systemStatusLabel
         testPanel TestPanel
         machinePanel MachinePanel
         settingsWindow SettingsWindow
@@ -131,14 +131,16 @@ classdef View < handle
             app.machinePanel.updateCameraFrame(frame);
         end
 
-        function appendPlotData(app, xValues, yValues, samplePeriod)
-            app.machinePanel.appendPlotData( ...
-                xValues, yValues, samplePeriod);
+        function appendPlotData(app, batch, samplePeriod)
+            app.machinePanel.appendPlotData(batch, samplePeriod);
         end
 
         function updateMachineStatus(app, statuses, connected)
+            if ~connected
+                app.controller.samples.clear();
+            end
             app.machinePanel.updateMachineStatus(statuses, connected);
-            app.updateTestPhaseIndicator(statuses, connected);
+            app.updateSystemStatusIndicator(statuses, connected);
             app.testPanel.setMachineAvailability(connected, statuses);
             if ~isempty(app.settingsWindow) && isvalid(app.settingsWindow)
                 app.settingsWindow.setMachineIdle( ...
@@ -225,10 +227,10 @@ classdef View < handle
             app.plcSwitch = app.connectionSwitch( ...
                 grid, 'PLC', ...
                 @(src, ~) app.controller.plc.connectPLC(app, src));
-            phasePanel = uipanel(grid, 'Title', 'Test status');
-            phaseGrid = uigridlayout(phasePanel, [1, 1]);
-            phaseGrid.Padding = [4, 0, 4, 0];
-            app.testPhaseLabel = uilabel(phaseGrid, ...
+            statusPanel = uipanel(grid, 'Title', 'System status');
+            statusGrid = uigridlayout(statusPanel, [1, 1]);
+            statusGrid.Padding = [4, 0, 4, 0];
+            app.systemStatusLabel = uilabel(statusGrid, ...
                 'Text', 'Disconnected', ...
                 'HorizontalAlignment', 'center', ...
                 'FontWeight', 'bold', ...
@@ -246,47 +248,79 @@ classdef View < handle
             control.Value = 'OFF';
         end
 
-        function updateTestPhaseIndicator(app, statuses, connected)
+        function updateSystemStatusIndicator(app, statuses, connected)
             if ~connected || isempty(statuses)
-                app.testPhaseLabel.Text = 'Disconnected';
-                app.testPhaseLabel.FontColor = [0.35, 0.35, 0.35];
-                app.testPhaseLabel.BackgroundColor = [0.88, 0.88, 0.88];
+                app.systemStatusLabel.Text = 'Disconnected';
+                app.systemStatusLabel.FontColor = [0.35, 0.35, 0.35];
+                app.systemStatusLabel.BackgroundColor = ...
+                    [0.88, 0.88, 0.88];
                 return;
             end
-            phases = [double(statuses.X.testPhase), ...
-                double(statuses.Y.testPhase)];
-            active = phases(phases > 0);
+            values = [double(statuses.X.systemStatus), ...
+                double(statuses.Y.systemStatus)];
+            active = values(values ~= 0);
             if isempty(active)
-                phase = 0;
+                status = 0;
             elseif any(active ~= active(1))
-                app.testPhaseLabel.Text = sprintf( ...
-                    'Phase mismatch X=%u Y=%u', ...
-                    statuses.X.testPhase, statuses.Y.testPhase);
-                app.testPhaseLabel.FontColor = [0.65, 0.1, 0.1];
-                app.testPhaseLabel.BackgroundColor = [1.0, 0.78, 0.72];
+                [xName, ~] = app.systemStatusStyle(values(1));
+                [yName, ~] = app.systemStatusStyle(values(2));
+                app.systemStatusLabel.Text = sprintf( ...
+                    'X %d %s | Y %d %s', ...
+                    values(1), xName, values(2), yName);
+                app.systemStatusLabel.FontColor = [0.65, 0.1, 0.1];
+                app.systemStatusLabel.BackgroundColor = ...
+                    [1.0, 0.78, 0.72];
                 return;
             else
-                phase = active(1);
+                status = active(1);
             end
-            [name, color] = app.testPhaseStyle(phase);
-            app.testPhaseLabel.Text = sprintf('%u - %s', phase, name);
-            app.testPhaseLabel.FontColor = [0.12, 0.12, 0.12];
-            app.testPhaseLabel.BackgroundColor = color;
+            [name, color] = app.systemStatusStyle(status);
+            app.systemStatusLabel.Text = sprintf('%d - %s', status, name);
+            app.systemStatusLabel.FontColor = [0.12, 0.12, 0.12];
+            app.systemStatusLabel.BackgroundColor = color;
         end
 
-        function [name, color] = testPhaseStyle(~, phase)
-            names = {'Idle', 'Pre-test', 'Main test', 'Post-test', ...
-                'Completed', 'Aborted'};
-            colors = {[0.88, 0.88, 0.88], [0.78, 0.88, 1.0], ...
-                [0.72, 0.92, 0.76], [1.0, 0.88, 0.65], ...
-                [0.62, 0.86, 0.64], [1.0, 0.70, 0.66]};
-            index = double(phase) + 1;
-            if index < 1 || index > numel(names) || index ~= fix(index)
-                name = 'Unknown';
-                color = [0.88, 0.88, 0.88];
-            else
-                name = names{index};
-                color = colors{index};
+        function [name, color] = systemStatusStyle(~, status)
+            switch double(status)
+                case 0
+                    name = 'Idle';
+                    color = [0.88, 0.88, 0.88];
+                case 1
+                    name = 'Error';
+                    color = [1.0, 0.70, 0.66];
+                case 2
+                    name = 'Homing';
+                    color = [0.78, 0.88, 1.0];
+                case 3
+                    name = 'Stopping';
+                    color = [1.0, 0.78, 0.62];
+                case 4
+                    name = 'Taring';
+                    color = [0.88, 0.80, 1.0];
+                case 5
+                    name = 'BasicMove';
+                    color = [0.78, 0.88, 1.0];
+                case 6
+                    name = 'ForceMode';
+                    color = [0.74, 0.90, 0.94];
+                case 10
+                    name = 'Pretension';
+                    color = [0.78, 0.88, 1.0];
+                case 11
+                    name = 'PreTestCyclic';
+                    color = [0.78, 0.88, 1.0];
+                case 20
+                    name = 'SingleTest';
+                    color = [0.72, 0.92, 0.76];
+                case 21
+                    name = 'CyclicTest';
+                    color = [0.72, 0.92, 0.76];
+                case 30
+                    name = 'PostTest';
+                    color = [1.0, 0.88, 0.65];
+                otherwise
+                    name = 'Unknown';
+                    color = [0.88, 0.88, 0.88];
             end
         end
 
@@ -320,6 +354,12 @@ classdef View < handle
                     folder, settings.samplingPeriod, ...
                     settings.includePrePost);
                 if isvalid(progress), close(progress); end
+                if isfield(result, 'status') && ...
+                        strcmpi(result.status, 'skipped')
+                    uialert(app.fig, result.message, ...
+                        'Post-processing skipped', 'Icon', 'info');
+                    return;
+                end
                 uialert(app.fig, sprintf( ...
                     'Exported %d TIFF file(s) to:\n%s', ...
                     result.exportedFrameCount, result.outputFolder), ...

@@ -40,9 +40,9 @@
 		// Main test settings
 		fTestRate      : LREAL; // Positive motor speed magnitude [mm/s]
 		fSingleForceTolerance : LREAL := 0.1; // Force deadband for single-test endpoints [N]
-		fSingleForceHoldTime : LREAL := 0.0; // Hold time for the single-test primary force endpoint [s]
+		fSingleForceHoldTime : LREAL := 0.0; // Hold time for the single-test primary endpoint [s]
 		fCyclicForceTolerance : LREAL := 0.1; // Force deadband for cyclic endpoints [N]
-		fCyclicForceHoldTime : LREAL := 0.0; // Hold time for cyclic force endpoints [s]
+		fCyclicForceHoldTime : LREAL := 0.0; // Hold time for cyclic load/unload endpoints [s]
 
 		// Test selection: >0=cyclic count, 0=single test
 		nCycleCount : INT;

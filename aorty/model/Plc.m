@@ -17,6 +17,7 @@ classdef Plc < handle
 
     properties (Dependent, SetAccess = private)
         droppedSamples
+        restartCounts
     end
 
     properties (Access = private)
@@ -339,6 +340,19 @@ classdef Plc < handle
             plc.requireConnection();
             PlcCommandValidator.axisConfig(axisCfg);
             plc.ads.writeAxisConfig(axisCfg, axisName);
+        end
+
+        function value = get.restartCounts(plc)
+            if isempty(plc.ads)
+                value = struct('X', 0, 'Y', 0);
+            else
+                value = plc.ads.restartCounts;
+            end
+        end
+
+        function values = readAxisConfig(plc, axisName)
+            plc.requireConnection();
+            values = plc.ads.readAxisConfig(axisName);
         end
     end
 

@@ -5,6 +5,8 @@ classdef MachinePanel < handle
         cameraAxes
         cameraImage
         modeDrop
+        sampleCountField
+        hoverInspector
         stopButton
         powerButton
         errorButton
@@ -22,8 +24,7 @@ classdef MachinePanel < handle
         yJogOverlay
         fxAxes
         fyAxes
-        fxLine
-        fyLine
+        plotLines = struct()
         posX
         posY
         velX
@@ -33,9 +34,13 @@ classdef MachinePanel < handle
         savePositionButton
         restorePositionButton
         machineStatusLabel
-        forceReferenceLines = struct()
+        forceReferences = struct('X', [], 'Y', [])
         operationActive = false
         plotTime = struct('X', 0, 'Y', 0)
+        sampleCount = 500
+        samplePeriod = 0.01
+        hoveredReference = struct('axis', '', 'index', 0)
+        figureHandle
     end
 
     methods
@@ -67,9 +72,13 @@ classdef MachinePanel < handle
             panel.fitCameraImage();
         end
 
-        function appendPlotData(panel, xValues, yValues, samplePeriod)
-            panel.appendAxisPlot('X', xValues, samplePeriod);
-            panel.appendAxisPlot('Y', yValues, samplePeriod);
+        function appendPlotData(panel, batch, samplePeriod)
+            if isnumeric(samplePeriod) && isscalar(samplePeriod) && ...
+                    isfinite(samplePeriod) && samplePeriod > 0
+                panel.samplePeriod = double(samplePeriod);
+            end
+            panel.appendAxisPlot('X', batch, panel.samplePeriod);
+            panel.appendAxisPlot('Y', batch, panel.samplePeriod);
         end
 
         function mode = getPlotMode(panel)
@@ -88,7 +97,7 @@ classdef MachinePanel < handle
             panel.connected = logical(connected);
             panel.statuses = statuses;
             if wasConnected && ~panel.connected
-                panel.plotTime = struct('X', 0, 'Y', 0);
+                panel.clearPlotData();
             end
             if ~panel.connected || isempty(statuses)
                 panel.machineStatusLabel.Text = 'PLC disconnected';
@@ -132,6 +141,34 @@ classdef MachinePanel < handle
                 panel.machineStatusLabel.FontColor = [0.1, 0.45, 0.15];
             end
             panel.applyState();
+            if wasConnected ~= panel.connected
+                panel.updateForceReferenceLines();
+            end
+        end
+
+        function clearPlotData(panel)
+            panel.plotTime = struct('X', 0, 'Y', 0);
+            for axisItem = {'X', 'Y'}
+                axisName = axisItem{1};
+                if ~isfield(panel.plotLines, axisName)
+                    continue;
+                end
+                for modeItem = {'Force', 'Displacement'}
+                    mode = modeItem{1};
+                    line = panel.plotLines.(axisName).(mode);
+                    if ~isempty(line) && isvalid(line)
+                        clearpoints(line);
+                    end
+                end
+            end
+            window = panel.sampleCount * panel.samplePeriod;
+            if ~isempty(panel.fxAxes) && isvalid(panel.fxAxes)
+                panel.fxAxes.XLim = [0, window];
+            end
+            if ~isempty(panel.fyAxes) && isvalid(panel.fyAxes)
+                panel.fyAxes.XLim = [0, window];
+            end
+            panel.clearForceReferenceLines();
         end
 
         function setOperationActive(panel, active)
@@ -153,6 +190,7 @@ classdef MachinePanel < handle
 
         function refreshAxisMode(panel)
             panel.applyState();
+            panel.updateForceReferenceLines();
         end
 
         function powered = selectedAxesPowered(panel)
@@ -175,35 +213,70 @@ classdef MachinePanel < handle
 
     methods (Access = private)
         function createLivePanel(panel, parent)
-            container = uipanel(parent, 'Title', 'Live loads');
+            container = uipanel(parent, 'Title', 'Live measurements');
             container.Layout.Row = 2;
             container.Layout.Column = 2;
-            layout = uigridlayout(container, [4, 1]);
-            layout.RowHeight = {34, '1x', '1x', 40};
+            layout = uigridlayout(container, [5, 1]);
+            layout.RowHeight = {34, 44, '1x', '1x', 40};
             layout.Padding = [6, 6, 6, 6];
-            panel.modeDrop = uidropdown(layout, ...
+
+            controls = uigridlayout(layout, [1, 3]);
+            controls.ColumnWidth = {'1x', 92, 76};
+            controls.Padding = [0, 0, 0, 0];
+            controls.ColumnSpacing = 5;
+            panel.modeDrop = uidropdown(controls, ...
                 'Items', {'Force', 'Displacement'}, 'Value', 'Force', ...
                 'Tooltip', panel.displacementTooltip(), ...
                 'ValueChangedFcn', @(src, ~) panel.plotModeChanged(src.Value));
-            [panel.fxAxes, panel.fxLine] = panel.createPlot( ...
+            uilabel(controls, 'Text', 'Samples shown', ...
+                'HorizontalAlignment', 'right');
+            panel.sampleCountField = uieditfield(controls, 'numeric', ...
+                'Value', panel.sampleCount, 'Limits', [50, 50000], ...
+                'RoundFractionalValues', 'on', ...
+                'Tooltip', ...
+                ['Rolling samples retained and displayed for both signals. ' ...
+                'At 100 Hz, 500 samples is 5 seconds.'], ...
+                'ValueChangedFcn', ...
+                @(src, ~) panel.sampleCountChanged(src.Value));
+
+            panel.hoverInspector = uilabel(layout, ...
+                'Text', 'No force targets on this tab.', ...
+                'HorizontalAlignment', 'center', ...
+                'VerticalAlignment', 'center', ...
+                'WordWrap', 'on', ...
+                'BackgroundColor', [0.93, 0.94, 0.96], ...
+                'FontColor', [0.25, 0.25, 0.28]);
+
+            [panel.fxAxes, panel.plotLines.X] = panel.createPlot( ...
                 layout, 'X', [0.1, 0.45, 0.8]);
-            [panel.fyAxes, panel.fyLine] = panel.createPlot( ...
+            [panel.fyAxes, panel.plotLines.Y] = panel.createPlot( ...
                 layout, 'Y', [0.85, 0.35, 0.18]);
             panel.liveActionButton = uibutton(layout, ...
                 'Text', 'Tare load cells', ...
                 'ButtonPushedFcn', @(~, ~) panel.callbacks.liveAction());
+            panel.figureHandle = ancestor(parent, 'figure');
+            if ~isempty(panel.figureHandle) && isvalid(panel.figureHandle)
+                panel.figureHandle.WindowButtonMotionFcn = ...
+                    @(~, ~) panel.updateHoverInspector();
+            end
         end
 
-        function [axesHandle, lineHandle] = ...
-                createPlot(~, parent, axisName, color)
+        function [axesHandle, lines] = ...
+                createPlot(panel, parent, axisName, color)
             axesHandle = uiaxes(parent);
             title(axesHandle, [axisName, ' axis']);
             xlabel(axesHandle, 'Time [s]');
             ylabel(axesHandle, 'Force [N]');
             axesHandle.XGrid = 'on';
             axesHandle.YGrid = 'on';
-            lineHandle = animatedline(axesHandle, ...
-                'Color', color, 'LineWidth', 1.3);
+            lines = struct();
+            lines.Force = animatedline(axesHandle, ...
+                'Color', color, 'LineWidth', 1.3, ...
+                'MaximumNumPoints', panel.sampleCount);
+            lines.Displacement = animatedline(axesHandle, ...
+                'Color', color, 'LineWidth', 1.3, ...
+                'MaximumNumPoints', panel.sampleCount, ...
+                'Visible', 'off');
         end
 
         function createMachinePanel(panel, parent)
@@ -395,33 +468,51 @@ classdef MachinePanel < handle
             panel.updateAxisPlotTitle('X', panel.fxAxes, selectedX);
             panel.updateAxisPlotTitle('Y', panel.fyAxes, selectedY);
             panel.updatePowerButton();
-            panel.updateForceReferenceLines();
         end
 
-        function appendAxisPlot(panel, axisName, values, samplePeriod)
-            if isempty(values)
+        function appendAxisPlot(panel, axisName, batch, samplePeriod)
+            forceValues = batch.Force.(axisName);
+            displacementValues = batch.Displacement.(axisName);
+            count = max(numel(forceValues), numel(displacementValues));
+            if count == 0
                 return;
             end
-            count = numel(values);
-            time = panel.plotTime.(axisName) + ...
-                samplePeriod * (1:count);
             if strcmp(axisName, 'X')
-                line = panel.fxLine;
                 axesHandle = panel.fxAxes;
             else
-                line = panel.fyLine;
                 axesHandle = panel.fyAxes;
             end
-            addpoints(line, time, values);
+
+            startTime = panel.plotTime.(axisName);
+            if ~isempty(forceValues)
+                forceTime = startTime + ...
+                    samplePeriod * (1:numel(forceValues));
+                addpoints(panel.plotLines.(axisName).Force, ...
+                    forceTime, forceValues);
+            end
+            if ~isempty(displacementValues)
+                displacementTime = startTime + ...
+                    samplePeriod * (1:numel(displacementValues));
+                addpoints(panel.plotLines.(axisName).Displacement, ...
+                    displacementTime, displacementValues);
+            end
             panel.plotTime.(axisName) = ...
-                panel.plotTime.(axisName) + samplePeriod * count;
-            window = 5;
-            axesHandle.XLim = [ ...
-                max(0, panel.plotTime.(axisName) - window), ...
-                max(window, panel.plotTime.(axisName))];
+                startTime + samplePeriod * count;
+            panel.updateAxisTimeWindow(axisName, axesHandle);
         end
 
         function plotModeChanged(panel, mode)
+            for axisItem = {'X', 'Y'}
+                axisName = axisItem{1};
+                for modeItem = {'Force', 'Displacement'}
+                    signal = modeItem{1};
+                    if strcmp(signal, mode)
+                        panel.plotLines.(axisName).(signal).Visible = 'on';
+                    else
+                        panel.plotLines.(axisName).(signal).Visible = 'off';
+                    end
+                end
+            end
             if strcmp(mode, 'Force')
                 ylabel(panel.fxAxes, 'Force [N]');
                 ylabel(panel.fyAxes, 'Force [N]');
@@ -434,75 +525,257 @@ classdef MachinePanel < handle
             panel.updateForceReferenceLines();
         end
 
+        function sampleCountChanged(panel, value)
+            value = min(50000, max(50, round(double(value))));
+            panel.sampleCount = value;
+            panel.sampleCountField.Value = value;
+            for axisItem = {'X', 'Y'}
+                axisName = axisItem{1};
+                for modeItem = {'Force', 'Displacement'}
+                    signal = modeItem{1};
+                    line = panel.plotLines.(axisName).(signal);
+                    [xValues, yValues] = getpoints(line);
+                    keep = max(1, numel(xValues) - value + 1):numel(xValues);
+                    if isempty(xValues)
+                        keep = [];
+                    end
+                    clearpoints(line);
+                    line.MaximumNumPoints = value;
+                    if ~isempty(keep)
+                        addpoints(line, xValues(keep), yValues(keep));
+                    end
+                end
+                if strcmp(axisName, 'X')
+                    axesHandle = panel.fxAxes;
+                else
+                    axesHandle = panel.fyAxes;
+                end
+                panel.updateAxisTimeWindow(axisName, axesHandle);
+            end
+        end
+
+        function updateAxisTimeWindow(panel, axisName, axesHandle)
+            window = panel.sampleCount * panel.samplePeriod;
+            currentTime = panel.plotTime.(axisName);
+            axesHandle.XLim = [ ...
+                max(0, currentTime - window), ...
+                max(window, currentTime)];
+            panel.updateReferenceBandExtents(axisName, axesHandle.XLim);
+        end
+
         function updateForceReferenceLines(panel)
             panel.clearForceReferenceLines();
-            if ~strcmp(panel.modeDrop.Value, 'Force')
+            if ~panel.connected || ~strcmp(panel.modeDrop.Value, 'Force')
+                panel.updateHoverPrompt();
                 return;
             end
             preview = panel.previewGetter();
             if isempty(preview.testType)
+                panel.updateHoverPrompt();
                 return;
             end
-            panel.forceReferenceLines.X = panel.createReferenceLines( ...
-                panel.fxAxes, preview.X.values, preview.X.labels);
-            panel.forceReferenceLines.Y = panel.createReferenceLines( ...
-                panel.fyAxes, preview.Y.values, preview.Y.labels);
+            panel.forceReferences.X = panel.createReferenceLines( ...
+                panel.fxAxes, preview.X);
+            panel.forceReferences.Y = panel.createReferenceLines( ...
+                panel.fyAxes, preview.Y);
+            panel.updateHoverPrompt();
         end
 
         function clearForceReferenceLines(panel)
+            panel.resetHoveredReference();
             for item = {'X', 'Y'}
                 axis = item{1};
-                if ~isfield(panel.forceReferenceLines, axis)
+                if ~isfield(panel.forceReferences, axis)
                     continue;
                 end
-                handles = panel.forceReferenceLines.(axis);
-                for index = 1:numel(handles)
-                    if isvalid(handles(index))
-                        delete(handles(index));
+                references = panel.forceReferences.(axis);
+                for index = 1:numel(references)
+                    if isfield(references, 'line') && ...
+                            isgraphics(references(index).line)
+                        delete(references(index).line);
+                    end
+                    if isfield(references, 'band') && ...
+                            isgraphics(references(index).band)
+                        delete(references(index).band);
                     end
                 end
             end
-            panel.forceReferenceLines = struct( ...
-                'X', gobjects(0), 'Y', gobjects(0));
+            panel.forceReferences = struct('X', [], 'Y', []);
+            panel.updateHoverPrompt();
         end
 
-        function handles = createReferenceLines( ...
-                panel, axesHandle, values, labels)
-            handles = gobjects(0);
-            valid = isfinite(values);
-            values = values(valid);
-            labels = labels(valid);
-            [values, labels] = panel.combineTargets(values, labels);
-            for index = 1:numel(values)
-                handles(end + 1) = yline(axesHandle, values(index), '--', ...
-                    labels{index}, ...
-                    'Color', panel.referenceLineColor(labels{index}), ...
-                    'LineWidth', 1.2, ...
-                    'LabelHorizontalAlignment', 'left', ...
-                    'LabelVerticalAlignment', 'middle'); %#ok<AGROW>
+        function references = createReferenceLines( ...
+                panel, axesHandle, entries)
+            references = struct( ...
+                'line', {}, 'band', {}, 'entry', {}, ...
+                'baseWidth', {});
+            if isempty(entries)
+                return;
+            end
+            valid = arrayfun(@(entry) ...
+                isfinite(entry.target) && ...
+                isfinite(entry.tolerance) && entry.tolerance >= 0, ...
+                entries);
+            entries = PlotReferenceBuilder.group(entries(valid));
+            xLimits = axesHandle.XLim;
+            for index = 1:numel(entries)
+                entry = entries(index);
+                [color, lineStyle] = ...
+                    panel.referenceStyle(entry.role);
+                lower = entry.target - entry.tolerance;
+                upper = entry.target + entry.tolerance;
+                band = patch(axesHandle, ...
+                    [xLimits(1), xLimits(2), xLimits(2), xLimits(1)], ...
+                    [lower, lower, upper, upper], color, ...
+                    'FaceAlpha', 0.09, 'EdgeColor', 'none', ...
+                    'HitTest', 'off', 'PickableParts', 'none');
+                line = yline(axesHandle, entry.target, lineStyle, ...
+                    'Color', color, 'LineWidth', 1.25, ...
+                    'HitTest', 'off', 'PickableParts', 'none');
+                references(end + 1) = struct( ... %#ok<AGROW>
+                    'line', line, 'band', band, ...
+                    'entry', entry, 'baseWidth', 1.25);
             end
         end
 
-        function [valuesOut, labelsOut] = combineTargets(~, values, labels)
-            valuesOut = [];
-            labelsOut = {};
-            for index = 1:numel(values)
-                match = find(valuesOut == values(index), 1);
-                if isempty(match)
-                    valuesOut(end + 1) = values(index); %#ok<AGROW>
-                    labelsOut{end + 1} = labels{index}; %#ok<AGROW>
-                else
-                    labelsOut{match} = [labelsOut{match}, ...
-                        ' / ', labels{index}]; %#ok<AGROW>
+        function [color, lineStyle] = referenceStyle(~, role)
+            switch char(role)
+                case 'preload'
+                    color = [0.12, 0.42, 0.72];
+                    lineStyle = ':';
+                case {'primary', 'load'}
+                    color = [0.72, 0.18, 0.18];
+                    lineStyle = '--';
+                otherwise
+                    color = [0.45, 0.23, 0.72];
+                    lineStyle = '-.';
+            end
+        end
+
+        function updateReferenceBandExtents(panel, axisName, xLimits)
+            if ~isfield(panel.forceReferences, axisName)
+                return;
+            end
+            references = panel.forceReferences.(axisName);
+            for index = 1:numel(references)
+                band = references(index).band;
+                if isgraphics(band)
+                    band.XData = [ ...
+                        xLimits(1), xLimits(2), ...
+                        xLimits(2), xLimits(1)];
                 end
             end
         end
 
-        function color = referenceLineColor(~, label)
-            if contains(label, 'Primary') || contains(label, 'Load ')
-                color = [0.72, 0.18, 0.18];
+        function updateHoverInspector(panel)
+            if isempty(panel.figureHandle) || ...
+                    ~isvalid(panel.figureHandle) || ...
+                    ~strcmp(panel.modeDrop.Value, 'Force')
+                panel.resetHoveredReference();
+                panel.updateHoverPrompt();
+                return;
+            end
+            figurePoint = panel.figureHandle.CurrentPoint;
+            bestAxis = '';
+            bestIndex = 0;
+            bestDistance = Inf;
+            for axisItem = {'X', 'Y'}
+                axisName = axisItem{1};
+                if strcmp(axisName, 'X')
+                    axesHandle = panel.fxAxes;
+                else
+                    axesHandle = panel.fyAxes;
+                end
+                position = getpixelposition(axesHandle, true);
+                inside = figurePoint(1) >= position(1) && ...
+                    figurePoint(1) <= position(1) + position(3) && ...
+                    figurePoint(2) >= position(2) && ...
+                    figurePoint(2) <= position(2) + position(4);
+                if ~inside || diff(axesHandle.YLim) <= 0
+                    continue;
+                end
+                references = panel.forceReferences.(axisName);
+                currentPoint = axesHandle.CurrentPoint;
+                dataY = currentPoint(1, 2);
+                pixelsPerUnit = position(4) / diff(axesHandle.YLim);
+                for index = 1:numel(references)
+                    distance = abs( ...
+                        references(index).entry.target - dataY) * ...
+                        pixelsPerUnit;
+                    if distance <= 6 && distance < bestDistance
+                        bestAxis = axisName;
+                        bestIndex = index;
+                        bestDistance = distance;
+                    end
+                end
+            end
+            if bestIndex == 0
+                panel.resetHoveredReference();
+                panel.updateHoverPrompt();
+                return;
+            end
+            panel.showHoveredReference(bestAxis, bestIndex);
+        end
+
+        function showHoveredReference(panel, axisName, index)
+            previous = panel.hoveredReference;
+            if previous.index == index && strcmp(previous.axis, axisName)
+                return;
+            end
+            panel.resetHoveredReference();
+            reference = panel.forceReferences.(axisName)(index);
+            if isgraphics(reference.line)
+                reference.line.LineWidth = 2.4;
+            end
+            entry = reference.entry;
+            lower = entry.target - entry.tolerance;
+            upper = entry.target + entry.tolerance;
+            panel.hoverInspector.Text = sprintf( ...
+                ['%s axis | %s | %s: %g N | ', ...
+                'tolerance +/- %g N (%g to %g N)'], ...
+                axisName, entry.phase, entry.label, ...
+                entry.target, entry.tolerance, lower, upper);
+            [color, ~] = panel.referenceStyle(entry.role);
+            panel.hoverInspector.FontColor = color;
+            panel.hoverInspector.FontWeight = 'bold';
+            panel.hoveredReference = struct( ...
+                'axis', axisName, 'index', index);
+        end
+
+        function resetHoveredReference(panel)
+            axisName = panel.hoveredReference.axis;
+            index = panel.hoveredReference.index;
+            if index > 0 && isfield(panel.forceReferences, axisName) && ...
+                    numel(panel.forceReferences.(axisName)) >= index
+                reference = panel.forceReferences.(axisName)(index);
+                if isgraphics(reference.line)
+                    reference.line.LineWidth = reference.baseWidth;
+                end
+            end
+            panel.hoveredReference = struct('axis', '', 'index', 0);
+        end
+
+        function updateHoverPrompt(panel)
+            if isempty(panel.hoverInspector) || ...
+                    ~isvalid(panel.hoverInspector) || ...
+                    panel.hoveredReference.index > 0
+                return;
+            end
+            panel.hoverInspector.FontWeight = 'normal';
+            panel.hoverInspector.FontColor = [0.25, 0.25, 0.28];
+            if ~strcmp(panel.modeDrop.Value, 'Force')
+                panel.hoverInspector.Text = ...
+                    'Force endpoint overlays are hidden in Displacement mode.';
+                return;
+            end
+            count = numel(panel.forceReferences.X) + ...
+                numel(panel.forceReferences.Y);
+            if count == 0
+                panel.hoverInspector.Text = ...
+                    'No force targets on this tab.';
             else
-                color = [0.45, 0.23, 0.72];
+                panel.hoverInspector.Text = ...
+                    'Hover a target line for endpoint and tolerance details.';
             end
         end
 
@@ -601,8 +874,8 @@ classdef MachinePanel < handle
         end
 
         function text = displacementTooltip(~)
-            text = ['Displacement is the current axis position relative ' ...
-                'to the position captured at test start (start = 0 mm).'];
+            text = ['Displacement plots show the absolute NC axis ' ...
+                'position. Endpoint overlays are shown only for Force.'];
         end
     end
 end

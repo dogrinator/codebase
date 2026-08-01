@@ -74,8 +74,10 @@ classdef TestPanel < handle
 
         function applyPreset(panel, config)
             panel.validatePresetRoot(config);
-            panel.definitionTabs.applyConfiguration( ...
-                rmfield(config, 'system'));
+            definition = rmfield(config, 'system');
+            panel.definitionTabs.validateConfiguration(definition);
+            TestCommandBuilder.fromPreset(config, 'pre');
+            panel.definitionTabs.applyConfiguration(definition);
             panel.axisModeDrop.Value = config.system.axisMode;
             panel.axisModeChanged();
         end
@@ -118,6 +120,11 @@ classdef TestPanel < handle
 
         function setRuntimeLocked(panel, locked)
             panel.runtimeLocked = logical(locked);
+            if ~isempty(panel.definitionTabs) && ...
+                    isvalid(panel.definitionTabs)
+                panel.definitionTabs.setRuntimeLocked( ...
+                    panel.runtimeLocked);
+            end
             for index = 1:numel(panel.toolbarEditControls)
                 if isvalid(panel.toolbarEditControls(index))
                     panel.setEnabled(panel.toolbarEditControls(index), ...
@@ -151,6 +158,9 @@ classdef TestPanel < handle
             end
             try
                 panel.settings.appConfig = panel.getConfiguration();
+                panel.validatePresetRoot(panel.settings.appConfig);
+                TestCommandBuilder.fromPreset( ...
+                    panel.settings.appConfig, 'pre');
                 panel.settings.saveAppConfig(filename);
                 panel.presetDrop.Items = panel.nonEmptyItems( ...
                     panel.settings.listAppConfigs());

@@ -11,64 +11,25 @@ classdef PostProcessor
             options = PostProcessor.normalizeOptions(folderPath, options);
             result = struct( ...
                 'outputFolder', options.outputFolder, ...
-                'exportedFrameCount', 0);
+                'exportedFrameCount', 0, ...
+                'status', 'completed', ...
+                'message', '');
 
             disp('--- Starting Offline Synchronization and Post-Processing ---');
 
-            %% 1. Load the Live Tenzo Data Files
-            fileX = fullfile(folderPath, 'live_tenzoX.csv');
-            fileY = fullfile(folderPath, 'live_tenzoY.csv');
-            untaredFileX = fullfile(folderPath, 'live_tenzoX_untared.csv');
-            untaredFileY = fullfile(folderPath, 'live_tenzoY_untared.csv');
-            positionFileX = fullfile(folderPath, 'live_positionX.csv');
-            positionFileY = fullfile(folderPath, 'live_positionY.csv');
-
-            if ~exist(fileX, 'file')
-                error('Could not find live_tenzoX.csv in the specified folder.');
-            end
-            if ~exist(fileY, 'file')
-                error('Could not find live_tenzoY.csv in the specified folder.');
-            end
-
-            dataX = PostProcessor.readMeasurementFile(fileX, 'ValueX');
-            dataY = PostProcessor.readMeasurementFile(fileY, 'ValueY');
-
-            % Load the untared and position measurements for the legacy header.
-            if exist(untaredFileX, 'file') && exist(untaredFileY, 'file')
-                untaredX = PostProcessor.readMeasurementFile( ...
-                    untaredFileX, 'ValueX');
-                untaredY = PostProcessor.readMeasurementFile( ...
-                    untaredFileY, 'ValueY');
-            else
-                % Older recordings have no untared files; retain a safe fallback.
-                untaredX = table(dataX.Timestamp, zeros(height(dataX), 1), ...
-                    'VariableNames', {'Timestamp', 'ValueX'});
-                untaredY = table(dataY.Timestamp, zeros(height(dataY), 1), ...
-                    'VariableNames', {'Timestamp', 'ValueY'});
-            end
-
-            if ~exist(positionFileX, 'file') || ~exist(positionFileY, 'file')
-                error('Could not find recorded position files in the specified folder.');
-            end
-
-            positionX = PostProcessor.readMeasurementFile( ...
-                positionFileX, 'ValueX');
-            positionY = PostProcessor.readMeasurementFile( ...
-                positionFileY, 'ValueY');
-
-            disp('Tenzo logs (X and Y) loaded successfully.');
-
-            %% 2. Load Camera Timestamps
-            camTimestampsFile = fullfile(folderPath, 'camTimestamps.csv');
-            if ~exist(camTimestampsFile, 'file')
-                error('Could not find camTimestamps.csv in the specified folder.');
-            end
-            camTimestamps = PostProcessor.readCameraTimestamps( ...
-                camTimestampsFile);
+            recording = PostProcessor.readRecording(folderPath);
+            dataX = recording.dataX;
+            dataY = recording.dataY;
+            camTimestamps = recording.cameraRows;
 
             numFrames = height(camTimestamps);
             if numFrames == 0
-                warning('No camera frames recorded. Skipping camera post-processing.');
+                result.status = 'skipped';
+                result.message = [ ...
+                    'No camera frames were recorded, so no TIFF files ' ...
+                    'were created.'];
+                warning('PostProcessor:NoCameraFrames', ...
+                    '%s', result.message);
                 return;
             end
             selectedRows = PostProcessor.selectFrameRows( ...
@@ -76,7 +37,14 @@ classdef PostProcessor
                 options.phaseScope);
             if isempty(selectedRows)
                 error('PostProcessor:NoMatchingFrames', ...
-                    'No recorded camera frames match the selected test phases.');
+                    ['No recorded camera frames match the selected ' ...
+                    'system statuses.']);
+            end
+            if exist('insertText', 'file') ~= 2
+                error('PostProcessor:MissingComputerVisionToolbox', ...
+                    ['TIFF annotation requires insertText from Computer ' ...
+                    'Vision Toolbox. Install or license that toolbox ' ...
+                    'before running post-processing.']);
             end
             selectedMask = false(numFrames, 1);
             selectedMask(selectedRows) = true;
@@ -84,39 +52,11 @@ classdef PostProcessor
             fprintf('Found %d frame(s); exporting %d after filtering.\n', ...
                 numFrames, numel(selectedRows));
             baseTime = camTimestamps.Timestamp(1);
+            frameWidth = recording.frameWidth;
+            frameHeight = recording.frameHeight;
 
-            %% 3. Get Camera Frame Dimensions
-            cameraInfoFile = fullfile(folderPath, 'camera_info.txt');
-            if ~exist(cameraInfoFile, 'file')
-                error('Camera frame dimensions not found. Missing camera_info.txt.');
-            end
-
-            fidInfo = fopen(cameraInfoFile, 'r');
-            if fidInfo == -1
-                error(['Could not open camera_info.txt for reading: ', cameraInfoFile]);
-            end
-
-            widthLine = fgetl(fidInfo);
-            heightLine = fgetl(fidInfo);
-            fclose(fidInfo);
-
-            frameWidth = sscanf(widthLine, 'Width: %d');
-            frameHeight = sscanf(heightLine, 'Height: %d');
-
-            if isempty(frameWidth) || isempty(frameHeight) || ...
-                    ~isscalar(frameWidth) || ~isscalar(frameHeight) || ...
-                    ~isfinite(frameWidth) || ~isfinite(frameHeight) || ...
-                    frameWidth < 1 || frameHeight < 1 || ...
-                    frameWidth ~= fix(frameWidth) || ...
-                    frameHeight ~= fix(frameHeight)
-                error('Could not parse camera frame dimensions from camera_info.txt.');
-            end
-
-            %% 4. Open Binary Camera File
+            %% Open Binary Camera File
             camBinFile = fullfile(folderPath, 'cam.bin');
-            if ~exist(camBinFile, 'file')
-                error('Could not find cam.bin in the specified folder.');
-            end
             fid = fopen(camBinFile, 'rb');
             if fid == -1
                 error(['Could not open cam.bin for reading: ', camBinFile]);
@@ -138,16 +78,7 @@ classdef PostProcessor
                 mkdir(processedFramesFolder);
             end
 
-            binaryInfo = dir(camBinFile);
-            requiredBytes = numFrames * bytesPerFrame;
-            if binaryInfo.bytes < requiredBytes
-                error('PostProcessor:IncompleteCameraData', ...
-                    ['cam.bin contains %d bytes, but %d bytes are required ' ...
-                    'for the recorded timestamps.'], ...
-                    binaryInfo.bytes, requiredBytes);
-            end
-
-            %% 5. Loop through frames, synchronize, and process
+            %% Synchronize and process
             outputIndex = 0;
             for i = 1:numFrames
                 % Read raw frame data
@@ -167,18 +98,14 @@ classdef PostProcessor
                 % Get camera timestamp for the current frame
                 cameraTime = camTimestamps.Timestamp(i);
                 %% 6. Match the nearest sensor values
-                matchedX = PostProcessor.nearestValue( ...
-                    dataX, cameraTime, 'ValueX');
-                matchedUntaredX = PostProcessor.nearestValue( ...
-                    untaredX, cameraTime, 'ValueX');
-                matchedPositionX = PostProcessor.nearestValue( ...
-                    positionX, cameraTime, 'ValueX');
-                matchedY = PostProcessor.nearestValue( ...
-                    dataY, cameraTime, 'ValueY');
-                matchedUntaredY = PostProcessor.nearestValue( ...
-                    untaredY, cameraTime, 'ValueY');
-                matchedPositionY = PostProcessor.nearestValue( ...
-                    positionY, cameraTime, 'ValueY');
+                sampleX = PostProcessor.nearestSample(dataX, cameraTime);
+                sampleY = PostProcessor.nearestSample(dataY, cameraTime);
+                matchedX = sampleX.Force;
+                matchedUntaredX = sampleX.UntaredForce;
+                matchedPositionX = sampleX.Position;
+                matchedY = sampleY.Force;
+                matchedUntaredY = sampleY.UntaredForce;
+                matchedPositionY = sampleY.Position;
 
                 %% 7. Process and Save the Image
                 txtOverlay = sprintf('X: %.5f | Y: %.5f', matchedX, matchedY);
@@ -203,7 +130,8 @@ classdef PostProcessor
                 outputFileName = fullfile(processedFramesFolder, ...
                     ['processed_frame_', num2str(outputIndex, '%04d'), ...
                     '.tiff']);
-                imwrite(annotatedFrame, outputFileName, 'Description', newTxtDesc);
+                PostProcessor.writeLegacyTiff( ...
+                    outputFileName, annotatedFrame, newTxtDesc);
 
                 if mod(outputIndex, 50) == 0
                     fprintf('Processed %d / %d frames...\n', ...
@@ -267,92 +195,159 @@ classdef PostProcessor
             options.outputFolder = char(options.outputFolder);
         end
 
-        function camTimestamps = readCameraTimestamps(filename)
-            opts = delimitedTextImportOptions('NumVariables', 3);
-            opts.DataLines = [1, Inf];
-            opts.Delimiter = ',';
-            opts.VariableNames = {'Index', 'Timestamp', 'TestPhase'};
-            opts.VariableTypes = {'double', 'string', 'double'};
-            opts.ExtraColumnsRule = 'ignore';
-            opts.EmptyLineRule = 'read';
-            camTimestamps = readtable(filename, opts);
-            camTimestamps.Timestamp = ...
-                PostProcessor.parseTimestampStrings( ...
-                camTimestamps.Timestamp);
-
-            phases = camTimestamps.TestPhase;
-            if ~isempty(phases) && (any(~isfinite(phases)) || ...
-                    any(phases ~= fix(phases)) || ...
-                    any(phases < 0 | phases > 3))
-                error('PostProcessor:MissingTestPhase', ...
-                    ['camTimestamps.csv must contain a valid TestPhase ' ...
-                    'column with values from 0 to 3.']);
+        function recording = readRecording(folderPath)
+            h5File = fullfile(folderPath, 'recording.h5');
+            camBinFile = fullfile(folderPath, 'cam.bin');
+            if ~isfile(h5File)
+                error('PostProcessor:MissingRecording', ...
+                    ['Could not find recording.h5. Legacy CSV recordings ' ...
+                    'are not supported.']);
             end
-            if any(ismissing(camTimestamps.Timestamp)) || ...
-                    any(diff(camTimestamps.Timestamp) < seconds(0))
-                error('PostProcessor:InvalidCameraTimestamps', ...
-                    'Camera timestamps must be present and chronological.');
+            if ~isfile(camBinFile)
+                error('PostProcessor:MissingCameraBinary', ...
+                    'Could not find cam.bin.');
             end
-        end
-
-        function data = readMeasurementFile(filename, valueName)
-            opts = delimitedTextImportOptions('NumVariables', 2);
-            opts.DataLines = [1, Inf];
-            opts.Delimiter = ',';
-            opts.VariableNames = {'Timestamp', valueName};
-            opts.VariableTypes = {'string', 'double'};
-            opts.ExtraColumnsRule = 'ignore';
-            opts.EmptyLineRule = 'read';
-            data = readtable(filename, opts);
-            data.Timestamp = PostProcessor.parseTimestampStrings( ...
-                data.Timestamp);
-            if isempty(data) || any(ismissing(data.Timestamp)) || ...
-                    any(~isfinite(data.(valueName)))
-                error('PostProcessor:InvalidMeasurementData', ...
-                    '%s must contain valid timestamps and finite values.', ...
-                    filename);
+            try
+                schemaVersion = h5read( ...
+                    h5File, '/metadata/schema_version');
+                startText = strtrim(char(h5readatt( ...
+                    h5File, '/metadata', 'start_time')));
+                status = strtrim(char(h5readatt( ...
+                    h5File, '/metadata', 'status')));
+                frameWidth = double(h5readatt( ...
+                    h5File, '/camera', 'width'));
+                frameHeight = double(h5readatt( ...
+                    h5File, '/camera', 'height'));
+                cameraData = double(h5read( ...
+                    h5File, '/camera/records'));
+                xData = double(h5read(h5File, '/plc/X/samples'));
+                yData = double(h5read(h5File, '/plc/Y/samples'));
+            catch exception
+                error('PostProcessor:InvalidRecording', ...
+                    'recording.h5 is incomplete or invalid: %s', ...
+                    exception.message);
             end
-        end
-
-        function timestamps = parseTimestampStrings(values)
-            values = string(values);
-            if isempty(values)
-                timestamps = NaT(size(values));
-                return;
+            if ~isscalar(schemaVersion) || schemaVersion ~= 1
+                error('PostProcessor:SchemaVersion', ...
+                    'Unsupported recording schema version %s.', ...
+                    mat2str(schemaVersion));
             end
-            hasDate = contains(values, '-');
-            if all(hasDate)
-                timestamps = datetime(values, ...
+            try
+                startTime = datetime(startText, ...
                     'InputFormat', 'yyyy-MM-dd HH:mm:ss.SSS');
-                return;
+            catch exception
+                error('PostProcessor:InvalidStartTime', ...
+                    'Recording start time is invalid: %s', ...
+                    exception.message);
             end
-            if any(hasDate)
-                error('PostProcessor:InvalidTimestamps', ...
-                    'A timestamp file cannot mix dated and time-only values.');
+            if ~strcmpi(status, 'completed')
+                warning('PostProcessor:InterruptedRecording', ...
+                    'Recording status is "%s"; recovering complete data.', ...
+                    status);
             end
 
-            timesOfDay = datetime(values, ...
-                'InputFormat', 'HH:mm:ss.SSS');
-            timestamps = timesOfDay;
-            dayOffset = 0;
-            for index = 2:numel(timestamps)
-                if timesOfDay(index) < timesOfDay(index - 1)
-                    dayOffset = dayOffset + 1;
-                end
-                timestamps(index) = timesOfDay(index) + days(dayOffset);
+            dataX = PostProcessor.sampleTable(xData, startTime, 'X');
+            dataY = PostProcessor.sampleTable(yData, startTime, 'Y');
+            if isempty(dataX) || isempty(dataY)
+                error('PostProcessor:MissingPlcSamples', ...
+                    'The recording must contain usable X and Y PLC samples.');
             end
+
+            if size(cameraData, 1) ~= 3 || ...
+                    any(~isfinite(cameraData), 'all')
+                error('PostProcessor:InvalidCameraRecords', ...
+                    'Camera records must contain three finite rows.');
+            end
+            if ~isempty(cameraData) && ...
+                    (any(diff(cameraData(2, :)) < 0) || ...
+                    any(cameraData(1, :) < 1) || ...
+                    any(cameraData(1, :) ~= fix(cameraData(1, :))))
+                error('PostProcessor:InvalidCameraRecords', ...
+                    ['Camera indexes must be positive integers and ' ...
+                    'timestamps must be chronological.']);
+            end
+            statuses = cameraData(3, :);
+            validStatuses = [0, 1, 2, 3, 4, 5, 6, ...
+                10, 11, 20, 21, 30];
+            if any(statuses ~= fix(statuses)) || ...
+                    any(~ismember(statuses, validStatuses))
+                error('PostProcessor:InvalidSystemStatus', ...
+                    'Camera records contain an unsupported SystemStatus.');
+            end
+
+            metadataCount = size(cameraData, 2);
+            binaryInfo = dir(camBinFile);
+            hasCameraData = metadataCount > 0 || binaryInfo.bytes > 0;
+            if hasCameraData && ...
+                    (~isscalar(frameWidth) || ~isscalar(frameHeight) || ...
+                    ~isfinite(frameWidth) || ~isfinite(frameHeight) || ...
+                    frameWidth < 1 || frameHeight < 1 || ...
+                    frameWidth ~= fix(frameWidth) || ...
+                    frameHeight ~= fix(frameHeight))
+                error('PostProcessor:InvalidCameraDimensions', ...
+                    'Camera dimensions must be positive integers.');
+            end
+            if ~hasCameraData
+                completeBinaryFrames = 0;
+                trailingBytes = 0;
+            else
+                bytesPerFrame = frameWidth * frameHeight;
+                completeBinaryFrames = floor( ...
+                    binaryInfo.bytes / bytesPerFrame);
+                trailingBytes = mod(binaryInfo.bytes, bytesPerFrame);
+            end
+            usableCount = min(metadataCount, completeBinaryFrames);
+            if metadataCount ~= completeBinaryFrames || trailingBytes ~= 0
+                warning('PostProcessor:RecoveredCameraTail', ...
+                    ['Using %d complete frame/timestamp pair(s); ' ...
+                    'recording.h5 has %d camera row(s), cam.bin has %d ' ...
+                    'complete frame(s), and %d trailing byte(s).'], ...
+                    usableCount, metadataCount, completeBinaryFrames, ...
+                    trailingBytes);
+            end
+            cameraData = cameraData(:, 1:usableCount);
+            cameraRows = table( ...
+                cameraData(1, :)', ...
+                startTime + seconds(cameraData(2, :)'), ...
+                cameraData(3, :)', ...
+                'VariableNames', ...
+                    {'Index', 'Timestamp', 'SystemStatus'});
+            recording = struct( ...
+                'dataX', dataX, ...
+                'dataY', dataY, ...
+                'cameraRows', cameraRows, ...
+                'frameWidth', frameWidth, ...
+                'frameHeight', frameHeight);
+        end
+
+        function data = sampleTable(values, startTime, axisName)
+            if size(values, 1) ~= 4 || any(~isfinite(values), 'all')
+                error('PostProcessor:InvalidMeasurementData', ...
+                    '%s-axis samples must contain four finite rows.', ...
+                    axisName);
+            end
+            if ~isempty(values) && any(diff(values(1, :)) < 0)
+                error('PostProcessor:InvalidMeasurementData', ...
+                    '%s-axis timestamps must be chronological.', axisName);
+            end
+            data = table( ...
+                startTime + seconds(values(1, :)'), ...
+                values(2, :)', values(3, :)', values(4, :)', ...
+                'VariableNames', ...
+                    {'Timestamp', 'Force', 'UntaredForce', 'Position'});
         end
 
         function selectedRows = selectFrameRows( ...
                 camTimestamps, samplingPeriod, phaseScope)
-            phases = double(camTimestamps.TestPhase);
+            statuses = double(camTimestamps.SystemStatus);
             switch char(phaseScope)
                 case 'main-test'
-                    eligible = phases == 2;
+                    eligible = ismember(statuses, [20, 21]);
                 case 'complete-test'
-                    eligible = ismember(phases, [1, 2, 3]);
+                    eligible = ismember( ...
+                        statuses, [10, 11, 20, 21, 30]);
                 otherwise
-                    eligible = true(size(phases));
+                    eligible = true(size(statuses));
             end
             candidates = find(eligible);
             if samplingPeriod == 0 || isempty(candidates)
@@ -363,14 +358,15 @@ classdef PostProcessor
             selectedRows = zeros(numel(candidates), 1);
             selectedCount = 0;
             previousCandidate = 0;
-            previousPhase = NaN;
+            previousStatus = NaN;
             lastSelectedTime = NaT;
             for index = 1:numel(candidates)
                 row = candidates(index);
-                phaseChanged = phases(row) ~= previousPhase;
-                phaseGap = previousCandidate > 0 && ...
+                statusChanged = statuses(row) ~= previousStatus;
+                statusGap = previousCandidate > 0 && ...
                     row > previousCandidate + 1;
-                select = selectedCount == 0 || phaseChanged || phaseGap || ...
+                select = selectedCount == 0 || ...
+                    statusChanged || statusGap || ...
                     seconds(camTimestamps.Timestamp(row) - ...
                     lastSelectedTime) >= samplingPeriod;
                 if select
@@ -379,14 +375,102 @@ classdef PostProcessor
                     lastSelectedTime = camTimestamps.Timestamp(row);
                 end
                 previousCandidate = row;
-                previousPhase = phases(row);
+                previousStatus = statuses(row);
             end
             selectedRows = selectedRows(1:selectedCount);
         end
 
-        function value = nearestValue(data, timestamp, valueName)
+        function writeLegacyTiff(filename, frame, description)
+            % Preserve the downstream Basler-compatible single-strip TIFF:
+            % little endian, IFD at byte 8, metadata at byte 256, pixels at
+            % byte 1024, and one uncompressed Mono8 sample per pixel.
+            if ndims(frame) == 3
+                frame = rgb2gray(frame);
+            end
+            frame = uint8(frame);
+            [height, width] = size(frame);
+            if width < 1 || height < 1 || ...
+                    width > intmax('uint16') || ...
+                    height > intmax('uint16')
+                error('PostProcessor:TiffDimensions', ...
+                    ['TIFF dimensions must be positive and fit unsigned ' ...
+                    '16-bit fields.']);
+            end
+            descriptionBytes = unicode2native( ...
+                char(description), 'ISO-8859-1');
+            descriptionBytes(end + 1) = uint8(0);
+            if numel(descriptionBytes) > 768
+                error('PostProcessor:TiffDescription', ...
+                    'TIFF Description exceeds the 768-byte metadata area.');
+            end
+
+            fid = fopen(filename, 'wb', 'ieee-le');
+            if fid == -1
+                error('PostProcessor:TiffOpen', ...
+                    'Could not create %s.', filename);
+            end
+            cleanup = onCleanup(@() fclose(fid));
+            fwrite(fid, uint8('II'), 'uint8');
+            fwrite(fid, uint16(42), 'uint16');
+            fwrite(fid, uint32(8), 'uint32');
+            fwrite(fid, uint16(13), 'uint16');
+
+            PostProcessor.writeTiffEntry(fid, 256, 3, 1, width);
+            PostProcessor.writeTiffEntry(fid, 257, 3, 1, height);
+            PostProcessor.writeTiffEntry(fid, 258, 3, 1, 8);
+            PostProcessor.writeTiffEntry(fid, 259, 3, 1, 1);
+            PostProcessor.writeTiffEntry(fid, 262, 3, 1, 1);
+            PostProcessor.writeTiffEntry(fid, 270, 2, ...
+                numel(descriptionBytes), 256);
+            PostProcessor.writeTiffEntry(fid, 273, 4, 1, 1024);
+            PostProcessor.writeTiffEntry(fid, 277, 3, 1, 1);
+            PostProcessor.writeTiffEntry(fid, 278, 4, 1, height);
+            PostProcessor.writeTiffEntry(fid, 279, 4, 1, width * height);
+            PostProcessor.writeTiffEntry(fid, 282, 5, 1, 180);
+            PostProcessor.writeTiffEntry(fid, 283, 5, 1, 188);
+            PostProcessor.writeTiffEntry(fid, 296, 3, 1, 2);
+            fwrite(fid, uint32(0), 'uint32');
+
+            PostProcessor.padTiffToOffset(fid, 180);
+            fwrite(fid, uint32([72, 1, 72, 1]), 'uint32');
+            PostProcessor.padTiffToOffset(fid, 256);
+            fwrite(fid, descriptionBytes, 'uint8');
+            PostProcessor.padTiffToOffset(fid, 1024);
+            written = fwrite(fid, frame', 'uint8');
+            if written ~= numel(frame)
+                error('PostProcessor:TiffWrite', ...
+                    'Could not write all image pixels to %s.', filename);
+            end
+            clear cleanup;
+        end
+
+        function writeTiffEntry(fid, tag, type, count, value)
+            fwrite(fid, uint16(tag), 'uint16');
+            fwrite(fid, uint16(type), 'uint16');
+            fwrite(fid, uint32(count), 'uint32');
+            if type == 3 && count == 1
+                fwrite(fid, uint16(value), 'uint16');
+                fwrite(fid, uint16(0), 'uint16');
+            else
+                fwrite(fid, uint32(value), 'uint32');
+            end
+        end
+
+        function padTiffToOffset(fid, byteOffset)
+            current = ftell(fid);
+            if current > byteOffset
+                error('PostProcessor:TiffLayout', ...
+                    'TIFF metadata exceeded its fixed byte layout.');
+            end
+            if current < byteOffset
+                fwrite(fid, zeros(1, byteOffset - current, 'uint8'), ...
+                    'uint8');
+            end
+        end
+
+        function value = nearestSample(data, timestamp)
             [~, index] = min(abs(data.Timestamp - timestamp));
-            value = data.(valueName)(index);
+            value = data(index, :);
         end
     end
 end

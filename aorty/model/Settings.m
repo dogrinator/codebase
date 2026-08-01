@@ -41,14 +41,9 @@ classdef Settings < handle
             if ~isempty(settings.camera.cameraSrc) && ...
                     isvalid(settings.camera.cameraSrc) && ...
                     ~isempty(settings.hwConfig)
-                if isfield(settings.hwConfig.camera, 'gainRaw') && ...
-                        ~isprop(settings.camera.cameraSrc, 'GainRaw')
-                    error('Camera:UnsupportedGainSetting', ...
-                        ['This camera does not expose GainRaw. Remove ' ...
-                        'gainRaw from the hardware configuration.']);
-                end
                 settings.camera.cameraSrc.ExposureTimeAbs = settings.hwConfig.camera.exposureTimeAbs;
-                if isfield(settings.hwConfig.camera, 'gainRaw')
+                if isfield(settings.hwConfig.camera, 'gainRaw') && ...
+                        isprop(settings.camera.cameraSrc, 'GainRaw')
                     settings.camera.cameraSrc.GainRaw = ...
                         settings.hwConfig.camera.gainRaw;
                 end
@@ -102,7 +97,7 @@ classdef Settings < handle
         end
 
         function value = readJson(folder, name)
-            filename = fullfile(folder, char(string(name) + ".json"));
+            filename = Settings.configFilename(folder, name);
             try
                 value = jsondecode(fileread(filename));
             catch exception
@@ -112,19 +107,34 @@ classdef Settings < handle
         end
 
         function writeJson(folder, name, value)
-            filename = fullfile(folder, char(string(name) + ".json"));
-            fid = fopen(filename, 'w');
+            filename = Settings.configFilename(folder, name);
+            if ~isfolder(folder)
+                error('Settings:WriteFailed', ...
+                    'Configuration folder does not exist: %s', folder);
+            end
+            temporary = tempname(folder);
+            temporaryCleanup = onCleanup( ...
+                @() Settings.deleteIfPresent(temporary));
+            fid = fopen(temporary, 'wb');
             if fid == -1
                 error('Settings:WriteFailed', ...
-                    'Could not open %s for writing.', filename);
+                    'Could not create a temporary configuration file.');
             end
-            cleanup = onCleanup(@() fclose(fid));
-            written = fprintf(fid, '%s', ...
-                jsonencode(value, PrettyPrint=true));
-            if written < 0
+            closeCleanup = onCleanup(@() fclose(fid));
+            payload = unicode2native( ...
+                jsonencode(value, PrettyPrint=true), 'UTF-8');
+            written = fwrite(fid, payload, 'uint8');
+            if written ~= numel(payload)
                 error('Settings:WriteFailed', ...
                     'Could not write %s.', filename);
             end
+            clear closeCleanup;
+            [moved, message] = movefile(temporary, filename, 'f');
+            if ~moved
+                error('Settings:WriteFailed', ...
+                    'Could not replace %s: %s', filename, message);
+            end
+            clear temporaryCleanup;
         end
 
         function validateHardwareConfig(config)
@@ -135,20 +145,63 @@ classdef Settings < handle
                 'hardware configuration.plc');
             PlcCommandValidator.axisConfig(config.plc.xAxis);
             PlcCommandValidator.axisConfig(config.plc.yAxis);
-            PlcCommandValidator.requireExactFields(config.camera, ...
-                {'exposureTimeAbs', 'gainRaw', ...
-                    'acquisitionFrameRateAbs'}, ...
-                'hardware configuration.camera');
-            cameraValues = [config.camera.exposureTimeAbs, ...
-                config.camera.gainRaw, ...
-                config.camera.acquisitionFrameRateAbs];
-            if any(~isfinite(cameraValues)) || ...
-                    config.camera.exposureTimeAbs <= 0 || ...
-                    config.camera.gainRaw < 0 || ...
-                    config.camera.acquisitionFrameRateAbs <= 0
+            if ~isstruct(config.camera) || ~isscalar(config.camera)
                 error('Settings:InvalidHardwareConfig', ...
-                    ['Camera exposure and frame rate must be positive; ' ...
-                    'gainRaw must be non-negative.']);
+                    'hardware configuration.camera must be one object.');
+            end
+            required = {'exposureTimeAbs', ...
+                'acquisitionFrameRateAbs'};
+            optional = {'gainRaw'};
+            names = fieldnames(config.camera);
+            missing = setdiff(required, names, 'stable');
+            unknown = setdiff(names, [required, optional], 'stable');
+            if ~isempty(missing)
+                error('Settings:InvalidHardwareConfig', ...
+                    'Camera configuration is missing %s.', missing{1});
+            end
+            if ~isempty(unknown)
+                error('Settings:InvalidHardwareConfig', ...
+                    'Camera configuration contains unsupported field %s.', ...
+                    unknown{1});
+            end
+            exposure = config.camera.exposureTimeAbs;
+            frameRate = config.camera.acquisitionFrameRateAbs;
+            if ~isnumeric(exposure) || ~isscalar(exposure) || ...
+                    ~isfinite(exposure) || exposure <= 0 || ...
+                    ~isnumeric(frameRate) || ~isscalar(frameRate) || ...
+                    ~isfinite(frameRate) || frameRate <= 0
+                error('Settings:InvalidHardwareConfig', ...
+                    'Camera exposure and frame rate must be positive.');
+            end
+            if isfield(config.camera, 'gainRaw') && ...
+                    (~isnumeric(config.camera.gainRaw) || ...
+                    ~isscalar(config.camera.gainRaw) || ...
+                    ~isfinite(config.camera.gainRaw) || ...
+                    config.camera.gainRaw < 0)
+                error('Settings:InvalidHardwareConfig', ...
+                    'gainRaw must be a finite non-negative number.');
+            end
+        end
+
+        function filename = configFilename(folder, name)
+            if ~(ischar(name) || (isstring(name) && isscalar(name)))
+                error('Settings:InvalidName', ...
+                    'Configuration name must be one filename.');
+            end
+            name = char(name);
+            if isempty(name) || ismember(name, {'.', '..'}) || ...
+                    isempty(regexp(name, ...
+                    '^[A-Za-z0-9][A-Za-z0-9 _.-]*$', 'once'))
+                error('Settings:InvalidName', ...
+                    ['Configuration name may contain letters, numbers, ' ...
+                    'spaces, periods, underscores, and hyphens only.']);
+            end
+            filename = fullfile(folder, [name, '.json']);
+        end
+
+        function deleteIfPresent(filename)
+            if isfile(filename)
+                delete(filename);
             end
         end
     end

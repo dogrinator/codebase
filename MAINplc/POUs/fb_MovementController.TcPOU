@@ -80,6 +80,7 @@ VAR
 	fEndpointStartError     : LREAL;
 	fEndpointCurrentError   : LREAL;
 	fForceHoldElapsed       : LREAL;
+	fPositionHoldElapsed    : LREAL;
 	nLoadDirection          : INT;
 	nLastMotionDirection    : INT;
 	nReliefSourceDirection  : INT;
@@ -145,7 +146,8 @@ VAR CONSTANT
 	STATE_POSITION_PREPARE : INT := 300;
 	STATE_POSITION_EXECUTE : INT := 301;
 	STATE_POSITION_WAIT : INT := 302;
-	STATE_POSITION_BARRIER : INT := 303;
+	STATE_POSITION_HOLD : INT := 303;
+	STATE_POSITION_BARRIER : INT := 304;
 	STATE_FORCE_PREPARE : INT := 310;
 	STATE_FORCE_EXECUTE : INT := 311;
 	STATE_FORCE_WAIT_TOLERANCE : INT := 312;
@@ -379,6 +381,7 @@ IF rtRestorePosition.Q AND nSeqState = STATE_IDLE AND
 		PreparePositionEndpoint(
 			fTargetPosition := fSavedPosition,
 			fRate := stMoveCommand.fRestoreVelocity,
+			fHoldTime := 0.0,
 			nTargetSyncPoint := SYNC_NONE,
 			nTargetSyncCycle := 0,
 			nNextState := STATE_RESTORE_COMPLETE);
@@ -470,6 +473,7 @@ fbMC_MoveRelative1.Execute := FALSE;
 bExecuteVelMove := FALSE;
 bSinglePrimaryActive := FALSE;
 bForceEndpointReady := FALSE;
+fPositionHoldElapsed := 0.0;
 nSyncPoint := SYNC_NONE;
 nSyncCycle := 0;
 ]]></ST>
@@ -751,8 +755,12 @@ END_CASE]]></ST>
 CASE nSeqState OF
 	STATE_POSITION_PREPARE:
 		fbMC_MoveRelative1.Execute := FALSE;
+		fPositionHoldElapsed := 0.0;
 		IF ABS(fTargetDist1) <= POSITION_EPSILON THEN
-			IF bSyncEnabled AND nEndpointSyncPoint <> SYNC_NONE THEN
+			// No movement is needed, but a configured Mode 3 hold still applies.
+			IF fEndpointHoldTime > 0.0 THEN
+				nSeqState := STATE_POSITION_HOLD;
+			ELSIF bSyncEnabled AND nEndpointSyncPoint <> SYNC_NONE THEN
 				nSyncPoint := nEndpointSyncPoint;
 				nSyncCycle := nEndpointSyncCycle;
 				nSeqState := STATE_POSITION_BARRIER;
@@ -775,6 +783,20 @@ CASE nSeqState OF
 	STATE_POSITION_WAIT:
 		IF fbMC_MoveRelative1.Done THEN
 			fbMC_MoveRelative1.Execute := FALSE;
+			IF fEndpointHoldTime > 0.0 THEN
+				nSeqState := STATE_POSITION_HOLD;
+			ELSIF bSyncEnabled AND nEndpointSyncPoint <> SYNC_NONE THEN
+				nSyncPoint := nEndpointSyncPoint;
+				nSyncCycle := nEndpointSyncCycle;
+				nSeqState := STATE_POSITION_BARRIER;
+			ELSE
+				nSeqState := nAfterEndpointState;
+			END_IF
+		END_IF
+
+	STATE_POSITION_HOLD: // Powered NC loop holds for the endpoint duration.
+		fPositionHoldElapsed := fPositionHoldElapsed + CYCLE_TIME;
+		IF fPositionHoldElapsed >= fEndpointHoldTime THEN
 			IF bSyncEnabled AND nEndpointSyncPoint <> SYNC_NONE THEN
 				nSyncPoint := nEndpointSyncPoint;
 				nSyncCycle := nEndpointSyncCycle;
@@ -827,6 +849,7 @@ nSeqState := STATE_FORCE_PREPARE;
 VAR_INPUT
 	fTargetPosition : LREAL;
 	fRate           : LREAL;
+	fHoldTime       : LREAL;
 	nTargetSyncPoint: BYTE;
 	nTargetSyncCycle: INT;
 	nNextState      : INT;
@@ -837,6 +860,7 @@ END_VAR
 fEndpointTargetPosition := fTargetPosition;
 fTargetDist1 := fEndpointTargetPosition - fActPosition;
 fTargetVel1 := ABS(fRate);
+fEndpointHoldTime := fHoldTime;
 nEndpointSyncPoint := nTargetSyncPoint;
 nEndpointSyncCycle := nTargetSyncCycle;
 nAfterEndpointState := nNextState;
@@ -1021,6 +1045,7 @@ CASE nSeqState OF
 			fEndpointTargetPosition := fTestStartPos;
 			fTargetDist1 := fEndpointTargetPosition - fActPosition;
 			fTargetVel1 := ABS(stMoveCommand.fPreTestRate);
+			fEndpointHoldTime := stMoveCommand.fPreCycleHoldTime;
 			IF nCurrentPreCycle = stMoveCommand.nPreCycleCount THEN
 				nEndpointSyncPoint := SYNC_PRETEST_DONE;
 				nAfterEndpointState := STATE_CAPTURE_PRETEST_FINAL;
@@ -1105,6 +1130,7 @@ CASE nSeqState OF
 				stMoveCommand.fLoadValues[nCurrentCycle];
 			fTargetDist1 := fEndpointTargetPosition - fActPosition;
 			fTargetVel1 := ABS(stMoveCommand.fTestRate);
+			fEndpointHoldTime := stMoveCommand.fCyclicForceHoldTime;
 			IF fTargetDist1 > POSITION_EPSILON THEN
 				nLoadDirection := 1;
 			ELSIF fTargetDist1 < -POSITION_EPSILON THEN
@@ -1137,6 +1163,7 @@ CASE nSeqState OF
 				stMoveCommand.fUnloadValues[nCurrentCycle];
 			fTargetDist1 := fEndpointTargetPosition - fActPosition;
 			fTargetVel1 := ABS(stMoveCommand.fTestRate);
+			fEndpointHoldTime := stMoveCommand.fCyclicForceHoldTime;
 			IF nCurrentCycle = stMoveCommand.nCycleCount THEN
 				nEndpointSyncPoint := SYNC_MAIN_DONE;
 				nAfterEndpointState := STATE_CYCLIC_COMPLETE;
@@ -1194,6 +1221,7 @@ CASE nSeqState OF
 			fEndpointTargetPosition := fPreTestFinalPos + stMoveCommand.fStop1Value;
 			fTargetDist1 := fEndpointTargetPosition - fActPosition;
 			fTargetVel1 := ABS(stMoveCommand.fTestRate);
+			fEndpointHoldTime := stMoveCommand.fSingleForceHoldTime;
 			IF fTargetDist1 > POSITION_EPSILON THEN
 				nLoadDirection := 1;
 			ELSIF fTargetDist1 < -POSITION_EPSILON THEN
@@ -1254,6 +1282,7 @@ CASE nSeqState OF
 					PreparePositionEndpoint(
 						fTargetPosition := fSavedPosition,
 						fRate := stMoveCommand.fTestRate,
+						fHoldTime := 0.0,
 						nTargetSyncPoint := SYNC_POSTTEST_DONE,
 						nTargetSyncCycle := 0,
 						nNextState := STATE_OPERATION_COMPLETE);
@@ -1269,6 +1298,7 @@ CASE nSeqState OF
 				PreparePositionEndpoint(
 					fTargetPosition := fTestStartPos,
 					fRate := stMoveCommand.fTestRate,
+					fHoldTime := 0.0,
 					nTargetSyncPoint := SYNC_POSTTEST_DONE,
 					nTargetSyncCycle := 0,
 					nNextState := STATE_OPERATION_COMPLETE);
@@ -1277,6 +1307,7 @@ CASE nSeqState OF
 				PreparePositionEndpoint(
 					fTargetPosition := fPreTestFinalPos,
 					fRate := stMoveCommand.fTestRate,
+					fHoldTime := 0.0,
 					nTargetSyncPoint := SYNC_POSTTEST_DONE,
 					nTargetSyncCycle := 0,
 					nNextState := STATE_OPERATION_COMPLETE);

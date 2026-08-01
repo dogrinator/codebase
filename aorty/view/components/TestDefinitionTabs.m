@@ -18,6 +18,9 @@ classdef TestDefinitionTabs < handle
         generalRun
         generalSummary
         generalDefinition = []
+        runtimeLocked = false
+        lockedControls = gobjects(0)
+        lockedEnableStates = {}
     end
 
     methods
@@ -50,6 +53,18 @@ classdef TestDefinitionTabs < handle
         end
 
         function applyConfiguration(view, config)
+            view.validateConfiguration(config);
+            sections = {'pre', 'single', 'cyclic', 'general'};
+            for index = 1:numel(sections)
+                name = sections{index};
+                view.applyValues(view.controls.(name), config.(name));
+            end
+            view.selectPostAction(config.post.afterTest);
+            view.refreshDependencies();
+            view.notifyPreviewChanged();
+        end
+
+        function validateConfiguration(view, config)
             sections = {'pre', 'single', 'cyclic', 'general'};
             TestDefinitionTabs.requireExactFields( ...
                 config, [sections, {'post'}], 'preset');
@@ -65,13 +80,6 @@ classdef TestDefinitionTabs < handle
                 error('TestPreset:InvalidValue', ...
                     'preset.post.afterTest is not a selectable action.');
             end
-            for index = 1:numel(sections)
-                name = sections{index};
-                view.applyValues(view.controls.(name), config.(name));
-            end
-            view.selectPostAction(config.post.afterTest);
-            view.refreshDependencies();
-            view.notifyPreviewChanged();
         end
 
         function definition = getGeneralDefinition(view)
@@ -83,57 +91,17 @@ classdef TestDefinitionTabs < handle
         end
 
         function preview = getForceReferencePreview(view)
-            preview = struct( ...
-                'testType', '', ...
-                'X', struct('values', [], 'labels', {{}}), ...
-                'Y', struct('values', [], 'labels', {{}}));
             if isempty(view.tabs) || ~isvalid(view.tabs) || ...
                     isempty(view.tabs.SelectedTab)
+                preview = PlotReferenceBuilder.build( ...
+                    '', view.getConfiguration(), ...
+                    view.axisModeGetter());
                 return;
             end
             selectedTab = char(view.tabs.SelectedTab.Title);
-            if ~ismember(selectedTab, {'Single test', 'Cyclic test'})
-                return;
-            end
-            config = view.getConfiguration();
-            axes = TestCommandBuilder.axesForMode(view.axisModeGetter());
-            if strcmp(selectedTab, 'Single test')
-                preview.testType = 'single';
-                for index = 1:numel(axes)
-                    axis = axes{index};
-                    field = lower(axis);
-                    if strcmp(config.single.primaryMode, 'Force')
-                        preview.(axis).values(end + 1) = ...
-                            config.single.primary.(field);
-                        preview.(axis).labels{end + 1} = ...
-                            'Primary force target';
-                    end
-                    if strcmp(config.single.secondaryMode, 'Force')
-                        preview.(axis).values(end + 1) = ...
-                            config.single.secondary.(field);
-                        preview.(axis).labels{end + 1} = ...
-                            'Secondary force target';
-                    end
-                end
-            else
-                preview.testType = 'cyclic';
-                for index = 1:numel(axes)
-                    axis = axes{index};
-                    field = lower(axis);
-                    if strcmp(config.cyclic.loadMode, 'Force')
-                        preview.(axis).values(end + 1) = ...
-                            config.cyclic.load.(field);
-                        preview.(axis).labels{end + 1} = ...
-                            'Load force target';
-                    end
-                    if strcmp(config.cyclic.unloadMode, 'Force')
-                        preview.(axis).values(end + 1) = ...
-                            config.cyclic.unload.(field);
-                        preview.(axis).labels{end + 1} = ...
-                            'Unload force target';
-                    end
-                end
-            end
+            preview = PlotReferenceBuilder.build( ...
+                selectedTab, view.getConfiguration(), ...
+                view.axisModeGetter());
         end
 
         function setAvailability(view, ordinaryAllowed, generalAllowed, locked)
@@ -150,6 +118,37 @@ classdef TestDefinitionTabs < handle
                 ~locked);
         end
 
+        function setRuntimeLocked(view, locked)
+            locked = logical(locked);
+            if locked == view.runtimeLocked
+                view.enforceRuntimeLock();
+                return;
+            end
+            view.runtimeLocked = locked;
+            if locked
+                view.lockedControls = findall( ...
+                    view.tabs, '-property', 'Enable');
+                view.lockedEnableStates = cell( ...
+                    size(view.lockedControls));
+                for index = 1:numel(view.lockedControls)
+                    control = view.lockedControls(index);
+                    view.lockedEnableStates{index} = control.Enable;
+                    control.Enable = 'off';
+                end
+            else
+                for index = 1:numel(view.lockedControls)
+                    control = view.lockedControls(index);
+                    if isvalid(control)
+                        control.Enable = ...
+                            view.lockedEnableStates{index};
+                    end
+                end
+                view.lockedControls = gobjects(0);
+                view.lockedEnableStates = {};
+                view.refreshDependencies();
+            end
+        end
+
         function refreshAxisMode(view)
             view.refreshDependencies();
             view.notifyPreviewChanged();
@@ -158,14 +157,17 @@ classdef TestDefinitionTabs < handle
 
     methods (Access = private)
         function createPreTestTab(view, tab)
-            grid = TestControlFactory.formGrid(tab, 9);
+            grid = TestControlFactory.formGrid(tab, 13);
+            grid.Scrollable = 'on';
             changed = @() view.notifyPreviewChanged();
             view.controls.pre.rate = TestControlFactory.axisRow( ...
                 grid, 2, 'Movement speed (> 0)', 1, '[mm/s]', changed);
             view.configurePositiveAxisRow(view.controls.pre.rate);
-            view.controls.pre.holdTime = TestControlFactory.axisRow( ...
-                grid, 3, 'Time after force reached', 0, '[s]', changed);
-            view.configureNonnegativeAxisRow(view.controls.pre.holdTime);
+            view.controls.pre.record = TestControlFactory.checkRow( ...
+                grid, 3, 'Record pre-test data', true);
+            view.controls.pre.record.Tooltip = ...
+                ['When checked, choose an output folder and record the ' ...
+                'standalone pre-test.'];
             view.controls.pre.cyclic = TestControlFactory.checkRow( ...
                 grid, 4, 'Cyclic pre-conditioning', false);
             view.controls.pre.cycles = TestControlFactory.cycleRow( ...
@@ -178,21 +180,39 @@ classdef TestDefinitionTabs < handle
                 grid, 7, 'Unload force', 0, '[N]', changed);
             view.controls.pre.unloadToStart = TestControlFactory.checkRow( ...
                 grid, 8, 'Unload to captured start position', false);
+            view.controls.pre.cyclicForceTolerance = ...
+                TestControlFactory.axisRow(grid, 9, ...
+                'Pre-cycle force tolerance', 0.1, '[N]', changed);
+            view.configureNonnegativeAxisRow( ...
+                view.controls.pre.cyclicForceTolerance);
+            view.controls.pre.holdTime = TestControlFactory.axisRow( ...
+                grid, 10, 'Pre-cycle endpoint hold time', 0, '[s]', changed);
+            view.configureNonnegativeAxisRow(view.controls.pre.holdTime);
             view.controls.pre.preload = ...
-                TestControlFactory.optionalAxisRow(grid, 9, ...
+                TestControlFactory.optionalAxisRow(grid, 11, ...
                 'Initial preload force', 0, '[N]', ...
-                @() view.refreshDependencies());
+                @() view.refreshAndNotify());
+            view.controls.pre.preload.forceTolerance = ...
+                TestControlFactory.axisRow(grid, 12, ...
+                'Initial preload force tolerance', 0.1, '[N]', changed);
+            view.configureNonnegativeAxisRow( ...
+                view.controls.pre.preload.forceTolerance);
+            view.controls.pre.preload.holdTime = ...
+                TestControlFactory.axisRow(grid, 13, ...
+                'Initial preload force hold time', 0, '[s]', changed);
+            view.configureNonnegativeAxisRow( ...
+                view.controls.pre.preload.holdTime);
             view.preRun = TestControlFactory.runButton( ...
-                grid, 10, 'RUN PRE-TEST', view.callbacks.runPre);
+                grid, 14, 'RUN PRE-TEST', view.callbacks.runPre);
             view.runButtons(end + 1) = view.preRun;
             view.controls.pre.cyclic.ValueChangedFcn = ...
-                @(~, ~) view.refreshDependencies();
+                @(~, ~) view.refreshAndNotify();
             view.controls.pre.unloadToStart.ValueChangedFcn = ...
                 @(~, ~) view.refreshDependencies();
         end
 
         function createSingleTestTab(view, tab)
-            grid = TestControlFactory.formGrid(tab, 10);
+            grid = TestControlFactory.formGrid(tab, 11);
             changed = @() view.notifyPreviewChanged();
             view.controls.single.includePre = TestControlFactory.checkRow( ...
                 grid, 2, 'Include force pre-test', false);
@@ -209,22 +229,27 @@ classdef TestDefinitionTabs < handle
             view.controls.single.rate = TestControlFactory.axisRow( ...
                 grid, 7, 'Movement speed (> 0)', 1, '[mm/s]', changed);
             view.configurePositiveAxisRow(view.controls.single.rate);
+            view.controls.single.forceTolerance = ...
+                TestControlFactory.axisRow(grid, 8, ...
+                'Force tolerance', 0.1, '[N]', changed);
+            view.configureNonnegativeAxisRow( ...
+                view.controls.single.forceTolerance);
             view.controls.single.holdTime = TestControlFactory.axisRow( ...
-                grid, 8, 'Wait after force reached', 0, '[s]', changed);
+                grid, 9, 'Primary endpoint hold time', 0, '[s]', changed);
             view.configureNonnegativeAxisRow(view.controls.single.holdTime);
-            post = TestControlFactory.optionalRow(grid, 9, ...
+            post = TestControlFactory.optionalRow(grid, 10, ...
                 'Sampling period', 0.1, '[s]', ...
                 @() view.refreshDependencies());
             view.controls.single.postProcess.enabled = post.enabled;
             view.controls.single.postProcess.samplingPeriod = post.value;
             view.configureNonnegativeField(post.value);
             view.controls.single.postProcess.includePrePost = ...
-                TestControlFactory.checkRow(grid, 10, ...
+                TestControlFactory.checkRow(grid, 11, ...
                 'Include pre-test and post-test', false);
             view.configurePostProcessTooltips( ...
                 view.controls.single.postProcess);
             view.runButtons(end + 1) = TestControlFactory.runButton( ...
-                grid, 11, 'RUN SINGLE TEST', view.callbacks.runSingle);
+                grid, 12, 'RUN SINGLE TEST', view.callbacks.runSingle);
             view.controls.single.secondaryMode.ValueChangedFcn = ...
                 @(~, ~) view.refreshAndNotify();
             view.controls.single.primaryMode.ValueChangedFcn = ...
@@ -235,7 +260,7 @@ classdef TestDefinitionTabs < handle
         end
 
         function createCyclicTestTab(view, tab)
-            grid = TestControlFactory.formGrid(tab, 11);
+            grid = TestControlFactory.formGrid(tab, 12);
             changed = @() view.notifyPreviewChanged();
             view.controls.cyclic.includePre = TestControlFactory.checkRow( ...
                 grid, 2, 'Include force pre-test', false);
@@ -254,22 +279,27 @@ classdef TestDefinitionTabs < handle
             view.controls.cyclic.rate = TestControlFactory.axisRow( ...
                 grid, 8, 'Movement speed (> 0)', 1, '[mm/s]', changed);
             view.configurePositiveAxisRow(view.controls.cyclic.rate);
+            view.controls.cyclic.forceTolerance = ...
+                TestControlFactory.axisRow(grid, 9, ...
+                'Force tolerance', 0.1, '[N]', changed);
+            view.configureNonnegativeAxisRow( ...
+                view.controls.cyclic.forceTolerance);
             view.controls.cyclic.holdTime = TestControlFactory.axisRow( ...
-                grid, 9, 'Wait after force reached', 0, '[s]', changed);
+                grid, 10, 'Load/unload endpoint hold time', 0, '[s]', changed);
             view.configureNonnegativeAxisRow(view.controls.cyclic.holdTime);
-            post = TestControlFactory.optionalRow(grid, 10, ...
+            post = TestControlFactory.optionalRow(grid, 11, ...
                 'Sampling period', 0.1, '[s]', ...
                 @() view.refreshDependencies());
             view.controls.cyclic.postProcess.enabled = post.enabled;
             view.controls.cyclic.postProcess.samplingPeriod = post.value;
             view.configureNonnegativeField(post.value);
             view.controls.cyclic.postProcess.includePrePost = ...
-                TestControlFactory.checkRow(grid, 11, ...
+                TestControlFactory.checkRow(grid, 12, ...
                 'Include pre-test and post-test', false);
             view.configurePostProcessTooltips( ...
                 view.controls.cyclic.postProcess);
             view.runButtons(end + 1) = TestControlFactory.runButton( ...
-                grid, 12, 'RUN CYCLIC TEST', view.callbacks.runCyclic);
+                grid, 13, 'RUN CYCLIC TEST', view.callbacks.runCyclic);
             view.controls.cyclic.loadMode.ValueChangedFcn = ...
                 @(~, ~) view.refreshAndNotify();
             view.controls.cyclic.unloadMode.ValueChangedFcn = ...
@@ -340,20 +370,49 @@ classdef TestDefinitionTabs < handle
             preAny = preCyclic || ...
                 view.controls.pre.preload.enabled.Value;
             view.setAxisByMode(view.controls.pre.rate, preAny);
-            view.setAxisByMode(view.controls.pre.holdTime, preAny);
             view.setEnabled(view.controls.pre.cycles, preCyclic);
             view.setAxisByMode(view.controls.pre.load, preCyclic);
             view.setAxisByMode(view.controls.pre.unload, ...
                 preCyclic && ~view.controls.pre.unloadToStart.Value);
             view.setEnabled(view.controls.pre.unloadToStart, preCyclic);
+            view.setAxisByMode( ...
+                view.controls.pre.cyclicForceTolerance, preCyclic);
+            view.setAxisByMode(view.controls.pre.holdTime, preCyclic);
+            preloadEnabled = view.controls.pre.preload.enabled.Value;
             view.setAxisByMode(view.controls.pre.preload.value, ...
-                view.controls.pre.preload.enabled.Value);
+                preloadEnabled);
+            view.setAxisByMode( ...
+                view.controls.pre.preload.forceTolerance, preloadEnabled);
+            view.setAxisByMode( ...
+                view.controls.pre.preload.holdTime, preloadEnabled);
             view.setAxisByMode(view.controls.single.secondary, ...
                 ~strcmp(view.controls.single.secondaryMode.Value, 'None'));
+            singleUsesForce = ...
+                strcmp(view.controls.single.primaryMode.Value, 'Force') || ...
+                strcmp(view.controls.single.secondaryMode.Value, 'Force');
+            view.setAxisByMode( ...
+                view.controls.single.forceTolerance, singleUsesForce);
+            cyclicUsesForce = ...
+                strcmp(view.controls.cyclic.loadMode.Value, 'Force') || ...
+                strcmp(view.controls.cyclic.unloadMode.Value, 'Force');
+            view.setAxisByMode( ...
+                view.controls.cyclic.forceTolerance, cyclicUsesForce);
             for name = {'single', 'cyclic'}
                 post = view.controls.(name{1}).postProcess;
                 view.setEnabled(post.samplingPeriod, post.enabled.Value);
                 view.setEnabled(post.includePrePost, post.enabled.Value);
+            end
+            view.enforceRuntimeLock();
+        end
+
+        function enforceRuntimeLock(view)
+            if ~view.runtimeLocked
+                return;
+            end
+            for index = 1:numel(view.lockedControls)
+                if isvalid(view.lockedControls(index))
+                    view.lockedControls(index).Enable = 'off';
+                end
             end
         end
 

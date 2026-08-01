@@ -9,208 +9,150 @@ classdef Model < handle
         isRecording = false;     % If True = store data to testData
         recordIndex = 1;        % number of frames recived
         selectedFolder = 0;      % folder in witch fotos will save
-        fileIds = struct( ...
-            'forceX', -1, 'forceY', -1, ...
-            'untaredForceX', -1, 'untaredForceY', -1, ...
-            'positionX', -1, 'positionY', -1, ...
-            'cameraBinary', -1, 'cameraTimestamps', -1)
         filesOpen = false;
         recordingStatus = 'idle';
         recordingReason = '';
-        currentTestPhase = uint8(0);
+        currentSystemStatus = int16(0);
         cameraFrameWidth = 0; % To store the width of the frames
         cameraFrameHeight = 0; % To store the height of the frames
+        recordingDroppedSamples = struct('X', 0, 'Y', 0)
+        recordingRestartDetected = false
+        statusResolutionSeconds = AppInfo.PLC_READ_PERIOD_SECONDS
 
+    end
+
+    properties (Access = private)
+        recordingStore = []
     end
 
     methods
         %% Recording file lifecycle
-        function openFilesRec(model)
-            if model.isRecording && ~model.filesOpen
-                targetFiles = model.recordingFileNames();
-                existing = targetFiles(cellfun(@(name) ...
-                    isfile(fullfile(model.selectedFolder, name)), targetFiles));
-                if ~isempty(existing)
-                    error('Model:RecordingFilesExist', ...
-                        ['The selected folder already contains recording ' ...
-                        'data (%s). Choose a new or empty folder.'], ...
-                        strjoin(existing, ', '));
-                end
-                specs = Model.recordingFileSpecs();
-                fids = -ones(1, numel(specs));
-                for index = 1:numel(specs)
-                    fids(index) = fopen(fullfile(model.selectedFolder, ...
-                        specs(index).name), specs(index).mode);
-                end
-                if any(fids == -1)
-                    for fid = fids(fids ~= -1)
-                        fclose(fid);
-                    end
-                    error('Model:RecordingOpenFailed', ...
-                        'Could not open one or more recording files in %s.', model.selectedFolder);
-                end
-                for index = 1:numel(specs)
-                    model.fileIds.(specs(index).field) = fids(index);
-                end
-                model.filesOpen = true;
-
-                try
-                    infoFid = fopen(fullfile( ...
-                        model.selectedFolder, 'camera_info.txt'), 'w');
-                    if infoFid == -1
-                        error('Model:RecordingOpenFailed', ...
-                            'Could not open camera_info.txt in %s.', ...
-                            model.selectedFolder);
-                    end
-                    cleanup = onCleanup(@() fclose(infoFid));
-                    countWidth = fprintf(infoFid, 'Width: %d\n', ...
-                        model.cameraFrameWidth);
-                    countHeight = fprintf(infoFid, 'Height: %d\n', ...
-                        model.cameraFrameHeight);
-                    if countWidth < 0 || countHeight < 0
-                        error('Model:RecordingWriteFailed', ...
-                            'Could not write camera_info.txt.');
-                    end
-                    clear cleanup;
-                catch exception
-                    model.isRecording = false;
-                    model.closeFilesRec();
-                    rethrow(exception);
-                end
-                model.isRecording = true;
-                model.recordingStatus = 'recording';
-                model.recordingReason = '';
+        function openFilesRec(model, header)
+            if model.filesOpen
+                return;
             end
+            if nargin < 2 || isempty(header)
+                header = model.defaultRecordingHeader();
+            end
+            model.recordingStore = RecordingStore( ...
+                model.selectedFolder, header);
+            model.filesOpen = true;
+            model.recordingStatus = 'recording';
+            model.recordingReason = '';
         end
 
         function closeFilesRec(model)
             if model.filesOpen
-                fields = fieldnames(model.fileIds);
-                fids = cellfun(@(name) model.fileIds.(name), fields);
-                % Mark ownership released before closing so a close error
-                % cannot leave the model in a permanently half-open state.
-                for index = 1:numel(fields)
-                    model.fileIds.(fields{index}) = -1;
-                end
                 model.filesOpen = false;
-                for fid = reshape(fids(fids ~= -1), 1, [])
-                    try
-                        fclose(fid);
-                    catch exception
-                        warning('Model:RecordingCloseFailed', ...
-                            'Could not close a recording file: %s', ...
-                            exception.message);
-                    end
+                store = model.recordingStore;
+                model.recordingStore = [];
+                try
+                    store.close();
+                catch exception
+                    warning('Model:RecordingCloseFailed', ...
+                        'Could not close the recording: %s', ...
+                        exception.message);
                 end
             end
         end
 
-        function writeRecordingStatus(model)
-            if isempty(model.selectedFolder) || isequal(model.selectedFolder, 0) || ...
-                    ~ischar(model.selectedFolder) && ~isstring(model.selectedFolder)
+        function finalizeRecording(model, status, reason)
+            model.recordingStatus = lower(char(status));
+            model.recordingReason = char(reason);
+            if ~model.filesOpen || isempty(model.recordingStore)
                 return;
             end
-            filename = fullfile(model.selectedFolder, 'recording_status.txt');
-            fid = fopen(filename, 'w');
-            if fid == -1
-                warning('Model:StatusWriteFailed', 'Could not write %s.', filename);
-                return;
+            store = model.recordingStore;
+            model.filesOpen = false;
+            model.recordingStore = [];
+            try
+                integrity = struct( ...
+                    'droppedSamples', model.recordingDroppedSamples, ...
+                    'restartDetected', model.recordingRestartDetected);
+                store.finalize(model.recordingStatus, ...
+                    model.recordingReason, integrity);
+            catch exception
+                try store.close(); catch, end
+                rethrow(exception);
             end
-            cleanup = onCleanup(@() fclose(fid)); 
-            fprintf(fid, 'Status: %s\nReason: %s\n', ...
-                model.recordingStatus, model.recordingReason);
         end
 
         %% Acquisition writes
-        function saveAxisSamples(model, axisName, forceValues, untaredForceValues, positionValues)
+        function saveAxisSamples(model, axisName, timestamps, ...
+                forceValues, untaredForceValues, positionValues)
             if ~model.isRecording
                 return;
             end
-            count = min([numel(forceValues), numel(untaredForceValues), numel(positionValues)]);
+            counts = [numel(timestamps), numel(forceValues), ...
+                numel(untaredForceValues), numel(positionValues)];
+            if any(counts ~= counts(1))
+                error('Model:RecordingVectorLength', ...
+                    ['%s-axis timestamps, force, untared force, and ' ...
+                    'position vectors must have equal lengths.'], ...
+                    upper(char(axisName)));
+            end
+            count = counts(1);
             if count == 0
                 return;
             end
-            forceValues = forceValues(end-count+1:end);
-            untaredForceValues = untaredForceValues(end-count+1:end);
-            positionValues = positionValues(end-count+1:end);
-            timeStamp = datetime('now');
-            timeVec = timeStamp - seconds(count-1:-1:0) * model.dt;
-            timeStrings = string(timeVec, 'yyyy-MM-dd HH:mm:ss.SSS');
-            if strcmpi(axisName, 'X')
-                forceFid = model.fileIds.forceX;
-                untaredForceFid = model.fileIds.untaredForceX;
-                positionFid = model.fileIds.positionX;
-            else
-                forceFid = model.fileIds.forceY;
-                untaredForceFid = model.fileIds.untaredForceY;
-                positionFid = model.fileIds.positionY;
-            end
-            forceLog = [timeStrings(:), string(forceValues(:))]';
-            untaredForceLog = [timeStrings(:), string(untaredForceValues(:))]';
-            positionLog = [timeStrings(:), string(positionValues(:))]';
-            written = [ ...
-                fprintf(forceFid, '%s,%s,\n', forceLog{:}), ...
-                fprintf(untaredForceFid, '%s,%s,\n', untaredForceLog{:}), ...
-                fprintf(positionFid, '%s,%s,\n', positionLog{:})];
-            if any(written < 0)
-                error('Model:RecordingWriteFailed', ...
-                    'Could not write %s-axis sensor samples.', upper(axisName));
-            end
+            model.recordingStore.appendAxis(axisName, timestamps, ...
+                forceValues, untaredForceValues, positionValues);
         end
 
         function saveCameraFrame(model, frame, timeStamp)
             if model.isRecording
-                % Save a complete wall-clock timestamp so recordings remain
-                % chronological across midnight and on later processing days.
-                tString = string(timeStamp, 'yyyy-MM-dd HH:mm:ss.SSS');
-                timestampCount = fprintf( ...
-                    model.fileIds.cameraTimestamps, '%d,%s,%u,\n', ...
-                    model.recordIndex, tString, model.currentTestPhase);
-                frameCount = fwrite( ...
-                    model.fileIds.cameraBinary, frame, 'uint8');
-                if timestampCount < 0 || frameCount ~= numel(frame)
-                    error('Model:RecordingWriteFailed', ...
-                        'Could not write camera frame %d.', model.recordIndex);
-                end
+                model.recordingStore.appendFrame( ...
+                    frame, timeStamp, model.recordIndex, ...
+                    model.currentSystemStatus);
                 model.recordIndex = model.recordIndex + 1;
             end
         end
 
-        function updateTestPhase(model, statuses, activeAxes)
+        function updateSystemStatus(model, statuses, activeAxes)
             if isempty(activeAxes)
-                model.currentTestPhase = uint8(0);
+                model.currentSystemStatus = int16(0);
                 return;
             end
             axis = activeAxes{1};
             if isempty(statuses) || ~isfield(statuses, axis) || ...
-                    ~isfield(statuses.(axis), 'testPhase')
-                model.currentTestPhase = uint8(0);
+                    ~isfield(statuses.(axis), 'systemStatus')
+                model.currentSystemStatus = int16(0);
                 return;
             end
-            model.currentTestPhase = uint8(statuses.(axis).testPhase);
+            model.currentSystemStatus = ...
+                int16(statuses.(axis).systemStatus);
         end
 
     end
 
-    methods (Static, Access = private)
-        function names = recordingFileNames()
-            specs = Model.recordingFileSpecs();
-            names = [{specs.name}, ...
-                {'camera_info.txt', 'recording_status.txt'}];
-        end
-
-        function specs = recordingFileSpecs()
-            specs = struct( ...
-                'field', {'forceX', 'forceY', ...
-                    'untaredForceX', 'untaredForceY', ...
-                    'positionX', 'positionY', ...
-                    'cameraBinary', 'cameraTimestamps'}, ...
-                'name', {'live_tenzoX.csv', 'live_tenzoY.csv', ...
-                    'live_tenzoX_untared.csv', ...
-                    'live_tenzoY_untared.csv', ...
-                    'live_positionX.csv', 'live_positionY.csv', ...
-                    'cam.bin', 'camTimestamps.csv'}, ...
-                'mode', {'w', 'w', 'w', 'w', 'w', 'w', 'wb', 'w'});
+    methods (Access = private)
+        function header = defaultRecordingHeader(model)
+            camera = struct( ...
+                'connected', false, ...
+                'width', double(model.cameraFrameWidth), ...
+                'height', double(model.cameraFrameHeight), ...
+                'pixel_format', 'Mono8', ...
+                'exposure_time', NaN, ...
+                'gain', NaN, ...
+                'configured_fps', NaN);
+            emptyPlc = struct();
+            test = struct( ...
+                'test_kind', 'unspecified', ...
+                'active_axes', '', ...
+                'post_process_enabled', false, ...
+                'post_process_sampling_period', 0, ...
+                'post_process_include_pre_post', false, ...
+                'commands', struct('X', [], 'Y', []));
+            header = struct( ...
+                'applicationVersion', AppInfo.VERSION, ...
+                'interfaceVersion', ...
+                    PlcAds.EXPECTED_INTERFACE_VERSION, ...
+                'plcInterval', double(model.dt), ...
+                'statusResolutionSeconds', ...
+                    double(model.statusResolutionSeconds), ...
+                'camera', camera, ...
+                'plc', struct('X', emptyPlc, 'Y', emptyPlc), ...
+                'test', test);
         end
     end
 end

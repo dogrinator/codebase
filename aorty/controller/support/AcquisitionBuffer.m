@@ -8,27 +8,29 @@ classdef AcquisitionBuffer < handle
         untaredForceY = []
         positionX = []
         positionY = []
+        timestampX = NaT(1, 0)
+        timestampY = NaT(1, 0)
     end
 
     methods
         function append(buffer, forceX, forceY, untaredX, untaredY, ...
-                positionX, positionY)
+                positionX, positionY, timestampX, timestampY)
             buffer.forceX = [buffer.forceX, forceX];
             buffer.forceY = [buffer.forceY, forceY];
             buffer.untaredForceX = [buffer.untaredForceX, untaredX];
             buffer.untaredForceY = [buffer.untaredForceY, untaredY];
             buffer.positionX = [buffer.positionX, positionX];
             buffer.positionY = [buffer.positionY, positionY];
+            buffer.timestampX = [buffer.timestampX, timestampX];
+            buffer.timestampY = [buffer.timestampY, timestampY];
         end
 
-        function [xValues, yValues] = plotValues(buffer, mode)
-            if strcmpi(char(mode), 'Force')
-                xValues = buffer.forceX;
-                yValues = buffer.forceY;
-            else
-                xValues = buffer.positionX;
-                yValues = buffer.positionY;
-            end
+        function batch = plotBatch(buffer)
+            batch = struct( ...
+                'Force', struct( ...
+                    'X', buffer.forceX, 'Y', buffer.forceY), ...
+                'Displacement', struct( ...
+                    'X', buffer.positionX, 'Y', buffer.positionY));
         end
 
         function flush(buffer, model)
@@ -43,6 +45,8 @@ classdef AcquisitionBuffer < handle
             buffer.untaredForceY = [];
             buffer.positionX = [];
             buffer.positionY = [];
+            buffer.timestampX = NaT(1, 0);
+            buffer.timestampY = NaT(1, 0);
         end
     end
 
@@ -52,10 +56,12 @@ classdef AcquisitionBuffer < handle
                 force = buffer.forceX;
                 untared = buffer.untaredForceX;
                 position = buffer.positionX;
+                timestamps = buffer.timestampX;
             else
                 force = buffer.forceY;
                 untared = buffer.untaredForceY;
                 position = buffer.positionY;
+                timestamps = buffer.timestampY;
             end
             if isempty(force) && isempty(untared) && isempty(position)
                 return;
@@ -63,15 +69,18 @@ classdef AcquisitionBuffer < handle
 
             % Clear only after a successful write so a transient failure
             % cannot silently discard samples.
-            model.saveAxisSamples(axisName, force, untared, position);
+            model.saveAxisSamples( ...
+                axisName, timestamps, force, untared, position);
             if strcmp(axisName, 'X')
                 buffer.forceX = [];
                 buffer.untaredForceX = [];
                 buffer.positionX = [];
+                buffer.timestampX = NaT(1, 0);
             else
                 buffer.forceY = [];
                 buffer.untaredForceY = [];
                 buffer.positionY = [];
+                buffer.timestampY = NaT(1, 0);
             end
         end
     end

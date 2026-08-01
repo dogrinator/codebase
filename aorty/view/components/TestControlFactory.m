@@ -102,6 +102,7 @@ classdef TestControlFactory
             controls.value.lock.ValueChangedFcn = @(src, ~) ...
                 TestControlFactory.syncLock( ...
                     src, controls.value.x, controls.value.y, changed);
+            controls.enabled.ValueChangedFcn = @(~, ~) changed();
         end
 
         function control = dropRow(grid, row, text, items)
