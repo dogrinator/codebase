@@ -5,10 +5,14 @@ classdef Plc < handle
 
     properties
         model Model
+
+        % Ads con data
         amsNetID = '5.85.113.174.1.1'
         adsPort = 851
         dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll'
         client
+
+        % Plc state variables
         connected = false
         disconnecting = false
         status = struct('X', struct(), 'Y', struct())
@@ -21,7 +25,7 @@ classdef Plc < handle
     end
 
     properties (Access = private)
-        ads
+        ads % Ads client
     end
 
     methods
@@ -30,6 +34,7 @@ classdef Plc < handle
         end
 
         function value = get.droppedSamples(plc)
+            % Constantly check if data are not lost
             if isempty(plc.ads)
                 value = struct('X', 0, 'Y', 0);
             else
@@ -37,6 +42,7 @@ classdef Plc < handle
             end
         end
 
+        %% Plc connect / disconnect
         function connectPLC(plc, app, src)
             if src.Value ~= "ON"
                 plc.disconnectPLC();
@@ -45,6 +51,7 @@ classdef Plc < handle
             end
 
             try
+                % Clear old client and create new with var handles
                 plc.disconnectPLC();
                 NET.addAssembly(plc.dllPath);
                 plc.client = TwinCAT.Ads.TcAdsClient();
@@ -67,6 +74,7 @@ classdef Plc < handle
             if plc.disconnecting
                 return;
             end
+            % Prepare ads for next conection 
             plc.disconnecting = true;
             oldAds = plc.ads;
             oldClient = plc.client;
@@ -106,13 +114,12 @@ classdef Plc < handle
             plc.resetStreamingState();
         end
 
-        function [forceX, forceY, untaredX, untaredY, ...
-                posX, posY, statuses] = fifoProcess(plc)
+        %% Read plc data
+        function [forceX, forceY, untaredX, untaredY, posX, posY, statuses] = fifoProcess(plc)
+            % Read axis data and select only valid vector data
             plc.requireConnection();
-            [forceX, posX, plc.status.X] = ...
-                plc.ads.readAxisSnapshot('X');
-            [forceY, posY, plc.status.Y] = ...
-                plc.ads.readAxisSnapshot('Y');
+            [forceX, posX, plc.status.X] = plc.ads.readAxisSnapshot('X');
+            [forceY, posY, plc.status.Y] = plc.ads.readAxisSnapshot('Y');
             untaredX = forceX - plc.status.X.tareOffset;
             untaredY = forceY - plc.status.Y.tareOffset;
             plc.isWorking = plc.status.X.working || plc.status.Y.working;
@@ -120,6 +127,7 @@ classdef Plc < handle
         end
 
         function statuses = pollStatus(plc)
+            % Raw axis data read without post procesing so invalid vectors
             plc.requireConnection();
             plc.status.X = plc.ads.readAxisStatus('X');
             plc.status.Y = plc.ads.readAxisStatus('Y');
@@ -127,8 +135,9 @@ classdef Plc < handle
             statuses = plc.status;
         end
 
-        function accepted = SendCommands(plc, mode, ...
-                xPos, xVel, yPos, yVel)
+
+        %% Main plc control logic
+        function accepted = SendCommands(plc, mode, xPos, xVel, yPos, yVel)
             % Both selected axes are fully prepared before either Execute
             % trigger is raised, preventing half-started biaxial commands.
             accepted = false;
@@ -138,6 +147,7 @@ classdef Plc < handle
                     'Only PLC modes 1 and 2 use basic scalar commands.');
             end
 
+            % Raw axis data read for error/busy check
             statuses = plc.pollStatus();
             activeX = ~isempty(xPos);
             activeY = ~isempty(yPos);
@@ -150,6 +160,7 @@ classdef Plc < handle
                     'A selected axis is busy or in error.');
             end
 
+            % Validate commands and send them 
             if activeX, plc.ensureAxisPowered('X'); end
             if activeY, plc.ensureAxisPowered('Y'); end
             if activeX
@@ -166,12 +177,13 @@ classdef Plc < handle
         end
 
         function axes = sendTestSequence(plc, commands)
+            % Prepare for commands sending
             plc.requireConnection();
             axes = {};
             for axisName = {'X', 'Y'}
                 axis = axisName{1};
                 if isfield(commands, axis) && ~isempty(commands.(axis))
-                    axes{end + 1} = axis; %#ok<AGROW>
+                    axes{end + 1} = axis;
                 end
             end
             if isempty(axes)
@@ -179,6 +191,7 @@ classdef Plc < handle
                     'No active axis command was provided.');
             end
 
+            % Raw axis data read for error/busy check + validation
             statuses = plc.pollStatus();
             for index = 1:numel(axes)
                 axis = axes{index};
@@ -351,11 +364,13 @@ classdef Plc < handle
         end
 
         function values = readAxisConfig(plc, axisName)
+            % Needed at start of recording for test clasification
             plc.requireConnection();
             values = plc.ads.readAxisConfig(axisName);
         end
     end
 
+    %% Helper methods for PLC control
     methods (Access = private)
         function ensureAxisPowered(plc, axisName)
             statusNow = plc.ads.readAxisStatus(axisName);

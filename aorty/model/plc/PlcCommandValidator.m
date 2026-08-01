@@ -1,7 +1,10 @@
 classdef PlcCommandValidator
-    %PLCCOMMANDVALIDATOR Pure validation for commands sent to TwinCAT.
+    % PlcCommandValidator Pure validation for commands sent to TwinCAT so
+    % there are no owerflow values or incorect lenghts of vectors.
+    % Also checking if all mandatory data are set
 
     methods (Static)
+        %% move rel / force pi validation
         function basic(firstValue, secondValue)
             if ~isnumeric(firstValue) || ~isscalar(firstValue) || ...
                     ~isfinite(firstValue) || ~isnumeric(secondValue) || ...
@@ -13,11 +16,8 @@ classdef PlcCommandValidator
             end
         end
 
+        %% Main test validation
         function test(command, statusNow)
-            deprecated = {'preLoadValue', 'forceDropPercent', ...
-                'forceDropThreshold', 'preTestHoldTime', ...
-                'forceHoldTime'};
-            PlcCommandValidator.rejectFields(command, deprecated);
             required = {'includePreTest', 'preTestOnly', ...
                 'preCycleCount', 'preloadEnabled', 'preloadValue', ...
                 'preCycleLoadValue', 'preUnloadValue', ...
@@ -117,6 +117,7 @@ classdef PlcCommandValidator
             end
         end
 
+        %% Axis validation
         function biaxial(commandX, commandY)
             fields = {'includePreTest', 'preTestOnly', ...
                 'preCycleCount', 'preloadEnabled', ...
@@ -172,16 +173,6 @@ classdef PlcCommandValidator
     end
 
     methods (Static, Access = private)
-        function rejectFields(value, fields)
-            for index = 1:numel(fields)
-                if isfield(value, fields{index})
-                    error('PLC:DeprecatedCommandField', ...
-                        'Test command field %s is no longer supported.', ...
-                        fields{index});
-                end
-            end
-        end
-
         function valid = isIntegerInRange(value, minimum, maximum)
             valid = isscalar(value) && isfinite(value) && ...
                 value == round(value) && value >= minimum && ...

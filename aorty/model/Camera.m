@@ -4,9 +4,11 @@ classdef Camera < handle
     properties
         model Model
 
+        % Camera interface
         cameraHW
         cameraSrc
 
+        % Camera info variables
         latestFrame = [];
         camStartTime
         connected = false;
@@ -23,9 +25,7 @@ classdef Camera < handle
                 try
                     camera.closeCam();
 
-                    % Refresh the Image Acquisition Toolbox after a camera
-                    % has been unplugged/reconnected. Without this, the
-                    % gige adaptor can keep a stale device list.
+                    % Refresh the Image Acquisition Toolbox after a camera has been unplugged/reconnected
                     imaqreset;
                     hwInfo = imaqhwinfo('gige');
                     if isempty(hwInfo.DeviceInfo)
@@ -34,13 +34,12 @@ classdef Camera < handle
                              'camera power, Ethernet connection, and network settings.']);
                     end
 
-                    % Do not assume that the first camera always has ID 1.
+                    % Search for camera id and connect to id
                     deviceID = hwInfo.DeviceInfo(1).DeviceID;
                     camera.cameraHW = videoinput('gige', deviceID, 'Mono8');
                     camera.cameraSrc = getselectedsource(camera.cameraHW);
 
-                    % Trigger properties differ between camera firmware
-                    % versions, so unsupported selectors are skipped.
+                    % Trigger properties (just to be shure)
                     for sel = {'FrameStart','AcquisitionStart','FrameBurstStart'}
                         try
                             camera.cameraSrc.TriggerSelector = sel{1};
@@ -49,17 +48,21 @@ classdef Camera < handle
                         end
                     end
 
+                    % Init camera com setup for better stability
                     if isprop(camera.cameraSrc,'PacketSize'),  camera.cameraSrc.PacketSize  = 8000; end
                     if isprop(camera.cameraSrc,'PacketDelay'), camera.cameraSrc.PacketDelay = 500;  end
 
+                    % Trigger mandatory setup 
                     camera.cameraHW.FramesPerTrigger = 1;   % 1 frame per trigger
                     camera.cameraHW.TriggerRepeat = Inf; % repeat forever
                     triggerconfig(camera.cameraHW, 'immediate');
 
+                    % Link fun. and get start time
                     camera.camStartTime = datetime('now');
                     camera.cameraHW.FramesAcquiredFcnCount = 1;
                     camera.cameraHW.FramesAcquiredFcn = @(s,ev) camera.acquireFrame(s);
 
+                    % Flush camera and start aquisition
                     camera.latestFrame = [];
                     flushdata(camera.cameraHW);
                     start(camera.cameraHW);
@@ -80,17 +83,18 @@ classdef Camera < handle
 
         function acquireFrame(camera, src)
             try
-                % A final callback may arrive while shutdown deletes the
-                % videoinput object.
+                % Check if camera exist and is working
                 if isempty(src) || ~isvalid(src), return; end
                 if src.FramesAvailable < 1,        return; end
 
+                % Get img and time
                 [frame, relativeTime] = getdata(src, 1);
                 timeStamp = camera.camStartTime + seconds(relativeTime);
 
+                % Link for recording
                 camera.model.saveCameraFrame(frame, timeStamp);
 
-                % Preview downsampling does not affect recorded frames.
+                % Preview downsampling (Not needed on better pc but mi netebook is dying)
                 camera.latestFrame = frame(1:3:end, 1:3:end);
 
             catch ME
@@ -107,16 +111,20 @@ classdef Camera < handle
         function closeCam(camera)
             camera.latestFrame = [];
 
+            % Safly disconnect and delete camera ewen if error stopped it
             if ~isempty(camera.cameraHW) && isvalid(camera.cameraHW)
                 try
                     stop(camera.cameraHW);
                 catch
+                    warning("Camera:StopFailed", "Could not stop camera: %s", exception.message);
                 end
                 try
                     delete(camera.cameraHW);
                 catch
+                    warning("Camera:DeleteFailed", "Could not delete camera: %s", exception.message);
                 end
             end
+            % Final cleanup
             camera.cameraHW = [];
             camera.cameraSrc = [];
             camera.connected = false;

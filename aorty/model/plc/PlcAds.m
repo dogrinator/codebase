@@ -1,5 +1,5 @@
 classdef PlcAds < handle
-    %PLCADS Owns the TwinCAT ADS symbols and binary PLC data contract.
+    % PlcAds Owns the TwinCAT ADS symbols and binary PLC data contract.
     % The caller owns the client connection; this class owns only handles,
     % transport buffers, packet decoding, and streaming state.
 
@@ -32,10 +32,11 @@ classdef PlcAds < handle
             % Every created handle is registered immediately so a partial
             % initialization can always be cleaned up safely.
             if nargin < 2
-                testing = false;
+                testing = false; % Used for offline ads testing 
             end
-            ads.releaseHandles();
+            ads.releaseHandles(); % Clear handles so no duplicity
             try
+                % Create all handles
                 ads.handles.X = ads.createAxisHandles('X');
                 ads.handles.Y = ads.createAxisHandles('Y');
                 ads.handles.biaxialStart = ...
@@ -64,6 +65,7 @@ classdef PlcAds < handle
         end
 
         function releaseHandles(ads)
+            % Disconnect from ads
             handlesToDelete = ads.ownedHandles;
             ads.ownedHandles = zeros(1, 0, 'int32');
             ads.handles = struct();
@@ -82,11 +84,13 @@ classdef PlcAds < handle
         end
 
         function resetStreamingState(ads)
+            % Reset com safety from last run
             ads.lastSampleCounter = struct('X', [], 'Y', []);
             ads.droppedSamples = struct('X', 0, 'Y', 0);
             ads.restartCounts = struct('X', 0, 'Y', 0);
         end
 
+        %% Methods for reading / writing decoded data
         function [forceData, positionData, statusNow] = readAxisSnapshot(ads, axisName)
             statusNow = ads.readAxisStatus(axisName);
             counterAfter = statusNow.sampleCounter;
@@ -134,8 +138,6 @@ classdef PlcAds < handle
         function statusNow = readAxisStatus(ads, axisName)
             bytes = ads.readStatusPacket(ads.handles.(axisName).status);
 
-            % Byte offsets below are the packed version-6 layout generated
-            % in main program.tmc. Keep this map synchronized with the DUT.
             statusNow = struct( ...
                 'positionBuffer', ads.decodeLrealArray(bytes, 0, 50), ...
                 'forceBuffer', ads.decodeLrealArray(bytes, 400, 50), ...
@@ -297,6 +299,7 @@ classdef PlcAds < handle
         end
     end
 
+    %% Create ads linking handles needed for com
     methods (Access = private)
         function handles = createAxisHandles(ads, axisName)
             statusRoot = sprintf('MAIN.stSystemStatus%s', axisName);
@@ -396,7 +399,10 @@ classdef PlcAds < handle
             ads.ownedHandles(end + 1) = handle;
         end
 
+        %% Read / Write raw data
         function writeArray(ads, axisName, bufferName, handle, values)
+            % Write whole vector to plc
+
             values = double(values(:)');
             if numel(values) > ads.COMMAND_ARRAY_LENGTH
                 error('PLC:ArrayTooLong', ...
@@ -412,6 +418,8 @@ classdef PlcAds < handle
         end
 
         function bytes = readStatusPacket(ads, handle)
+            % Read raw status data as whole packet from plc for quicker reading
+
             if ismethod(ads.client, 'ReadStatusPacket')
                 bytes = uint8(ads.client.ReadStatusPacket( ...
                     handle, ads.STATUS_PACKET_SIZE));
@@ -455,6 +463,7 @@ classdef PlcAds < handle
         end
 
         function expected = isExpectedDisconnectError(~, exception)
+            % Helper for error cals
             message = lower(char(exception.message));
             expected = contains(message, '0x710') || ...
                 contains(message, 'symbol could not be found') || ...
@@ -463,6 +472,7 @@ classdef PlcAds < handle
         end
     end
 
+    %% Helping methods for decoding specific var types
     methods (Static, Access = private)
         function values = decodeLrealArray(bytes, byteOffset, count)
             first = byteOffset + 1;

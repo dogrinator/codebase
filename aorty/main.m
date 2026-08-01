@@ -1,26 +1,59 @@
-% Add the complete application tree so extracted support components are
-% available regardless of the current MATLAB working directory.
-projectRoot = fileparts(mfilename('fullpath'));
+function view = main(action)
+% MAIN Start, focus, or safely restart the Aorty application.
+%
+%   main()          - Focuses the existing application or creates a new one.
+%   main("restart") - Safely closes the existing application and creates
+%                     a completely fresh instance. (usefull for dev)
+
+
+% If no input use "start"
+arguments
+    action (1,1) string {mustBeMember(action, ["start", "restart"])} = "start"
+end
+
+% Add all subdirectories to workspace
+projectRoot = fileparts(mfilename("fullpath"));
 addpath(genpath(projectRoot));
 
-% Keep one application instance per MATLAB session. Force-closing the old
-% figure would bypass View.shutdown and leave its timers and hardware alive.
-applicationKey = 'AortyApplicationView';
+% App key that is checked in reopening
+applicationKey = "AortyApplicationView";
 existingView = [];
+
+% Check if app is running
 if isappdata(groot, applicationKey)
     existingView = getappdata(groot, applicationKey);
 end
 
-if ~isempty(existingView) && isvalid(existingView) && ...
-        ~isempty(existingView.fig) && isvalid(existingView.fig)
-    figure(existingView.fig);
-else
-    if isappdata(groot, applicationKey)
-        rmappdata(groot, applicationKey);
+applicationIsRunning = ...
+    ~isempty(existingView) && ...
+    isvalid(existingView) && ...
+    ~isempty(existingView.fig) && ...
+    isvalid(existingView.fig);
+
+% Reconect to existing view
+if applicationIsRunning
+    if action == "start"
+        figure(existingView.fig);
+        view = existingView;
+        return;
     end
-    model = Model();
-    controler = Control(model);
-    view = View(controler);
-    setappdata(groot, applicationKey, view);
-    controler.startTimers(view);
+
+    % Controlled restart: timers and hardware are shut down first.
+    existingView.shutdown();
+end
+
+% Remove any stale registration left by an invalid instance.
+if isappdata(groot, applicationKey)
+    rmappdata(groot, applicationKey);
+end
+
+% Construct a completely fresh application.
+model = Model();
+controller = Control(model);
+view = View(controller);
+
+setappdata(groot, applicationKey, view);
+controller.startTimers(view);
+
+figure(view.fig);
 end

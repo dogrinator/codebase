@@ -1,6 +1,6 @@
 classdef PlcErrorCatalog
-    %PLCERRORCATALOG Converts PLC error codes into operator messages.
-    %PLCERRORCATALOG Translates PLC application and NC errors for the UI.
+    % PlcErrorCatalog - Converts PLC error codes into operator messages.
+    %                 - Translates PLC application and NC errors for the UI.
 
     methods (Static)
         function message = describe(axisName, errorCode, axisErrorID)
@@ -43,7 +43,7 @@ classdef PlcErrorCatalog
                 if isfield(statuses, name) && ...
                         isfield(statuses.(name), 'error') && statuses.(name).error
                     messages{end+1} = PlcErrorCatalog.describe(name, ...
-                        statuses.(name).errorCode, statuses.(name).axisErrorID); %#ok<AGROW>
+                        statuses.(name).errorCode, statuses.(name).axisErrorID);
                 end
             end
         end
