@@ -2,6 +2,7 @@ classdef MachinePanel < handle
     %MACHINEPANEL Owns live plots, camera preview, and manual machine controls.
 
     properties (SetAccess = private)
+        % UI handles exposed to the owning view and integration tests
         cameraAxes
         cameraImage
         modeDrop
@@ -10,15 +11,18 @@ classdef MachinePanel < handle
         stopButton
         powerButton
         errorButton
+        % PLC status and machine-idle state
         settingsIdle = true
         connected = false
         statuses = []
     end
 
     properties (Access = private)
+        % Callbacks and state providers supplied by View
         callbacks
         axisModeGetter
         previewGetter
+        % Camera preview and manual-motion controls
         cameraContent
         xJogOverlay
         yJogOverlay
@@ -34,6 +38,7 @@ classdef MachinePanel < handle
         savePositionButton
         restorePositionButton
         machineStatusLabel
+        % Live plot state, force references, and hover selection
         forceReferences = struct('X', [], 'Y', [])
         operationActive = false
         plotTime = struct('X', 0, 'Y', 0)
@@ -44,6 +49,7 @@ classdef MachinePanel < handle
     end
 
     methods
+        %% Live display updates and machine state
         function panel = MachinePanel( ...
                 parent, callbacks, axisModeGetter, previewGetter)
             panel.callbacks = callbacks;
@@ -55,6 +61,7 @@ classdef MachinePanel < handle
         end
 
         function updateCameraFrame(panel, frame)
+            % Preserve image pixels and refit the axes without stretching.
             if isempty(frame) || isempty(panel.cameraImage) || ...
                     ~isvalid(panel.cameraImage)
                 return;
@@ -73,6 +80,7 @@ classdef MachinePanel < handle
         end
 
         function appendPlotData(panel, batch, samplePeriod)
+            % Use the latest valid acquisition period for both axis timelines.
             if isnumeric(samplePeriod) && isscalar(samplePeriod) && ...
                     isfinite(samplePeriod) && samplePeriod > 0
                 panel.samplePeriod = double(samplePeriod);
@@ -93,6 +101,7 @@ classdef MachinePanel < handle
         end
 
         function updateMachineStatus(panel, statuses, connected)
+            % A new connection state invalidates display state from the old session.
             wasConnected = panel.connected;
             panel.connected = logical(connected);
             panel.statuses = statuses;
@@ -147,6 +156,7 @@ classdef MachinePanel < handle
         end
 
         function clearPlotData(panel)
+            % Reset timelines with the plotted samples so new data starts at zero.
             panel.plotTime = struct('X', 0, 'Y', 0);
             for axisItem = {'X', 'Y'}
                 axisName = axisItem{1};
@@ -193,6 +203,7 @@ classdef MachinePanel < handle
             panel.updateForceReferenceLines();
         end
 
+        %% Machine state queries
         function powered = selectedAxesPowered(panel)
             axes = TestCommandBuilder.axesForMode(panel.axisModeGetter());
             powered = panel.connected && ~isempty(panel.statuses);
@@ -212,6 +223,7 @@ classdef MachinePanel < handle
     end
 
     methods (Access = private)
+        %% UI construction
         function createLivePanel(panel, parent)
             container = uipanel(parent, 'Title', 'Live measurements');
             container.Layout.Row = 2;
@@ -432,7 +444,9 @@ classdef MachinePanel < handle
             button.Layout.Column = column;
         end
 
+        %% Control-state coordination
         function applyState(panel)
+            % Manual motion requires every selected axis to be powered and idle.
             mode = panel.axisModeGetter();
             selectedX = strcmp(mode, 'Both') || strcmp(mode, 'X only');
             selectedY = strcmp(mode, 'Both') || strcmp(mode, 'Y only');
@@ -470,6 +484,7 @@ classdef MachinePanel < handle
             panel.updatePowerButton();
         end
 
+        %% Live plot data
         function appendAxisPlot(panel, axisName, batch, samplePeriod)
             forceValues = batch.Force.(axisName);
             displacementValues = batch.Displacement.(axisName);
@@ -484,6 +499,7 @@ classdef MachinePanel < handle
             end
 
             startTime = panel.plotTime.(axisName);
+            % Each axis owns a monotonic display timeline across incoming batches.
             if ~isempty(forceValues)
                 forceTime = startTime + ...
                     samplePeriod * (1:numel(forceValues));
@@ -526,6 +542,7 @@ classdef MachinePanel < handle
         end
 
         function sampleCountChanged(panel, value)
+            % Preserve only the newest points when reducing the rolling window.
             value = min(50000, max(50, round(double(value))));
             panel.sampleCount = value;
             panel.sampleCountField.Value = value;
@@ -563,6 +580,7 @@ classdef MachinePanel < handle
             panel.updateReferenceBandExtents(axisName, axesHandle.XLim);
         end
 
+        %% Force-target overlays and hover inspection
         function updateForceReferenceLines(panel)
             panel.clearForceReferenceLines();
             if ~panel.connected || ~strcmp(panel.modeDrop.Value, 'Force')
@@ -617,6 +635,7 @@ classdef MachinePanel < handle
                 isfinite(entry.tolerance) && entry.tolerance >= 0, ...
                 entries);
             entries = PlotReferenceBuilder.group(entries(valid));
+            % One rendered band represents all entries with the same target range.
             xLimits = axesHandle.XLim;
             for index = 1:numel(entries)
                 entry = entries(index);
@@ -676,6 +695,7 @@ classdef MachinePanel < handle
                 return;
             end
             figurePoint = panel.figureHandle.CurrentPoint;
+            % Compare in pixels so the hover threshold is zoom-independent.
             bestAxis = '';
             bestIndex = 0;
             bestDistance = Inf;
@@ -779,6 +799,7 @@ classdef MachinePanel < handle
             end
         end
 
+        %% Status decoration and camera layout
         function updateAxisPlotTitle( ...
                 panel, axisName, axesHandle, selected)
             suffix = '';
@@ -810,6 +831,7 @@ classdef MachinePanel < handle
         end
 
         function resizeCameraOverlays(panel)
+            % Keep jog overlays visible and non-overlapping on small panels.
             if isempty(panel.cameraContent) || ...
                     ~isvalid(panel.cameraContent)
                 return;
@@ -840,6 +862,7 @@ classdef MachinePanel < handle
         end
 
         function fitCameraImage(panel)
+            % Crop the axes limits to fill the panel without distorting the frame.
             frame = panel.cameraImage.CData;
             frameHeight = size(frame, 1);
             frameWidth = size(frame, 2);
@@ -865,6 +888,7 @@ classdef MachinePanel < handle
             end
         end
 
+        %% UI helpers
         function setEnabled(~, control, enabled)
             if enabled
                 control.Enable = 'on';

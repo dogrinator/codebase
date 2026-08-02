@@ -4,17 +4,21 @@ classdef Settings < handle
         plc    Plc 
         camera Camera
 
+        % Config direstories
         hwPath
         appPath
 
+        % Config data
         hwConfig  = [];
         appConfig = [];
     end
 
     methods
         function settings = Settings(plc, camera)
+            % Hw class link for settings aply
             settings.plc = plc;
             settings.camera = camera;
+            % Set file path
             applicationRoot = fileparts(fileparts(mfilename('fullpath')));
             settings.hwPath = fullfile(applicationRoot, '.config', 'hwConfig');
             settings.appPath = fullfile(applicationRoot, '.config', 'appConfig');
@@ -33,8 +37,7 @@ classdef Settings < handle
 
         function saveHwConfig(settings, filename)
             Settings.validateHardwareConfig(settings.hwConfig);
-            Settings.writeJson( ...
-                settings.hwPath, filename, settings.hwConfig);
+            Settings.writeJson(settings.hwPath, filename, settings.hwConfig);
         end
 
         function applyCameraConfig(settings)
@@ -62,10 +65,8 @@ classdef Settings < handle
                     error('PLC:AxisUnavailable', ...
                         'Hardware settings can only be applied while both axes are idle.');
                 end
-                PlcCommandValidator.axisConfig( ...
-                    settings.hwConfig.plc.xAxis);
-                PlcCommandValidator.axisConfig( ...
-                    settings.hwConfig.plc.yAxis);
+                PlcCommandValidator.axisConfig(settings.hwConfig.plc.xAxis);
+                PlcCommandValidator.axisConfig(settings.hwConfig.plc.yAxis);
                 settings.plc.writeAxisConfig(settings.hwConfig.plc.xAxis, 'X')
                 settings.plc.writeAxisConfig(settings.hwConfig.plc.yAxis, "Y")
                 disp('PLC settings applied.');
@@ -90,6 +91,7 @@ classdef Settings < handle
         end
     end
 
+    %% Json files handling
     methods (Static, Access = private)
         function names = listJsonFiles(folder)
             files = dir(fullfile(folder, '*.json'));

@@ -2,7 +2,9 @@ classdef PlotReferenceBuilder
     %PLOTREFERENCEBUILDER Builds force-target annotations for live plots.
 
     methods (Static)
+        %% Preview construction and target grouping
         function preview = build(selectedTab, config, axisMode)
+            % Build entries only for active axes and force-controlled endpoints.
             preview = struct( ...
                 'testType', '', ...
                 'X', PlotReferenceBuilder.emptyEntries(), ...
@@ -96,6 +98,7 @@ classdef PlotReferenceBuilder
         end
 
         function grouped = group(entries)
+            % Merge identical bands while retaining every endpoint label.
             grouped = PlotReferenceBuilder.emptyEntries();
             for index = 1:numel(entries)
                 entry = entries(index);
@@ -119,6 +122,7 @@ classdef PlotReferenceBuilder
         end
 
         function entries = emptyEntries()
+            % Keep a stable empty schema so callers can concatenate entries.
             entries = struct( ...
                 'phase', {}, 'label', {}, 'role', {}, ...
                 'target', {}, 'tolerance', {});
@@ -126,6 +130,7 @@ classdef PlotReferenceBuilder
     end
 
     methods (Static, Access = private)
+        %% Entry construction
         function value = entry(phase, label, role, target, tolerance)
             value = struct( ...
                 'phase', char(phase), ...

@@ -2,8 +2,10 @@ classdef View < handle
     %VIEW Coordinates the main window and its independent UI components.
 
     properties
+        % Controller dependency and top-level application window
         controller Control
         fig
+        % Toolbar controls and owned UI components
         camSwitch
         plcSwitch
         settingsCamBtn
@@ -12,12 +14,14 @@ classdef View < handle
         testPanel TestPanel
         machinePanel MachinePanel
         settingsWindow SettingsWindow
+        % UI state mirrored from the controller and PLC
         hasError = false
         errorMessage = ''
         operationActive = false
     end
 
     methods
+        %% Window lifecycle and controller-facing facade
         function app = View(controller)
             app.controller = controller;
             app.createMainWindow();
@@ -29,6 +33,7 @@ classdef View < handle
         end
 
         function shutdown(app)
+            % Tear down timers before releasing hardware or UI objects.
             app.fig.CloseRequestFcn = '';
             try
                 app.stopAndDeleteTimer(app.controller.plcReadTimer);
@@ -36,6 +41,7 @@ classdef View < handle
             catch
             end
             try
+            % Abort is best-effort because shutdown may follow a controller error.
                 app.controller.safeAbort('Application shutdown');
             catch
             end
@@ -63,6 +69,7 @@ classdef View < handle
         end
 
         function connectCameraCallback(app, src)
+            % Connection changes are locked while acquisition may own the camera.
             if app.operationActive || app.controller.testRunning || ...
                     app.controller.model.isRecording
                 if app.controller.camera.connected
@@ -136,6 +143,7 @@ classdef View < handle
         end
 
         function updateMachineStatus(app, statuses, connected)
+            % A disconnect invalidates buffered samples from the previous session.
             if ~connected
                 app.controller.samples.clear();
             end
@@ -164,6 +172,7 @@ classdef View < handle
     end
 
     methods (Access = private)
+        %% Window construction
         function createMainWindow(app)
             screen = get(groot, 'ScreenSize');
             width = min(1480, screen(3) - 80);
@@ -248,6 +257,7 @@ classdef View < handle
             control.Value = 'OFF';
         end
 
+        %% PLC status presentation
         function updateSystemStatusIndicator(app, statuses, connected)
             if ~connected || isempty(statuses)
                 app.systemStatusLabel.Text = 'Disconnected';
@@ -324,6 +334,7 @@ classdef View < handle
             end
         end
 
+        %% UI callbacks
         function axisModeChanged(app)
             app.machinePanel.refreshAxisMode();
             app.testPanel.setMachineAvailability( ...
@@ -458,6 +469,7 @@ classdef View < handle
                 sprintf('Cannot jog %s axis', upper(axisName)));
         end
 
+        %% Shared callback helpers
         function runUiAction(app, action, titleText)
             try
                 action();

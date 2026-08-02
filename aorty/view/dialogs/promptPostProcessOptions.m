@@ -1,6 +1,8 @@
 function settings = promptPostProcessOptions(parent)
 %PROMPTPOSTPROCESSOPTIONS Collects manual TIFF export settings.
+% Returns [] when the operator cancels or closes the modal dialog.
 
+% Default to cancellation so every close path is safe.
 settings = [];
 parentPosition = parent.Position;
 width = 430;
@@ -39,12 +41,14 @@ processButton = uibutton(grid, 'Text', 'Process', ...
 processButton.Layout.Row = 3;
 processButton.Layout.Column = 2;
 
+% Block only this dialog; callbacks assign the result before resuming.
 uiwait(dialog);
 if isvalid(dialog)
     delete(dialog);
 end
 
     function acceptDialog(~, ~)
+        % Copy UI values before the figure is deleted by the outer scope.
         settings = struct( ...
             'samplingPeriod', periodField.Value, ...
             'includePrePost', includeCheck.Value);

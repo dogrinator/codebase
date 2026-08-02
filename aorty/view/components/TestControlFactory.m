@@ -2,7 +2,9 @@ classdef TestControlFactory
     %TESTCONTROLFACTORY Creates the repeated controls used by test tabs.
 
     methods (Static)
+        %% Shared form layout and axis-aware rows
         function grid = formGrid(tab, rows)
+            % Reserve the final row for a full-width action button.
             grid = uigridlayout(tab, [rows + 1, 5]);
             grid.ColumnWidth = {190, '1x', '1x', 80, 72};
             grid.RowHeight = repmat({34}, 1, rows + 1);
@@ -20,6 +22,7 @@ classdef TestControlFactory
         end
 
         function controls = axisRow(grid, row, text, value, unit, changed)
+            % The XY lock keeps both values synchronized until the user unlocks it.
             TestControlFactory.label(grid, row, 1, text, '');
             controls.x = uieditfield(grid, 'numeric', 'Value', value);
             controls.x.Layout.Row = row;
@@ -43,6 +46,7 @@ classdef TestControlFactory
                     src, controls.x, controls.y, changed);
         end
 
+        %% Scalar, optional, and action rows
         function control = cycleRow(grid, row, text, value, unit)
             TestControlFactory.label(grid, row, 1, text, '');
             cycleValues = 1:50;
@@ -62,6 +66,7 @@ classdef TestControlFactory
 
         function controls = optionalRow( ...
                 grid, row, text, value, unit, changed)
+            % Pair an enable checkbox with one scalar value field.
             controls.enabled = uicheckbox(grid, ...
                 'Text', text, 'Value', false);
             controls.enabled.Layout.Row = row;
@@ -76,6 +81,7 @@ classdef TestControlFactory
 
         function controls = optionalAxisRow( ...
                 grid, row, text, value, unit, changed)
+            % Pair an enable checkbox with an independently lockable XY value.
             controls.enabled = uicheckbox(grid, ...
                 'Text', text, 'Value', false);
             controls.enabled.Layout.Row = row;
@@ -131,6 +137,7 @@ classdef TestControlFactory
     end
 
     methods (Static, Access = private)
+        %% Primitive layout and XY-lock callbacks
         function label(grid, row, column, text, alignment)
             control = uilabel(grid, 'Text', text);
             control.Layout.Row = row;

@@ -2,23 +2,28 @@ classdef TestPanel < handle
     %TESTPANEL Coordinates presets, axis selection, and test-definition tabs.
 
     properties (SetAccess = private)
+        % Tab group exposed for integration with the main window
         tabs
     end
 
     properties (Access = private)
+        % Dependencies and child component
         settings Settings
         parentFig
         callbacks
         definitionTabs TestDefinitionTabs
+        % Toolbar controls
         presetDrop
         axisModeDrop
         toolbarEditControls = gobjects(0)
+        % Run permissions derived from PLC and application state
         machineRunAllowed = false
         generalMachineAllowed = false
         runtimeLocked = false
     end
 
     methods
+        %% Construction and preset data
         function panel = TestPanel(settings, parentFig, callbacks)
             panel.settings = settings;
             panel.parentFig = parentFig;
@@ -73,11 +78,12 @@ classdef TestPanel < handle
         end
 
         function applyPreset(panel, config)
+            % Validate the complete preset before mutating any visible control.
             panel.validatePresetRoot(config);
             definition = rmfield(config, 'system');
             panel.definitionTabs.validateConfiguration(definition);
             TestCommandBuilder.fromPreset(config, 'pre');
-            panel.definitionTabs.applyConfiguration(definition);
+            panel.definitionTabs.applyValidatedConfiguration(definition);
             panel.axisModeDrop.Value = config.system.axisMode;
             panel.axisModeChanged();
         end
@@ -99,6 +105,7 @@ classdef TestPanel < handle
             enabled = ismember(upper(char(axisName)), axes);
         end
 
+        %% Runtime availability
         function setMachineAvailability(panel, connected, statuses)
             panel.machineRunAllowed = panel.axesAvailable( ...
                 logical(connected), statuses, ...
@@ -136,6 +143,7 @@ classdef TestPanel < handle
     end
 
     methods (Access = private)
+        %% Preset persistence and validation
         function loadPreset(panel)
             try
                 panel.settings.loadAppConfig(panel.presetDrop.Value);
@@ -184,6 +192,7 @@ classdef TestPanel < handle
             end
         end
 
+        %% Dependency and availability helpers
         function axisModeChanged(panel)
             panel.definitionTabs.refreshAxisMode();
             panel.callbacks.axisModeChanged();
@@ -231,6 +240,7 @@ classdef TestPanel < handle
     end
 
     methods (Static, Access = private)
+        %% Exact preset-schema validation
         function requireExactFields(value, required, path)
             if ~isstruct(value) || ~isscalar(value)
                 error('TestPreset:InvalidObject', ...

@@ -119,11 +119,11 @@ for index = 1:2
 end
 
 general = jsondecode(fileread(files{3}));
-verifyEqual(testCase, general.schemaVersion, 1);
+verifyEqual(testCase, general.schemaVersion, 2);
 verifyEqual(testCase, sort(fieldnames(general.cyclic.forceTolerance)), ...
     sort({'x'; 'y'}));
 verifyEqual(testCase, sort(fieldnames(general.camera)), ...
-    sort({'enabled'; 'includePrePost'; 'samplingPeriod'}));
+    sort({'includePrePost'; 'postProcessEnabled'; 'samplingPeriod'}));
 end
 
 function testCameraAcquisitionHasNoSoftwareSamplingGate(testCase)

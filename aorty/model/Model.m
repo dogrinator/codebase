@@ -1,24 +1,23 @@
 classdef Model < handle
-    %MODEL Owns recording state and writes synchronized acquisition files.
+    %MODEL Coordinates recording state and delegates synchronized writes.
 
     properties
-        % Tenzo
-        dt = 0.01;  % time interval of measurement
-
-        % Camera
-        isRecording = false;     % If True = store data to testData
-        recordIndex = 1;        % number of frames recived
-        selectedFolder = 0;      % folder in witch fotos will save
+        % Recording lifecycle and acquisition state
+        isRecording = false;     % Whether incoming samples are recorded
+        recordIndex = 1;         % Next recorded camera-frame index
+        selectedFolder = 0;      % Current recording output folder
         filesOpen = false;
         recordingStatus = 'idle';
         recordingReason = '';
         currentSystemStatus = int16(0);
-        cameraFrameWidth = 0; % To store the width of the frames
-        cameraFrameHeight = 0; % To store the height of the frames
-        recordingDroppedSamples = struct('X', 0, 'Y', 0)
         recordingRestartDetected = false
-        statusResolutionSeconds = AppInfo.PLC_READ_PERIOD_SECONDS
 
+        % Recording integrity metadata
+        recordingDroppedSamples = struct('X', 0, 'Y', 0)
+
+        % Camera dimensions used by the fallback recording header
+        cameraFrameWidth = 0;
+        cameraFrameHeight = 0;
     end
 
     properties (Access = private)
@@ -41,20 +40,6 @@ classdef Model < handle
             model.recordingReason = '';
         end
 
-        function closeFilesRec(model)
-            if model.filesOpen
-                model.filesOpen = false;
-                store = model.recordingStore;
-                model.recordingStore = [];
-                try
-                    store.close();
-                catch exception
-                    warning('Model:RecordingCloseFailed', ...
-                        'Could not close the recording: %s', ...
-                        exception.message);
-                end
-            end
-        end
 
         function finalizeRecording(model, status, reason)
             model.recordingStatus = lower(char(status));
@@ -78,21 +63,8 @@ classdef Model < handle
         end
 
         %% Acquisition writes
-        function saveAxisSamples(model, axisName, timestamps, ...
-                forceValues, untaredForceValues, positionValues)
+        function saveAxisSamples(model, axisName, timestamps, forceValues, untaredForceValues, positionValues)
             if ~model.isRecording
-                return;
-            end
-            counts = [numel(timestamps), numel(forceValues), ...
-                numel(untaredForceValues), numel(positionValues)];
-            if any(counts ~= counts(1))
-                error('Model:RecordingVectorLength', ...
-                    ['%s-axis timestamps, force, untared force, and ' ...
-                    'position vectors must have equal lengths.'], ...
-                    upper(char(axisName)));
-            end
-            count = counts(1);
-            if count == 0
                 return;
             end
             model.recordingStore.appendAxis(axisName, timestamps, ...
@@ -146,10 +118,10 @@ classdef Model < handle
             header = struct( ...
                 'applicationVersion', AppInfo.VERSION, ...
                 'interfaceVersion', ...
-                    PlcAds.EXPECTED_INTERFACE_VERSION, ...
-                'plcInterval', double(model.dt), ...
+                PlcAds.EXPECTED_INTERFACE_VERSION, ...
+                'plcInterval', AppInfo.PLC_SAMPLE_PERIOD_SECONDS, ...
                 'statusResolutionSeconds', ...
-                    double(model.statusResolutionSeconds), ...
+                AppInfo.PLC_READ_PERIOD_SECONDS, ...
                 'camera', camera, ...
                 'plc', struct('X', emptyPlc, 'Y', emptyPlc), ...
                 'test', test);

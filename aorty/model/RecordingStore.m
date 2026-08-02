@@ -1,15 +1,17 @@
 classdef RecordingStore < handle
-    %RECORDINGSTORE Owns the two-file recording and append-only HDF5 data.
+    %RecordingStore Owns the two-file recording and append-only HDF5 data.
 
     properties (SetAccess = private)
-        folderPath
         h5Path
         cameraPath
+
+        % Recording epoch and persisted record counts
         startTime
         cameraRecordCount = 0
         axisRecordCounts = struct('X', 0, 'Y', 0)
     end
 
+    % Open file handles and append state
     properties (Access = private)
         cameraFid = -1
         h5FileId = []
@@ -19,6 +21,7 @@ classdef RecordingStore < handle
         closed = true
     end
 
+    % Fixed metadata widths and HDF5 dataset chunk size
     properties (Constant, Access = private)
         TEXT_STATUS_LENGTH = 16
         TEXT_REASON_LENGTH = 1024
@@ -28,9 +31,11 @@ classdef RecordingStore < handle
 
     methods
         function store = RecordingStore(folderPath, header)
-            store.folderPath = char(folderPath);
-            store.h5Path = fullfile(store.folderPath, 'recording.h5');
-            store.cameraPath = fullfile(store.folderPath, 'cam.bin');
+            % Resolve output paths and expected camera frame size.
+
+            folderPath = char(folderPath);
+            store.h5Path = fullfile(folderPath, 'recording.h5');
+            store.cameraPath = fullfile(folderPath, 'cam.bin');
             store.startTime = datetime('now');
             width = double(header.camera.width);
             height = double(header.camera.height);
@@ -39,6 +44,7 @@ classdef RecordingStore < handle
                 store.expectedFrameBytes = width * height;
             end
 
+            % Refuse to overwrite either recording file.
             existing = {};
             if isfile(store.h5Path), existing{end + 1} = 'recording.h5'; end
             if isfile(store.cameraPath), existing{end + 1} = 'cam.bin'; end
@@ -49,6 +55,7 @@ classdef RecordingStore < handle
                     strjoin(existing, ', '));
             end
 
+            % Create both files and retain handles for append operations.
             try
                 store.createHdf5(header);
                 store.cameraFid = fopen(store.cameraPath, 'wb');
@@ -66,8 +73,8 @@ classdef RecordingStore < handle
             end
         end
 
-        function appendAxis(store, axisName, timestamps, ...
-                forceValues, untaredForceValues, positionValues)
+        function appendAxis(store, axisName, timestamps, forceValues, untaredForceValues, positionValues)
+            % Validate the target axis and sample vectors.
             store.requireOpen();
             axisName = upper(char(axisName));
             if ~ismember(axisName, {'X', 'Y'})
@@ -85,6 +92,7 @@ classdef RecordingStore < handle
                 return;
             end
 
+            % Convert timestamps to seconds from the recording start.
             elapsed = seconds(timestamps(:) - store.startTime);
             values = [double(elapsed(:))'; double(forceValues(:))'; ...
                 double(untaredForceValues(:))'; ...
@@ -100,6 +108,7 @@ classdef RecordingStore < handle
         end
 
         function appendFrame(store, frame, timestamp, index, systemStatus)
+            % Append raw frame bytes and synchronized camera metadata.
             store.requireOpen();
             frame = uint8(frame);
             if store.expectedFrameBytes > 0 && ...
@@ -116,12 +125,14 @@ classdef RecordingStore < handle
                     'Camera frame %d has invalid SystemStatus %d.', ...
                     index, systemStatus);
             end
+            % Store camera frames contiguously for low-overhead recording.
             written = fwrite(store.cameraFid, frame, 'uint8');
             if written ~= numel(frame)
                 error('Model:RecordingWriteFailed', ...
                     'Could not write camera frame %d.', index);
             end
 
+            % Store frame time as seconds from the recording start.
             elapsed = seconds(timestamp - store.startTime);
             record = [double(index); double(elapsed); double(systemStatus)];
             if any(~isfinite(record))
@@ -134,6 +145,8 @@ classdef RecordingStore < handle
         end
 
         function finalize(store, status, reason, integrity)
+            % Persist final status and integrity metadata, then close.
+
             if store.closed
                 return;
             end
@@ -148,6 +161,7 @@ classdef RecordingStore < handle
             store.flush();
             store.close();
 
+            % Write final metadata after append handles are closed.
             RecordingStore.writeFixedTextAttribute( ...
                 store.h5Path, '/metadata', 'status', status, ...
                 store.TEXT_STATUS_LENGTH);
@@ -180,12 +194,14 @@ classdef RecordingStore < handle
         end
 
         function flush(store)
+            % Flush pending HDF5 writes while the store is open.
             if ~store.closed && ~isempty(store.h5FileId)
                 H5F.flush(store.h5FileId, 'H5F_SCOPE_LOCAL');
             end
         end
 
         function close(store)
+            % Close every owned handle; safe to call repeatedly.
             if ~isempty(store.cameraDatasetId)
                 try H5D.close(store.cameraDatasetId); catch, end
                 store.cameraDatasetId = [];
@@ -213,8 +229,10 @@ classdef RecordingStore < handle
         end
     end
 
+    %% Methods for file handling
     methods (Access = private)
         function createHdf5(store, header)
+            % Create the HDF5 datasets and recording metadata.
             h5create(store.h5Path, '/metadata/schema_version', [1 1], ...
                 'Datatype', 'uint32');
             h5write(store.h5Path, '/metadata/schema_version', uint32(1));
@@ -303,6 +321,7 @@ classdef RecordingStore < handle
         end
 
         function openPersistentHandles(store)
+            % Retain dataset handles used by append operations.
             store.h5FileId = H5F.open( ...
                 store.h5Path, 'H5F_ACC_RDWR', 'H5P_DEFAULT');
             store.cameraDatasetId = H5D.open( ...
@@ -314,6 +333,7 @@ classdef RecordingStore < handle
         end
 
         function appendDataset(~, datasetId, values, currentCount)
+            % Extend a dataset and write the new records.
             fieldCount = size(values, 1);
             recordCount = size(values, 2);
             H5D.set_extent(datasetId, ...
@@ -345,6 +365,7 @@ classdef RecordingStore < handle
         end
 
         function writeStructAttributes(filename, target, values)
+            % Write scalar or flat structure fields as HDF5 attributes.
             names = fieldnames(values);
             for index = 1:numel(names)
                 name = names{index};
@@ -374,8 +395,7 @@ classdef RecordingStore < handle
             end
         end
 
-        function writeFixedTextAttribute( ...
-                filename, target, name, value, width)
+        function writeFixedTextAttribute(filename, target, name, value, width)
             value = char(value);
             if numel(value) > width
                 value = value(1:width);
@@ -385,8 +405,7 @@ classdef RecordingStore < handle
         end
 
         function value = formatTime(timestamp)
-            value = char(string(timestamp, ...
-                'yyyy-MM-dd HH:mm:ss.SSS'));
+            value = char(string(timestamp, 'yyyy-MM-dd HH:mm:ss.SSS'));
         end
 
         function deleteIfPresent(filename)

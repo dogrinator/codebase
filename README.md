@@ -76,7 +76,7 @@ TwinCat/AortyPLC/
 - The Beckhoff TwinCAT ADS assembly used by
   `aorty/model/plc/PlcAds.m`.
 - A TwinCAT/XAE installation for building and deploying the PLC project.
-- Image Acquisition Toolbox only when camera capture is required.
+- Image Acquisition Toolbox for recorded tests.
 - Computer Vision Toolbox only when annotated TIFF export is required
   (`insertText`).
 
@@ -99,8 +99,8 @@ connecting to another machine.
    run("aorty/main.m")
    ```
 
-5. The application opens offline. Use the UI switches to connect the PLC and,
-   when required, the camera.
+5. The application opens offline. Use the UI switches to connect the PLC and
+   camera before starting a recorded test.
 
 At PLC connection, MATLAB reads `nInterfaceVersion` from both axes. Connection
 is rejected if either axis does not report interface version `6`.
@@ -109,7 +109,7 @@ is rejected if either axis does not report interface version `6`.
 
 1. Connect the PLC and verify that the intended axes are powered, idle, and
    free of errors.
-2. Connect the camera when raw image recording is required.
+2. Connect the camera before any recording-enabled test.
 3. Select X, Y, or Both and configure one test tab.
 4. Review force, displacement, rate, tolerance, hold-time, post-test, and
    recording options.

@@ -107,7 +107,7 @@ verifyEqual(testCase, char(h5readatt( ...
 verifyEqual(testCase, h5readatt( ...
     filename, '/settings/test/X', 'preTestOnly'), uint8(1));
 verifyEqual(testCase, h5readatt( ...
-    filename, '/camera', 'connected'), uint8(0));
+    filename, '/camera', 'connected'), uint8(1));
 clear cleanup;
 end
 
@@ -156,6 +156,24 @@ verifyError(testCase, @() controler.startTestForTesting( ...
 verifyFalse(testCase, controler.testRunning);
 verifyFalse(testCase, controler.model.filesOpen);
 verifyEqual(testCase, controler.model.currentSystemStatus, int16(0));
+end
+
+function testRecordingRequiresConnectedCameraBeforeFolderSelection(testCase)
+[controler, ~, command] = connectedController(testCase.TestData.root);
+controler.camera.connected = false;
+controler.recordingFolderSelector = @failFolderPrompt;
+exception = [];
+try
+    controler.startTestForTesting( ...
+        struct('X', command, 'Y', []), postSettings(), true);
+catch exception
+end
+verifyNotEmpty(testCase, exception);
+verifyEqual(testCase, exception.identifier, 'Control:CameraDisconnected');
+verifyEqual(testCase, exception.message, ...
+    'Connect the camera before starting a recorded test.');
+verifyFalse(testCase, controler.testRunning);
+verifyFalse(testCase, controler.model.filesOpen);
 end
 
 function testCheckedPreTestPromptsAndCompletesRecording(testCase)
@@ -310,8 +328,11 @@ client = FakeAdsClient();
 plc = Plc(Model());
 plc.connectClientForTesting(client);
 model = plc.model;
-controler = Control(model, plc);
-settings = Settings(plc, Camera(model));
+camera = Camera(model);
+camera.cameraHW = FakeCameraHardware();
+camera.connected = true;
+controler = Control(model, plc, camera);
+settings = Settings(plc, camera);
 settings.loadAppConfig('default');
 commands = TestCommandBuilder.fromPreset(settings.appConfig, 'pre');
 command = commands.X;

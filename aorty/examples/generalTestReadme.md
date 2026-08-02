@@ -5,7 +5,7 @@ of the UI presets. Use it when endpoints vary by cycle, when a test definition
 must be reviewable and reusable, or when the complete experiment should be
 stored as one versioned file.
 
-The current format is schema version `1`. The canonical working example is
+The current format is schema version `2`. The canonical working example is
 [`general_test_example.json`](general_test_example.json).
 
 ## Import and run
@@ -15,7 +15,7 @@ The current format is schema version `1`. The canonical working example is
 3. In Aorty, open the **General** tab and select the JSON file.
 4. Review the generated summary, active axes, pre-test phases, main-test type,
    post-test action, and camera processing options.
-5. Connect the PLC and camera as needed, then start the test.
+5. Connect the PLC and camera, then start the test.
 6. Select an empty recording directory.
 
 The imported JSON is authoritative. Values from the Single, Cyclic, or
@@ -46,7 +46,7 @@ flowchart TD
     Single --> Post["Run selected post-test action after success"]
     Cyclic --> Post
     Post --> Finish["Increment operation counter and finalize recording"]
-    Finish --> Tiff{"camera.enabled?"}
+    Finish --> Tiff{"camera.postProcessEnabled?"}
     Tiff -->|Yes| Process["Create processed_frames TIFF output"]
     Tiff -->|No| Raw["Keep raw recording only"]
 ```
@@ -63,7 +63,7 @@ by `testType`:
 
 | Field | Type | Allowed values | Meaning |
 | --- | --- | --- | --- |
-| `schemaVersion` | number | `1` | Selects this schema contract |
+| `schemaVersion` | number | `2` | Selects this schema contract |
 | `axisMode` | string | `"x"`, `"y"`, `"both"` | Axes that execute the test |
 | `testType` | string | `"single"`, `"cyclic"` | Main-test definition to use |
 | `preTest` | object | Required | Optional force pre-conditioning configuration |
@@ -238,7 +238,7 @@ valid saved position.
 
 ```json
 "camera": {
-  "enabled": true,
+  "postProcessEnabled": true,
   "samplingPeriod": 0.1,
   "includePrePost": true
 }
@@ -246,15 +246,15 @@ valid saved position.
 
 | Field | Type | Meaning |
 | --- | --- | --- |
-| `enabled` | Boolean | Enables automatic TIFF post-processing after recording |
+| `postProcessEnabled` | Boolean | Enables automatic TIFF post-processing after recording |
 | `samplingPeriod` | finite number ≥ 0 | Minimum interval between exported TIFF frames; `0` exports every eligible frame |
 | `includePrePost` | Boolean | Includes pre-test and post-test statuses as well as the main test |
 
-`camera.enabled` does not reduce or disable raw camera capture. Raw frames are
-acquired at the configured hardware FPS whenever the camera is connected and
-recording. When `includePrePost` is false, only statuses `20` and `21` are
-eligible for TIFF output; when true, statuses `10`, `11`, `20`, `21`, and `30`
-are eligible.
+`camera.postProcessEnabled` controls only automatic TIFF creation. Every
+recorded test requires a connected camera and captures raw frames at the
+configured hardware FPS. When `includePrePost` is false, only statuses `20`
+and `21` are eligible for TIFF output; when true, statuses `10`, `11`, `20`,
+`21`, and `30` are eligible.
 
 See the [interface and data-contract guide](../model/plc/interfaceReadme.md)
 for recording and TIFF details.
@@ -270,15 +270,15 @@ not preserved. The following legacy names are rejected:
 - `forceDropPercent`
 - `forceDropThreshold`
 - `camera.period` (use `camera.samplingPeriod`)
+- `camera.enabled` (use `camera.postProcessEnabled`)
 
-There is no automatic conversion for older schema-1 files missing the current
-tolerance or hold-time fields.
+Schema-1 definitions are rejected rather than converted automatically.
 
 ## Author checklist
 
 Before importing a new file, confirm:
 
-- `schemaVersion` is `1`.
+- `schemaVersion` is `2`.
 - The selected test object matches `testType`, and the other test object is
   absent.
 - Every axis object contains finite `x` and `y` values.

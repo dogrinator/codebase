@@ -26,9 +26,9 @@ classdef GeneralTestDefinition
             GeneralTestDefinition.requireRequiredFields(definition, ...
                 {'schemaVersion', 'axisMode', 'testType', 'preTest', ...
                 'postTest', 'camera'}, 'root');
-            if ~isscalar(definition.schemaVersion) || definition.schemaVersion ~= 1
+            if ~isscalar(definition.schemaVersion) || definition.schemaVersion ~= 2
                 error('GeneralTest:SchemaVersion', ...
-                    'schemaVersion must be 1.');
+                    'schemaVersion must be 2.');
             end
             axisMode = GeneralTestDefinition.textChoice(definition.axisMode, ...
                 {'x', 'y', 'both'}, 'axisMode');
@@ -36,32 +36,9 @@ classdef GeneralTestDefinition
                 {'single', 'cyclic'}, 'testType');
             GeneralTestDefinition.requireFields(definition, ...
                 [commonFields, {testType}], 'root', {'sourceFile'});
-            removed = {'forceDropPercent', 'forceDropThreshold'};
-            legacyCommand = {'preTestHoldTime', 'forceHoldTime'};
-            GeneralTestDefinition.rejectFields( ...
-                definition, legacyCommand, 'root');
-            GeneralTestDefinition.rejectFields( ...
-                definition.preTest, legacyCommand, 'preTest');
-            if isfield(definition.preTest, 'preload')
-                GeneralTestDefinition.rejectFields( ...
-                    definition.preTest.preload, legacyCommand, ...
-                    'preTest.preload');
-            end
-            if isfield(definition, 'single')
-                GeneralTestDefinition.rejectFields( ...
-                    definition.single, [removed, legacyCommand], 'single');
-            end
-            if isfield(definition, 'cyclic')
-                GeneralTestDefinition.rejectFields( ...
-                    definition.cyclic, [removed, legacyCommand], 'cyclic');
-            end
 
             GeneralTestDefinition.validatePreTest( ...
                 definition.preTest, axisMode);
-            if ~isfield(definition, testType)
-                error('GeneralTest:MissingField', ...
-                    'The selected testType requires a "%s" object.', testType);
-            end
             if strcmp(testType, 'single')
                 GeneralTestDefinition.validateSingle(definition.single);
             else
@@ -72,12 +49,11 @@ classdef GeneralTestDefinition
                 {'stay', 'saved', 'sequence_start', 'pretest_final', ...
                 'zero_force'}, 'postTest');
             GeneralTestDefinition.requireFields(definition.camera, ...
-                {'enabled', 'samplingPeriod', 'includePrePost'}, ...
-                'camera');
-            GeneralTestDefinition.rejectFields(definition.camera, ...
-                {'period'}, 'camera');
-            GeneralTestDefinition.booleanValue(definition.camera.enabled, ...
-                'camera.enabled');
+                {'postProcessEnabled', 'samplingPeriod', ...
+                'includePrePost'}, 'camera');
+            GeneralTestDefinition.booleanValue( ...
+                definition.camera.postProcessEnabled, ...
+                'camera.postProcessEnabled');
             GeneralTestDefinition.booleanValue( ...
                 definition.camera.includePrePost, ...
                 'camera.includePrePost');
@@ -114,7 +90,7 @@ classdef GeneralTestDefinition
             else
                 pre = 'no pre-test';
             end
-            text = sprintf('Schema 1 | %s axis | %s (%s) | %s | post: %s', ...
+            text = sprintf('Schema 2 | %s axis | %s (%s) | %s | post: %s', ...
                 axisMode, testType, detail, pre, char(definition.postTest));
         end
     end
@@ -282,14 +258,6 @@ classdef GeneralTestDefinition
             end
         end
 
-        function rejectFields(value, fields, path)
-            for index = 1:numel(fields)
-                if isfield(value, fields{index})
-                    error('GeneralTest:UnsupportedField', ...
-                        '%s.%s is not supported.', path, fields{index});
-                end
-            end
-        end
 
         function booleanValue(value, path)
             if ~(islogical(value) && isscalar(value))

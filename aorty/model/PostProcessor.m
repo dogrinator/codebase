@@ -1,10 +1,10 @@
 classdef PostProcessor
-    %POSTPROCESSOR Synchronizes recorded sensor data with camera frames.
+    %PostProcessor Aligns recorded sensor samples to camera frames and exports TIFFs.
 
     methods (Static)
         % Process recorded data and save annotated camera frames.
         function result = processData(folderPath, options)
-            % folderPath: The string path to the folder where the test files are saved.
+            % folderPath is the directory containing recording.h5 and cam.bin.
             if nargin < 2
                 options = struct();
             end
@@ -15,7 +15,7 @@ classdef PostProcessor
                 'status', 'completed', ...
                 'message', '');
 
-            disp('--- Starting Offline Synchronization and Post-Processing ---');
+            disp('--- Starting offline post-processing ---');
 
             recording = PostProcessor.readRecording(folderPath);
             dataX = recording.dataX;
@@ -97,7 +97,7 @@ classdef PostProcessor
 
                 % Get camera timestamp for the current frame
                 cameraTime = camTimestamps.Timestamp(i);
-                %% 6. Match the nearest sensor values
+                %% Match the nearest sensor values
                 sampleX = PostProcessor.nearestSample(dataX, cameraTime);
                 sampleY = PostProcessor.nearestSample(dataY, cameraTime);
                 matchedX = sampleX.Force;
@@ -107,7 +107,7 @@ classdef PostProcessor
                 matchedUntaredY = sampleY.UntaredForce;
                 matchedPositionY = sampleY.Position;
 
-                %% 7. Process and Save the Image
+                %% Process and Save the Image
                 txtOverlay = sprintf('X: %.5f | Y: %.5f', matchedX, matchedY);
                 delta = cameraTime - baseTime;
                 baseTimeStr = char(string(baseTime, 'dd.MM.yyyy HH:mm:ss'));
@@ -141,10 +141,11 @@ classdef PostProcessor
             end
 
             result.exportedFrameCount = outputIndex;
-            disp('--- Post-Processing Complete! All data is perfectly synced. ---');
+            disp('--- Post-processing complete ---');
         end
 
         function options = normalizeOptions(folderPath, options)
+            % Apply defaults and validate all caller-provided options.
             if ~(ischar(folderPath) || ...
                     (isstring(folderPath) && isscalar(folderPath))) || ...
                     ~isfolder(folderPath)
@@ -196,6 +197,7 @@ classdef PostProcessor
         end
 
         function recording = readRecording(folderPath)
+            % Read and validate one recording for post-processing.
             h5File = fullfile(folderPath, 'recording.h5');
             camBinFile = fullfile(folderPath, 'cam.bin');
             if ~isfile(h5File)
@@ -311,7 +313,7 @@ classdef PostProcessor
                 startTime + seconds(cameraData(2, :)'), ...
                 cameraData(3, :)', ...
                 'VariableNames', ...
-                    {'Index', 'Timestamp', 'SystemStatus'});
+                {'Index', 'Timestamp', 'SystemStatus'});
             recording = struct( ...
                 'dataX', dataX, ...
                 'dataY', dataY, ...
@@ -321,6 +323,7 @@ classdef PostProcessor
         end
 
         function data = sampleTable(values, startTime, axisName)
+            % Convert one axis dataset to a timestamped sample table.
             if size(values, 1) ~= 4 || any(~isfinite(values), 'all')
                 error('PostProcessor:InvalidMeasurementData', ...
                     '%s-axis samples must contain four finite rows.', ...
@@ -334,11 +337,11 @@ classdef PostProcessor
                 startTime + seconds(values(1, :)'), ...
                 values(2, :)', values(3, :)', values(4, :)', ...
                 'VariableNames', ...
-                    {'Timestamp', 'Force', 'UntaredForce', 'Position'});
+                {'Timestamp', 'Force', 'UntaredForce', 'Position'});
         end
 
-        function selectedRows = selectFrameRows( ...
-                camTimestamps, samplingPeriod, phaseScope)
+        function selectedRows = selectFrameRows(camTimestamps, samplingPeriod, phaseScope)
+            % Select frames from the requested phases before interval sampling.
             statuses = double(camTimestamps.SystemStatus);
             switch char(phaseScope)
                 case 'main-test'
@@ -445,6 +448,7 @@ classdef PostProcessor
         end
 
         function writeTiffEntry(fid, tag, type, count, value)
+            % Write one 12-byte TIFF image-file-directory entry.
             fwrite(fid, uint16(tag), 'uint16');
             fwrite(fid, uint16(type), 'uint16');
             fwrite(fid, uint32(count), 'uint32');
@@ -457,6 +461,7 @@ classdef PostProcessor
         end
 
         function padTiffToOffset(fid, byteOffset)
+            % Pad forward without crossing the fixed TIFF layout boundary.
             current = ftell(fid);
             if current > byteOffset
                 error('PostProcessor:TiffLayout', ...
@@ -469,6 +474,7 @@ classdef PostProcessor
         end
 
         function value = nearestSample(data, timestamp)
+            % Return the sample with the smallest timestamp difference.
             [~, index] = min(abs(data.Timestamp - timestamp));
             value = data(index, :);
         end

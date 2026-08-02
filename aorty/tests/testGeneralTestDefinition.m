@@ -11,7 +11,7 @@ end
 
 function testValidMixedModeDefinition(testCase)
 definition = GeneralTestDefinition.load(testCase.TestData.example);
-verifyEqual(testCase, definition.schemaVersion, 1);
+verifyEqual(testCase, definition.schemaVersion, 2);
 verifyTrue(testCase, isfield(definition, 'sourceFile'));
 verifyEqual(testCase, definition.cyclic.forceTolerance.x, 0.1);
 verifyEqual(testCase, lower(definition.cyclic.loadMode), 'force');
@@ -21,7 +21,7 @@ end
 
 function testSchemaVersionAndMalformedCounts(testCase)
 definition = GeneralTestDefinition.load(testCase.TestData.example);
-definition.schemaVersion = 2;
+definition.schemaVersion = 3;
 verifyError(testCase, @() GeneralTestDefinition.validate(definition), ...
     'GeneralTest:SchemaVersion');
 
@@ -141,6 +141,16 @@ definition = GeneralTestDefinition.load(testCase.TestData.example);
 definition.camera.includePrePost = 1;
 verifyError(testCase, @() GeneralTestDefinition.validate(definition), ...
     'GeneralTest:InvalidBoolean');
+
+definition = GeneralTestDefinition.load(testCase.TestData.example);
+definition.camera.postProcessEnabled = 1;
+verifyError(testCase, @() GeneralTestDefinition.validate(definition), ...
+    'GeneralTest:InvalidBoolean');
+
+definition = GeneralTestDefinition.load(testCase.TestData.example);
+definition.camera.enabled = true;
+verifyError(testCase, @() GeneralTestDefinition.validate(definition), ...
+    'GeneralTest:UnsupportedField');
 
 definition = GeneralTestDefinition.load(testCase.TestData.example);
 definition.camera.period = 0.1;

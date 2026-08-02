@@ -1,14 +1,16 @@
 classdef SettingsWindow < handle
     %SETTINGSWINDOW Edits and applies the fixed stand hardware configuration.
-    %SETTINGSWINDOW Hardware configuration window and field binding.
+    % The window binds numeric UI fields to the Settings hardware schema.
 
     properties (SetAccess = private)
+        % Settings dependency and window ownership
         settings Settings
         parentFig
         fig
     end
 
     properties (Access = private)
+        % Controls bound to camera and per-axis configuration fields
         configDrop
         camUI = struct()
         plcXUI = struct()
@@ -19,12 +21,14 @@ classdef SettingsWindow < handle
     end
 
     methods
+        %% Window lifecycle and machine-idle interlock
         function window = SettingsWindow(settings, parentFig)
             window.settings = settings;
             window.parentFig = parentFig;
         end
 
         function show(window)
+            % Reuse the existing figure so repeated opens preserve user input.
             if window.isOpen()
                 figure(window.fig);
                 return;
@@ -101,6 +105,7 @@ classdef SettingsWindow < handle
         end
 
         function setMachineIdle(window, idle)
+            % Hardware configuration is immutable while either axis is active.
             window.machineIdle = logical(idle);
             for index = 1:numel(window.editControls)
                 if isvalid(window.editControls(index))
@@ -115,7 +120,7 @@ classdef SettingsWindow < handle
     end
 
     methods (Access = private)
-        %% Configuration and UI synchronization
+        %% Configuration field construction and synchronization
         function ensureConfigLoaded(window)
             if ~isempty(window.settings.hwConfig)
                 return;
@@ -196,6 +201,7 @@ classdef SettingsWindow < handle
             end
         end
 
+        %% Configuration persistence and application
         function loadConfig(window)
             try
                 window.settings.loadHwConfig(window.configDrop.Value);
@@ -233,6 +239,7 @@ classdef SettingsWindow < handle
         end
 
         function gatherConfig(window)
+            % Pull every visible value into Settings as one atomic snapshot.
             cfg = window.settings.hwConfig;
             cfg.camera = window.pullFields(window.camUI, cfg.camera);
             cfg.plc.xAxis = window.pullFields(window.plcXUI, cfg.plc.xAxis);
@@ -256,6 +263,7 @@ classdef SettingsWindow < handle
             end
         end
 
+        %% UI helpers
         function items = nonEmptyItems(~, items)
             if isempty(items)
                 items = {'default'};

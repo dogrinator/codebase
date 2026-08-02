@@ -13,8 +13,7 @@ classdef AcquisitionBuffer < handle
     end
 
     methods
-        function append(buffer, forceX, forceY, untaredX, untaredY, ...
-                positionX, positionY, timestampX, timestampY)
+        function append(buffer, forceX, forceY, untaredX, untaredY, positionX, positionY, timestampX, timestampY)
             buffer.forceX = [buffer.forceX, forceX];
             buffer.forceY = [buffer.forceY, forceY];
             buffer.untaredForceX = [buffer.untaredForceX, untaredX];
@@ -28,9 +27,9 @@ classdef AcquisitionBuffer < handle
         function batch = plotBatch(buffer)
             batch = struct( ...
                 'Force', struct( ...
-                    'X', buffer.forceX, 'Y', buffer.forceY), ...
+                'X', buffer.forceX, 'Y', buffer.forceY), ...
                 'Displacement', struct( ...
-                    'X', buffer.positionX, 'Y', buffer.positionY));
+                'X', buffer.positionX, 'Y', buffer.positionY));
         end
 
         function flush(buffer, model)

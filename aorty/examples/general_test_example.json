@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "axisMode": "both",
   "testType": "cyclic",
   "preTest": {
@@ -36,7 +36,7 @@
   },
   "postTest": "sequence_start",
   "camera": {
-    "enabled": true,
+    "postProcessEnabled": true,
     "samplingPeriod": 0.1,
     "includePrePost": true
   }

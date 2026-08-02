@@ -6,10 +6,12 @@ classdef TestDefinitionTabs < handle
     end
 
     properties (Access = private)
+        % Parent window and callbacks supplied by the owning TestPanel
         parentFig
         callbacks
         axisModeGetter
         axisModeSetter
+        % Test controls and mutually exclusive post-test selection
         controls = struct()
         postButtons
         postSelection = 'Stay at unchanged position'
@@ -18,12 +20,14 @@ classdef TestDefinitionTabs < handle
         generalRun
         generalSummary
         generalDefinition = []
+        % Runtime lock snapshot used to restore each control's prior state
         runtimeLocked = false
         lockedControls = gobjects(0)
         lockedEnableStates = {}
     end
 
     methods
+        %% Construction, preset data, and public state
         function view = TestDefinitionTabs( ...
                 parent, parentFig, callbacks, axisModeGetter, axisModeSetter)
             view.parentFig = parentFig;
@@ -52,8 +56,7 @@ classdef TestDefinitionTabs < handle
             config.post.afterTest = view.postSelection;
         end
 
-        function applyConfiguration(view, config)
-            view.validateConfiguration(config);
+        function applyValidatedConfiguration(view, config)
             sections = {'pre', 'single', 'cyclic', 'general'};
             for index = 1:numel(sections)
                 name = sections{index};
@@ -119,6 +122,7 @@ classdef TestDefinitionTabs < handle
         end
 
         function setRuntimeLocked(view, locked)
+            % Preserve per-control enable states so unlocking restores dependencies.
             locked = logical(locked);
             if locked == view.runtimeLocked
                 view.enforceRuntimeLock();
@@ -156,6 +160,7 @@ classdef TestDefinitionTabs < handle
     end
 
     methods (Access = private)
+        %% Test-tab construction
         function createPreTestTab(view, tab)
             grid = TestControlFactory.formGrid(tab, 13);
             grid.Scrollable = 'on';
@@ -328,7 +333,7 @@ classdef TestDefinitionTabs < handle
                 grid, 6, 'RUN IMPORTED TEST', view.callbacks.runGeneral);
             view.generalRun.Enable = 'off';
             view.generalRun.Tooltip = ...
-                'Run is enabled after a schemaVersion 1 JSON file validates.';
+                'Run is enabled after a schemaVersion 2 JSON file validates.';
         end
 
         function createPostTestTab(view, tab)
@@ -355,7 +360,9 @@ classdef TestDefinitionTabs < handle
             view.selectPostAction('Stay at unchanged position');
         end
 
+        %% Control dependencies and runtime locking
         function refreshDependencies(view)
+            % Compute dependency state first; the runtime lock is applied last.
             rows = {view.controls.single.primary, ...
                 view.controls.single.rate, ...
                 view.controls.single.holdTime, ...
@@ -426,6 +433,7 @@ classdef TestDefinitionTabs < handle
                 strcmp(mode, 'Both'));
         end
 
+        %% General-test import
         function browseGeneralTest(view)
             [file, folder] = uigetfile({'*.json', ...
                 'General Test JSON (*.json)'});
@@ -434,6 +442,7 @@ classdef TestDefinitionTabs < handle
             end
             filename = fullfile(folder, file);
             try
+                % A valid imported definition is authoritative for axis selection.
                 view.generalDefinition = ...
                     GeneralTestDefinition.load(filename);
                 view.controls.general.testFile.Value = filename;
@@ -461,6 +470,7 @@ classdef TestDefinitionTabs < handle
             view.notifyPreviewChanged();
         end
 
+        %% Preset serialization and validation
         function values = collectValues(view, controls)
             if isstruct(controls)
                 values = struct();
@@ -537,6 +547,7 @@ classdef TestDefinitionTabs < handle
             end
         end
 
+        %% Post-test selection and change notifications
         function postActionSelected(view, selected)
             if ~selected.Value
                 selected.Value = true;
@@ -575,6 +586,7 @@ classdef TestDefinitionTabs < handle
             end
         end
 
+        %% Numeric constraints and UI helpers
         function configurePositiveAxisRow(view, controls)
             view.configurePositiveField(controls.x);
             view.configurePositiveField(controls.y);
@@ -620,6 +632,7 @@ classdef TestDefinitionTabs < handle
     end
 
     methods (Static, Access = private)
+        %% Exact preset-schema validation
         function requireExactFields(value, required, path)
             if ~isstruct(value) || ~isscalar(value)
                 error('TestPreset:InvalidObject', ...
