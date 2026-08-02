@@ -12,10 +12,12 @@ classdef TestPanel < handle
         parentFig
         callbacks
         definitionTabs TestDefinitionTabs
+
         % Toolbar controls
         presetDrop
         axisModeDrop
         toolbarEditControls = gobjects(0)
+
         % Run permissions derived from PLC and application state
         machineRunAllowed = false
         generalMachineAllowed = false
@@ -34,7 +36,7 @@ classdef TestPanel < handle
             uilabel(grid, 'Text', 'Preset:');
             panel.presetDrop = uidropdown(grid, ...
                 'Items', panel.nonEmptyItems( ...
-                    panel.settings.listAppConfigs()), ...
+                panel.settings.listAppConfigs()), ...
                 'ValueChangedFcn', @(~, ~) panel.loadPreset());
             saveButton = uibutton(grid, 'Text', 'Save', ...
                 'ButtonPushedFcn', @(~, ~) panel.savePreset(false));

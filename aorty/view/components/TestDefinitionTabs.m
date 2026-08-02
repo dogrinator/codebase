@@ -11,6 +11,7 @@ classdef TestDefinitionTabs < handle
         callbacks
         axisModeGetter
         axisModeSetter
+
         % Test controls and mutually exclusive post-test selection
         controls = struct()
         postButtons
@@ -20,6 +21,7 @@ classdef TestDefinitionTabs < handle
         generalRun
         generalSummary
         generalDefinition = []
+
         % Runtime lock snapshot used to restore each control's prior state
         runtimeLocked = false
         lockedControls = gobjects(0)

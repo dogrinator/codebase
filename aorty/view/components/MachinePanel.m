@@ -11,6 +11,7 @@ classdef MachinePanel < handle
         stopButton
         powerButton
         errorButton
+
         % PLC status and machine-idle state
         settingsIdle = true
         connected = false
@@ -22,6 +23,7 @@ classdef MachinePanel < handle
         callbacks
         axisModeGetter
         previewGetter
+
         % Camera preview and manual-motion controls
         cameraContent
         xJogOverlay
@@ -38,6 +40,7 @@ classdef MachinePanel < handle
         savePositionButton
         restorePositionButton
         machineStatusLabel
+
         % Live plot state, force references, and hover selection
         forceReferences = struct('X', [], 'Y', [])
         operationActive = false
@@ -651,9 +654,9 @@ classdef MachinePanel < handle
                 line = yline(axesHandle, entry.target, lineStyle, ...
                     'Color', color, 'LineWidth', 1.25, ...
                     'HitTest', 'off', 'PickableParts', 'none');
-                references(end + 1) = struct( ... %#ok<AGROW>
+                references(end + 1) = struct( ...
                     'line', line, 'band', band, ...
-                    'entry', entry, 'baseWidth', 1.25);
+                    'entry', entry, 'baseWidth', 1.25);%#ok<AGROW>
             end
         end
 
