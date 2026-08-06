@@ -325,6 +325,21 @@ verifyError(testCase, @() settings.applyPlcConfig(), ...
 verifyEmpty(testCase, client.Writes);
 end
 
+function testSelectedHardwareProfileWritesBothAxes(testCase)
+[plc, client] = connectedPlc();
+settings = Settings(plc, Camera(plc.model));
+settings.loadHwConfig('default');
+client.clearWrites();
+
+settings.applyPlcConfig();
+
+symbols = writtenSymbols(client);
+verifyTrue(testCase, any(contains(symbols, ...
+    'MAIN.stSettingsX.fMaxForce')));
+verifyTrue(testCase, any(contains(symbols, ...
+    'MAIN.stSettingsY.fMaxForce')));
+end
+
 function testCommandValidationBoundaries(testCase)
 [plc, client] = connectedPlc();
 bad = command(zeros(1, 51), zeros(1, 51));

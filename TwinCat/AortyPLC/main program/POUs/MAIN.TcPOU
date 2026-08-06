@@ -93,7 +93,7 @@ fbSafetyY(
 fbSystemBufferX(
 	stSystemStatus:= stSystemStatusX,
 	bBlockTar:= fbMovementControllerX.bBusy OR fbSafetyX.bHoming,
-	nRawTenzo:= nRawTenzoX,
+	nRawTenzo:= -nRawTenzoX,
 	fTenzoCons:=stSettingsX.fTenzoCons,
 	fTenzoOffset:= stSettingsX.fTenzoOffset,
 	bStartTar:= stMoveCommandX.bStartTar,
@@ -209,6 +209,7 @@ fbStatusPublisherX(
 	bHomed := fbSafetyX.bHomed,
 	bStopped := fbSafetyX.bStopped,
 	bProtectiveStop := fbSafetyX.bProtectiveStop,
+	bControllerHalt := fbMovementControllerX.stateHalt,
 	bSafetyError := fbSafetyX.bError,
 	nSafetyErrorCode := fbSafetyX.nErrorCode,
 	nSafetyAxisErrorID := fbSafetyX.nAxisErrorID,
@@ -230,6 +231,7 @@ fbStatusPublisherY(
 	bHomed := fbSafetyY.bHomed,
 	bStopped := fbSafetyY.bStopped,
 	bProtectiveStop := fbSafetyY.bProtectiveStop,
+	bControllerHalt := fbMovementControllerY.stateHalt,
 	bSafetyError := fbSafetyY.bError,
 	nSafetyErrorCode := fbSafetyY.nErrorCode,
 	nSafetyAxisErrorID := fbSafetyY.nAxisErrorID,
@@ -287,6 +289,8 @@ stMoveCommandY.bRestorePosition := FALSE;
       <LineId Id="90" Count="47" />
       <LineId Id="143" Count="7" />
       <LineId Id="2" Count="0" />
+      <LineId Id="152" Count="62" />
+      <LineId Id="7075" Count="0" />
     </LineIds>
   </POU>
 </TcPlcObject>

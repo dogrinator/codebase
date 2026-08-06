@@ -11,6 +11,8 @@ classdef Settings < handle
         % Config data
         hwConfig  = [];
         appConfig = [];
+        activeHwConfigName = ''
+        activeAppConfigName = ''
     end
 
     methods
@@ -33,11 +35,13 @@ classdef Settings < handle
             config = Settings.readJson(settings.hwPath, filename);
             Settings.validateHardwareConfig(config);
             settings.hwConfig = config;
+            settings.activeHwConfigName = char(filename);
         end
 
         function saveHwConfig(settings, filename)
             Settings.validateHardwareConfig(settings.hwConfig);
             Settings.writeJson(settings.hwPath, filename, settings.hwConfig);
+            settings.activeHwConfigName = char(filename);
         end
 
         function applyCameraConfig(settings)
@@ -81,13 +85,84 @@ classdef Settings < handle
         end
 
         function loadAppConfig(settings, filename)
-            settings.appConfig = ...
-                Settings.readJson(settings.appPath, filename);
+            config = Settings.readJson(settings.appPath, filename);
+            settings.appConfig = settings.normalizeAppConfig(config);
+            settings.activeAppConfigName = char(filename);
         end
 
         function saveAppConfig(settings, filename)
             Settings.writeJson( ...
                 settings.appPath, filename, settings.appConfig);
+            settings.activeAppConfigName = char(filename);
+        end
+    end
+
+    methods (Access = private)
+        function config = normalizeAppConfig(settings, config)
+            if isfield(config, 'schemaVersion')
+                if ~isnumeric(config.schemaVersion) || ...
+                        ~isscalar(config.schemaVersion) || ...
+                        config.schemaVersion ~= 2
+                    error('TestPreset:SchemaVersion', ...
+                        'Application preset schemaVersion must be 2.');
+                end
+                return;
+            end
+
+            if isempty(settings.hwConfig)
+                error('TestPreset:MissingHardwareConfig', ...
+                    ['Load a hardware configuration before importing an ' ...
+                    'unversioned application preset.']);
+            end
+            if ~isfield(config, 'pre') || ...
+                    ~isfield(config.pre, 'cyclicForceTolerance') || ...
+                    ~isfield(config.pre, 'preload') || ...
+                    ~isfield(config.pre.preload, 'forceTolerance')
+                error('TestPreset:LegacyToleranceMissing', ...
+                    ['The unversioned preset does not contain both legacy ' ...
+                    'pre-test tolerance fields.']);
+            end
+            cyclicTolerance = config.pre.cyclicForceTolerance;
+            preloadTolerance = config.pre.preload.forceTolerance;
+            if ~isequaln(cyclicTolerance, preloadTolerance)
+                error('TestPreset:LegacyToleranceMismatch', ...
+                    ['The legacy preload and pre-cycle tolerances must ' ...
+                    'match before the preset can be migrated.']);
+            end
+
+            config.pre.forceTolerance = settings.newtonsToPercent( ...
+                cyclicTolerance);
+            config.pre = rmfield(config.pre, 'cyclicForceTolerance');
+            config.pre.preload = rmfield( ...
+                config.pre.preload, 'forceTolerance');
+            config.single.forceTolerance = settings.newtonsToPercent( ...
+                config.single.forceTolerance);
+            config.cyclic.forceTolerance = settings.newtonsToPercent( ...
+                config.cyclic.forceTolerance);
+            config.schemaVersion = 2;
+        end
+
+        function percent = newtonsToPercent(settings, tolerance)
+            percent = tolerance;
+            required = {'x', 'y'};
+            if ~isstruct(tolerance) || ~isscalar(tolerance) || ...
+                    ~all(isfield(tolerance, required))
+                error('TestPreset:InvalidLegacyTolerance', ...
+                    'Legacy tolerance must contain numeric x and y values.');
+            end
+            for item = {'x', 'y'}
+                field = item{1};
+                axisConfig = settings.hwConfig.plc.([field, 'Axis']);
+                maxForce = double(axisConfig.fMaxForce);
+                value = double(tolerance.(field));
+                if ~isscalar(value) || ~isfinite(value) || value < 0 || ...
+                        ~isfinite(maxForce) || maxForce <= 0
+                    error('TestPreset:InvalidLegacyTolerance', ...
+                        ['Legacy tolerance and configured maximum force ' ...
+                        'must be finite and non-negative/positive.']);
+                end
+                percent.(field) = 100 * value / maxForce;
+            end
         end
     end
 

@@ -58,6 +58,8 @@ VAR
 	mcPendingDirection : MC_Direction;
 	nVelocityState     : INT;
 	nVelocityUpdateCounter : INT;
+	fForceRegMaxVelocity : LREAL; // Mode-3 P regulator speed limit
+	fForceRegMinVelocity : LREAL; // Mode-3 low-speed hold deadband
 	bResetRequested : BOOL;
 	bOperationCompleted : BOOL;
 
@@ -153,6 +155,7 @@ VAR CONSTANT
 	STATE_FORCE_WAIT_TOLERANCE : INT := 312;
 	STATE_FORCE_WAIT_STOP : INT := 313;
 	STATE_FORCE_HOLD : INT := 314;
+	STATE_FORCE_EXIT_WAIT_STOP : INT := 315;
 	STATE_ABORT_STOPPING : INT := 900;
 	STATE_RELIEF_WAIT_STOP : INT := 910;
 	STATE_RELIEF_START : INT := 911;
@@ -398,7 +401,7 @@ IF NOT bError AND NOT bSafetyError AND
 		nSeqState <= STATE_POSITION_BARRIER THEN
 		positionEndpoint();
 	ELSIF nSeqState >= STATE_FORCE_PREPARE AND
-		nSeqState <= STATE_FORCE_HOLD THEN
+		nSeqState <= STATE_FORCE_EXIT_WAIT_STOP THEN
 		forceEndpoint();
 	ELSIF nSeqState = STATE_RESTORE_COMPLETE THEN
 		testSequence();
@@ -491,6 +494,12 @@ CASE nSeqState OF
 		nSyncCycle := 0;
 		fEndpointStartError := fEndpointTargetForce - fForce;
 		nVelocityState := 0;
+		nVelocityUpdateCounter := VELOCITY_UPDATE_CYCLES;
+		fLastSentVelocity := 0.0;
+		fForceRegMaxVelocity := MIN(
+			ABS(fEndpointRate),
+			ABS(stSettings.fMaxVelocity));
+		fForceRegMinVelocity := fForceRegMaxVelocity * 0.1;
 		fCmdVelocity := ABS(fEndpointRate);
 		IF fEndpointStartError * INT_TO_LREAL(FORCE_POLARITY) >= 0.0 THEN
 			mcDirection := MC_Positive_Direction;
@@ -529,22 +538,47 @@ CASE nSeqState OF
 		IF bHaltDone THEN
 			stateHalt := FALSE;
 			nVelocityState := 4;
+			nVelocityUpdateCounter := VELOCITY_UPDATE_CYCLES;
+			fLastSentVelocity := 0.0;
 			nSeqState := STATE_FORCE_HOLD;
 		END_IF
 
-	STATE_FORCE_HOLD: // Hold/regulate while synchronized peer catches up.
+	STATE_FORCE_HOLD: // P-regulate while the timer runs and the peer catches up.
 		IF bForceEndpointReady AND bSyncRelease THEN
+			bExecuteVelMove := FALSE;
 			bForceEndpointReady := FALSE;
 			nSyncPoint := SYNC_NONE;
 			nSyncCycle := 0;
 			nEndpointSyncPoint := SYNC_NONE;
-			nSeqState := nAfterEndpointState;
+			IF nVelocityState = 4 THEN
+				nSeqState := nAfterEndpointState;
+			ELSE
+				stateHalt := TRUE;
+				nVelocityState := 3;
+				nSeqState := STATE_FORCE_EXIT_WAIT_STOP;
+			END_IF
 		ELSE
 			fForceError := fEndpointTargetForce - fForce;
 
-			IF ABS(fForceError) <= fEndpointTolerance THEN
-				bExecuteVelMove := FALSE;
+			// Proportional correction begins only after the initial
+			// constant-speed approach has reached the endpoint.
+			fCmdVelocity := (fForceError * stSettings.fKp) *
+				INT_TO_LREAL(FORCE_POLARITY);
+			fCmdVelocity := LIMIT(
+				-fForceRegMaxVelocity,
+				fCmdVelocity,
+				fForceRegMaxVelocity);
+			fPendingVelocity := ABS(fCmdVelocity);
+			IF fCmdVelocity >= 0.0 THEN
+				mcPendingDirection := MC_Positive_Direction;
+			ELSE
+				mcPendingDirection := MC_Negative_Direction;
+			END_IF
+			nVelocityUpdateCounter := nVelocityUpdateCounter + 1;
 
+			// Tiny corrections are replaced by a powered position hold.
+			IF fPendingVelocity <= fForceRegMinVelocity THEN
+				bExecuteVelMove := FALSE;
 				IF nVelocityState <> 3 AND nVelocityState <> 4 THEN
 					stateHalt := TRUE;
 					nVelocityState := 3;
@@ -552,8 +586,56 @@ CASE nSeqState OF
 					stateHalt := FALSE;
 					nVelocityState := 4;
 				END_IF
+			ELSIF nVelocityState = 3 THEN
+				IF bHaltDone THEN
+					stateHalt := FALSE;
+					nVelocityState := 0;
+				END_IF
+			ELSIF nVelocityState = 4 THEN
+				nVelocityState := 0;
+			ELSIF nVelocityState = 2 THEN
+				fCmdVelocity := fPendingVelocity;
+				mcDirection := mcPendingDirection;
+				IF mcDirection = MC_Positive_Direction THEN
+					nLoadDirection := 1;
+					nLastMotionDirection := 1;
+				ELSE
+					nLoadDirection := -1;
+					nLastMotionDirection := -1;
+				END_IF
+				bExecuteVelMove := TRUE;
+				fLastSentVelocity := fCmdVelocity;
+				nVelocityUpdateCounter := 0;
+				nVelocityState := 1;
+			ELSE
+				IF nVelocityState = 0 THEN
+					fCmdVelocity := fPendingVelocity;
+					mcDirection := mcPendingDirection;
+					IF mcDirection = MC_Positive_Direction THEN
+						nLoadDirection := 1;
+						nLastMotionDirection := 1;
+					ELSE
+						nLoadDirection := -1;
+						nLastMotionDirection := -1;
+					END_IF
+					bExecuteVelMove := TRUE;
+					fLastSentVelocity := fCmdVelocity;
+					nVelocityUpdateCounter := 0;
+					nVelocityState := 1;
+				ELSIF nVelocityUpdateCounter >=
+					VELOCITY_UPDATE_CYCLES AND
+					(ABS(fPendingVelocity - fLastSentVelocity) >=
+						fForceRegMinVelocity OR
+					 mcPendingDirection <> mcDirection) THEN
+					bExecuteVelMove := FALSE;
+					nVelocityState := 2;
+				END_IF
+			END_IF
 
-				IF nVelocityState = 4 AND NOT bForceEndpointReady THEN
+			// Hold time is accumulated only inside tolerance. Excursions
+			// pause it and withdraw readiness without resetting elapsed time.
+			IF ABS(fForceError) <= fEndpointTolerance THEN
+				IF NOT bForceEndpointReady THEN
 					fForceHoldElapsed := fForceHoldElapsed + CYCLE_TIME;
 					IF fForceHoldElapsed >= fEndpointHoldTime THEN
 						IF bSyncEnabled AND
@@ -562,34 +644,31 @@ CASE nSeqState OF
 							nSyncPoint := nEndpointSyncPoint;
 							nSyncCycle := nEndpointSyncCycle;
 						ELSE
-							nSeqState := nAfterEndpointState;
+							bExecuteVelMove := FALSE;
+							IF nVelocityState = 4 THEN
+								nSeqState := nAfterEndpointState;
+							ELSE
+								stateHalt := TRUE;
+								nVelocityState := 3;
+								nSeqState :=
+									STATE_FORCE_EXIT_WAIT_STOP;
+							END_IF
 						END_IF
 					END_IF
 				END_IF
-			ELSIF nVelocityState = 3 THEN
-				IF bHaltDone THEN
-					stateHalt := FALSE;
-					nVelocityState := 4;
-				END_IF
-			ELSIF nVelocityState = 4 THEN
-				// Keep elapsed hold time, but withdraw readiness while correcting.
+			ELSIF bForceEndpointReady THEN
 				bForceEndpointReady := FALSE;
 				nSyncPoint := SYNC_NONE;
 				nSyncCycle := 0;
-				fEndpointStartError := fForceError;
-				fCmdVelocity := ABS(fEndpointRate);
-				IF fForceError * INT_TO_LREAL(FORCE_POLARITY) >= 0.0 THEN
-					mcDirection := MC_Positive_Direction;
-					nLoadDirection := 1;
-					nLastMotionDirection := 1;
-				ELSE
-					mcDirection := MC_Negative_Direction;
-					nLoadDirection := -1;
-					nLastMotionDirection := -1;
-				END_IF
-				nVelocityState := 0;
-				nSeqState := STATE_FORCE_EXECUTE;
 			END_IF
+		END_IF
+
+	STATE_FORCE_EXIT_WAIT_STOP:
+		bExecuteVelMove := FALSE;
+		IF bHaltDone THEN
+			stateHalt := FALSE;
+			nVelocityState := 4;
+			nSeqState := nAfterEndpointState;
 		END_IF
 END_CASE
 ]]></ST>

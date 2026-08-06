@@ -9,6 +9,7 @@ VAR_INPUT
 	bHomed             : BOOL;
 	bStopped           : BOOL;
 	bProtectiveStop    : BOOL;
+	bControllerHalt    : BOOL; // TRUE for PLC-owned regulation/sequence halt
 	bSafetyError       : BOOL;
 	nSafetyErrorCode   : UDINT;
 	nSafetyAxisErrorID : UDINT;
@@ -53,7 +54,7 @@ ELSIF bHoming THEN
 		TO_INT(E_PlcSystemStatus.Homing);
 ELSIF nMovementStatus =
 	TO_INT(E_PlcSystemStatus.Stopping) OR
-	bProtectiveStop THEN
+	(bProtectiveStop AND NOT bControllerHalt) THEN
 	stSystemStatus.nSystemStatus :=
 		TO_INT(E_PlcSystemStatus.Stopping);
 ELSIF stSystemStatus.bTarWorking THEN

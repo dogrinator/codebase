@@ -458,7 +458,7 @@ classdef PlcAds < handle
                 value = double(ads.client.ReadAny(handle));
             else
                 value = double(ads.client.ReadAny( ...
-                    handle, NET.GetType('System.Double')));
+                    handle, System.Type.GetType('System.Double')));
             end
         end
 

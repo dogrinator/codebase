@@ -108,6 +108,17 @@ classdef Camera < handle
             end
         end
 
+        function discardQueuedFrames(camera)
+            % Discard frames acquired while recording files were prepared.
+            if ~camera.connected || isempty(camera.cameraHW) || ...
+                    ~isvalid(camera.cameraHW)
+                error('Camera:NotConnected', ...
+                    'Cannot prepare recording while the camera is disconnected.');
+            end
+            flushdata(camera.cameraHW);
+            camera.latestFrame = [];
+        end
+
         function closeCam(camera)
             camera.latestFrame = [];
 
@@ -132,4 +143,3 @@ classdef Camera < handle
         end
     end
 end
-

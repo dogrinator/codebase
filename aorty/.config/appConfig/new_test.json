@@ -1,4 +1,5 @@
 {
+  "schemaVersion": 2,
   "system": {
     "axisMode": "Both"
   },
@@ -10,12 +11,11 @@
     "load": {"x": 0, "y": 0, "lock": true},
     "unload": {"x": 0, "y": 0, "lock": true},
     "unloadToStart": false,
-    "cyclicForceTolerance": {"x": 0.1, "y": 0.1, "lock": true},
+    "forceTolerance": {"x": 1, "y": 1, "lock": true},
     "holdTime": {"x": 0, "y": 0, "lock": true},
     "preload": {
       "enabled": false,
       "value": {"x": 0, "y": 0, "lock": true},
-      "forceTolerance": {"x": 0.1, "y": 0.1, "lock": true},
       "holdTime": {"x": 0, "y": 0, "lock": true}
     }
   },
@@ -26,7 +26,7 @@
     "secondaryMode": "None",
     "secondary": {"x": 0, "y": 0, "lock": true},
     "rate": {"x": 1, "y": 1, "lock": true},
-    "forceTolerance": {"x": 0.1, "y": 0.1, "lock": true},
+    "forceTolerance": {"x": 1, "y": 1, "lock": true},
     "holdTime": {"x": 0, "y": 0, "lock": true},
     "postProcess": {
       "enabled": false,
@@ -42,7 +42,7 @@
     "unloadMode": "Displacement",
     "unload": {"x": 0, "y": 0, "lock": true},
     "rate": {"x": 1, "y": 1, "lock": true},
-    "forceTolerance": {"x": 0.1, "y": 0.1, "lock": true},
+    "forceTolerance": {"x": 1, "y": 1, "lock": true},
     "holdTime": {"x": 0, "y": 0, "lock": true},
     "postProcess": {
       "enabled": false,

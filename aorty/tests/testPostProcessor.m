@@ -26,6 +26,31 @@ allMainRows = PostProcessor.selectFrameRows(cameraRows, 0, 'main-test');
 verifyEqual(testCase, allMainRows, [3; 4; 7; 8]);
 end
 
+function testIdleFramesAreExcludedFromAllRecordedScope(testCase)
+base = datetime(2026, 7, 28, 12, 0, 0);
+cameraRows = table((1:5)', base + milliseconds((0:4)' * 10), ...
+    [0; 10; 0; 20; 30], ...
+    'VariableNames', {'Index', 'Timestamp', 'SystemStatus'});
+
+rows = PostProcessor.selectFrameRows( ...
+    cameraRows, 0, 'all-recorded');
+
+verifyEqual(testCase, rows, [2; 4; 5]);
+end
+
+function testCoverageMaskIsAppliedBeforeIntervalSampling(testCase)
+base = datetime(2026, 7, 28, 12, 0, 0);
+cameraRows = table((1:8)', base + seconds((0:7)' .* 0.05), ...
+    repmat(20, 8, 1), ...
+    'VariableNames', {'Index', 'Timestamp', 'SystemStatus'});
+coverage = [false; false; true; true; true; true; true; true];
+
+rows = PostProcessor.selectFrameRows( ...
+    cameraRows, 0.1, 'main-test', coverage);
+
+verifyEqual(testCase, rows, [3; 5; 7]);
+end
+
 function testModelRecordsEveryFrameWithLatestSystemStatus(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
@@ -276,6 +301,84 @@ verifyFalse(testCase, isfolder(output));
 clear cleanup;
 end
 
+function testEarlyPhaseFramesAreSkippedInsteadOfUsingFirstPlcSample(testCase)
+folder = createTimelineRecording( ...
+    0:100:700, repmat(10, 1, 8), 500:10:700, 500:10:700);
+cleanup = onCleanup(@() removeTemporaryFolder(folder));
+output = fullfile(folder, 'processed_frames');
+
+lastwarn('');
+result = PostProcessor.processData(folder, struct( ...
+    'samplingPeriod', 0, 'phaseScope', 'complete-test', ...
+    'outputFolder', output));
+[~, warningId] = lastwarn;
+
+verifyEqual(testCase, warningId, ...
+    'PostProcessor:SkippedOutOfRangeFrames');
+verifyEqual(testCase, result.exportedFrameCount, 3);
+files = dir(fullfile(output, 'processed_frame_*.tiff'));
+verifyNumElements(testCase, files, 3);
+description = readLegacyDescription(fullfile( ...
+    output, 'processed_frame_0001.tiff'));
+verifySubstring(testCase, description, 'Index:00006');
+verifySubstring(testCase, description, 'TenzoX:1500.00 [N]');
+clear cleanup;
+end
+
+function testLatePhaseFramesAreSkipped(testCase)
+folder = createTimelineRecording( ...
+    500:100:900, repmat(20, 1, 5), 500:10:700, 500:10:700);
+cleanup = onCleanup(@() removeTemporaryFolder(folder));
+output = fullfile(folder, 'processed_frames');
+
+lastwarn('');
+result = PostProcessor.processData(folder, struct( ...
+    'samplingPeriod', 0, 'phaseScope', 'main-test', ...
+    'outputFolder', output));
+[~, warningId] = lastwarn;
+
+verifyEqual(testCase, warningId, ...
+    'PostProcessor:SkippedOutOfRangeFrames');
+verifyEqual(testCase, result.exportedFrameCount, 3);
+verifySubstring(testCase, result.message, '0 early, 2 late');
+clear cleanup;
+end
+
+function testCompletelyNonOverlappingRecordingIsSkipped(testCase)
+folder = createTimelineRecording( ...
+    0:100:300, repmat(10, 1, 4), 500:10:700, 500:10:700);
+cleanup = onCleanup(@() removeTemporaryFolder(folder));
+output = fullfile(folder, 'processed_frames');
+
+lastwarn('');
+result = PostProcessor.processData(folder, struct( ...
+    'samplingPeriod', 0, 'phaseScope', 'complete-test', ...
+    'outputFolder', output));
+[~, warningId] = lastwarn;
+
+verifyEqual(testCase, warningId, ...
+    'PostProcessor:SkippedOutOfRangeFrames');
+verifyEqual(testCase, result.status, 'skipped');
+verifyEqual(testCase, result.exportedFrameCount, 0);
+verifyFalse(testCase, isfolder(output));
+clear cleanup;
+end
+
+function testNearestSampleRejectsTimestampOutsideCoverage(testCase)
+base = datetime(2026, 7, 28, 12, 0, 0);
+data = table(base + milliseconds([0; 10]), [1; 2], [3; 4], [5; 6], ...
+    'VariableNames', {'Timestamp', 'Force', 'UntaredForce', 'Position'});
+
+verifyError(testCase, @() PostProcessor.nearestSample( ...
+    data, base - milliseconds(1)), ...
+    'PostProcessor:TimestampOutsidePlcCoverage');
+verifyError(testCase, @() PostProcessor.nearestSample( ...
+    data, base + milliseconds(11)), ...
+    'PostProcessor:TimestampOutsidePlcCoverage');
+verifyEqual(testCase, PostProcessor.nearestSample( ...
+    data, base + milliseconds(9)).Force, 2);
+end
+
 function folder = createSyntheticRecording()
 folder = makeTemporaryFolder();
 model = Model();
@@ -284,20 +387,48 @@ model.cameraFrameWidth = 64;
 model.cameraFrameHeight = 64;
 model.openFilesRec();
 model.isRecording = true;
-sampleTime = datetime('now');
-model.saveAxisSamples('X', ...
-    sampleTime + milliseconds([0, 10]), ...
-    [10, 10], [11, 11], [1.25, 1.25]);
-model.saveAxisSamples('Y', ...
-    sampleTime + milliseconds([0, 10]), ...
-    [20, 20], [21, 21], [2.5, 2.5]);
 baseTime = datetime('now');
+sampleOffsets = 0:10:300;
+model.saveAxisSamples('X', ...
+    baseTime + milliseconds(sampleOffsets), ...
+    repmat(10, size(sampleOffsets)), ...
+    repmat(11, size(sampleOffsets)), ...
+    repmat(1.25, size(sampleOffsets)));
+model.saveAxisSamples('Y', ...
+    baseTime + milliseconds(sampleOffsets), ...
+    repmat(20, size(sampleOffsets)), ...
+    repmat(21, size(sampleOffsets)), ...
+    repmat(2.5, size(sampleOffsets)));
 statuses = [10, 11, 20, 21, 30, 10];
 for index = 1:6
     frame = reshape(uint8(mod((1:4096) + index - 1, 256)), 64, 64);
     model.currentSystemStatus = int16(statuses(index));
     model.saveCameraFrame(frame, ...
         baseTime + milliseconds((index - 1) * 50));
+end
+model.isRecording = false;
+model.finalizeRecording('completed', 'Completed');
+end
+
+function folder = createTimelineRecording(cameraOffsets, statuses, xOffsets, yOffsets)
+folder = makeTemporaryFolder();
+model = Model();
+model.selectedFolder = folder;
+model.cameraFrameWidth = 64;
+model.cameraFrameHeight = 64;
+model.openFilesRec();
+model.isRecording = true;
+baseTime = datetime('now');
+
+model.saveAxisSamples('X', baseTime + milliseconds(xOffsets), ...
+    1000 + xOffsets, 2000 + xOffsets, 3000 + xOffsets);
+model.saveAxisSamples('Y', baseTime + milliseconds(yOffsets), ...
+    4000 + yOffsets, 5000 + yOffsets, 6000 + yOffsets);
+for index = 1:numel(cameraOffsets)
+    frame = repmat(uint8(index), 64, 64);
+    model.currentSystemStatus = int16(statuses(index));
+    model.saveCameraFrame(frame, ...
+        baseTime + milliseconds(cameraOffsets(index)));
 end
 model.isRecording = false;
 model.finalizeRecording('completed', 'Completed');

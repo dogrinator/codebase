@@ -233,10 +233,10 @@ fbReset(
 // search toward the lower switch, then move positively away from it.
 stHomeOptions.SearchDirection :=
 	MC_Direction.MC_Negative_Direction;
-stHomeOptions.SearchVelocity := 0.5;
+stHomeOptions.SearchVelocity := 5;
 stHomeOptions.SyncDirection :=
 	MC_Direction.MC_Positive_Direction;
-stHomeOptions.SyncVelocity := 0.5;
+stHomeOptions.SyncVelocity := 2;
 stHomeOptions.ReferenceMode :=
 	E_EncoderReferenceMode.ENCODERREFERENCEMODE_PLCCAM;
 
@@ -282,6 +282,8 @@ bProtectiveStop := eState = E_SafetyState.ProtectiveStop;
       <LineId Id="290" Count="0" />
       <LineId Id="152" Count="24" />
       <LineId Id="179" Count="0" />
+      <LineId Id="183" Count="21" />
+      <LineId Id="292" Count="0" />
     </LineIds>
   </POU>
 </TcPlcObject>

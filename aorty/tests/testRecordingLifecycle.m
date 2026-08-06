@@ -176,6 +176,62 @@ verifyFalse(testCase, controler.testRunning);
 verifyFalse(testCase, controler.model.filesOpen);
 end
 
+function testRecordedStartupFlushesAndWarmsBeforeTrigger(testCase)
+folder = makeTemporaryFolder();
+cleanup = onCleanup(@() removeTemporaryFolder(folder));
+[controler, client, command] = connectedController(testCase.TestData.root);
+controler.recordingFolderSelector = @() folder;
+client.clearWrites();
+warmupCalled = false;
+controler.recordingWarmupHandler = @verifyWarmupState;
+
+controler.startTestForTesting( ...
+    struct('X', command, 'Y', []), postSettings(), true);
+
+verifyTrue(testCase, warmupCalled);
+verifyEqual(testCase, controler.camera.cameraHW.FlushCount, 1);
+verifyEqual(testCase, controler.operationStartCounters.X, uint32(7));
+verifyNotEmpty(testCase, client.Writes);
+verifyTrue(testCase, controler.testRunning);
+controler.safeAbort('Startup-order test cleanup');
+clear cleanup;
+
+    function verifyWarmupState()
+        warmupCalled = true;
+        verifyTrue(testCase, controler.model.filesOpen);
+        verifyTrue(testCase, controler.model.isRecording);
+        verifyFalse(testCase, controler.testRunning);
+        verifyEmpty(testCase, client.Writes);
+        client.setStatus('X', struct('operationCounter', uint32(7)));
+    end
+end
+
+function testCameraFlushFailureAbortsBeforePlcTrigger(testCase)
+folder = makeTemporaryFolder();
+cleanup = onCleanup(@() removeTemporaryFolder(folder));
+[controler, client, command] = connectedController(testCase.TestData.root);
+controler.recordingFolderSelector = @() folder;
+controler.camera.cameraHW.FailFlush = true;
+client.clearWrites();
+
+verifyError(testCase, @() controler.startTestForTesting( ...
+    struct('X', command, 'Y', []), postSettings(), true), ...
+    'FakeCamera:FlushFailed');
+
+verifyEmpty(testCase, client.Writes);
+verifyFalse(testCase, controler.testRunning);
+verifyFalse(testCase, controler.model.isRecording);
+verifyFalse(testCase, controler.model.filesOpen);
+verifyEqual(testCase, strtrim(char(h5readatt( ...
+    fullfile(folder, 'recording.h5'), '/metadata', 'status'))), ...
+    'aborted');
+clear cleanup;
+end
+
+function testRecordingWarmupDurationContract(testCase)
+verifyEqual(testCase, AppInfo.RECORDING_WARMUP_SECONDS, 0.5);
+end
+
 function testCheckedPreTestPromptsAndCompletesRecording(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
@@ -332,9 +388,12 @@ camera = Camera(model);
 camera.cameraHW = FakeCameraHardware();
 camera.connected = true;
 controler = Control(model, plc, camera);
+controler.recordingWarmupHandler = @() [];
 settings = Settings(plc, camera);
+settings.loadHwConfig('default');
 settings.loadAppConfig('default');
-commands = TestCommandBuilder.fromPreset(settings.appConfig, 'pre');
+commands = TestCommandBuilder.fromPreset( ...
+    settings.appConfig, 'pre', settings.hwConfig);
 command = commands.X;
 end
 

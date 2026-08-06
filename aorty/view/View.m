@@ -26,7 +26,9 @@ classdef View < handle
             app.controller = controller;
             app.createMainWindow();
             app.settingsWindow = SettingsWindow( ...
-                controller.settings, app.fig);
+                controller.settings, app.fig, ...
+                @() app.previewChanged());
+            app.loadStartupDefaults();
             app.updateErrorStatus(false, '');
             app.updateMachineStatus([], false);
             app.fig.CloseRequestFcn = @(~, ~) app.shutdown();
@@ -85,9 +87,7 @@ classdef View < handle
             app.controller.camera.connectCamera(app, src);
             if src.Value == "ON" && app.controller.camera.connected
                 try
-                    if isempty(app.controller.settings.hwConfig)
-                        app.controller.settings.loadHwConfig('default');
-                    end
+                    app.ensureHardwareConfigLoaded();
                     app.controller.settings.applyCameraConfig();
                 catch exception
                     app.controller.camera.closeCam();
@@ -95,6 +95,25 @@ classdef View < handle
                     uialert(app.fig, exception.message, ...
                         'Cannot apply camera hardware settings');
                 end
+            end
+        end
+
+        function connectPlcCallback(app, src)
+            app.controller.plc.connectPLC(app, src);
+            if src.Value ~= "ON" || ~app.controller.plc.connected
+                return;
+            end
+            try
+                app.ensureHardwareConfigLoaded();
+                app.controller.settings.applyPlcConfig();
+                app.updateMachineStatus( ...
+                    app.controller.plc.pollStatus(), true);
+            catch exception
+                app.controller.plc.disconnectPLC();
+                src.Value = 'OFF';
+                app.updateMachineStatus([], false);
+                uialert(app.fig, exception.message, ...
+                    'Cannot apply PLC hardware settings');
             end
         end
 
@@ -235,7 +254,7 @@ classdef View < handle
                 grid, 'Camera', @(src, ~) app.connectCameraCallback(src));
             app.plcSwitch = app.connectionSwitch( ...
                 grid, 'PLC', ...
-                @(src, ~) app.controller.plc.connectPLC(app, src));
+                @(src, ~) app.connectPlcCallback(src));
             statusPanel = uipanel(grid, 'Title', 'System status');
             statusGrid = uigridlayout(statusPanel, [1, 1]);
             statusGrid.Padding = [4, 0, 4, 0];
@@ -483,6 +502,28 @@ classdef View < handle
                 control.Enable = 'on';
             else
                 control.Enable = 'off';
+            end
+        end
+
+        function loadStartupDefaults(app)
+            try
+                app.controller.settings.loadHwConfig('default');
+            catch exception
+                uialert(app.fig, exception.message, ...
+                    'Cannot load default hardware settings');
+                return;
+            end
+            try
+                app.testPanel.loadPresetByName('default');
+            catch exception
+                uialert(app.fig, exception.message, ...
+                    'Cannot load default test preset');
+            end
+        end
+
+        function ensureHardwareConfigLoaded(app)
+            if isempty(app.controller.settings.hwConfig)
+                app.controller.settings.loadHwConfig('default');
             end
         end
 

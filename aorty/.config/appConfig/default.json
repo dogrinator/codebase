@@ -1,87 +1,83 @@
 {
+  "schemaVersion": 2,
   "system": {
     "axisMode": "Both"
   },
   "pre": {
     "rate": {
-      "x": 1,
-      "y": 1,
+      "x": 0.1,
+      "y": 0.3,
       "lock": false
     },
-    "record": true,
+    "record": false,
     "cyclic": true,
-    "cycles": 1,
+    "cycles": 4,
     "load": {
-      "x": 0,
-      "y": 0,
+      "x": 1.5,
+      "y": 0.4,
       "lock": false
     },
     "unload": {
       "x": 0,
       "y": 0,
-      "lock": false
+      "lock": true
     },
-    "unloadToStart": false,
-    "cyclicForceTolerance": {
-      "x": 0.1,
+    "unloadToStart": true,
+    "forceTolerance": {
+      "x": 0.8,
       "y": 0.1,
       "lock": false
     },
     "holdTime": {
-      "x": 0,
-      "y": 0,
-      "lock": false
+      "x": 0.5,
+      "y": 0.5,
+      "lock": true
     },
     "preload": {
       "enabled": true,
       "value": {
-        "x": 15,
-        "y": 15,
-        "lock": true
-      },
-      "forceTolerance": {
-        "x": 0.1,
-        "y": 0.1,
-        "lock": true
+        "x": 1,
+        "y": 0.3,
+        "lock": false
       },
       "holdTime": {
-        "x": 10,
-        "y": 10,
+        "x": 2,
+        "y": 2,
         "lock": true
       }
     }
   },
   "single": {
-    "includePre": false,
-    "primaryMode": "Displacement",
+    "includePre": true,
+    "primaryMode": "Force",
     "primary": {
-      "x": 0,
-      "y": 0,
+      "x": 0.6,
+      "y": 0.6,
       "lock": true
     },
-    "secondaryMode": "None",
+    "secondaryMode": "Displacement",
     "secondary": {
-      "x": 0,
-      "y": 0,
+      "x": 3,
+      "y": 3,
       "lock": true
     },
     "rate": {
-      "x": 1,
-      "y": 1,
-      "lock": true
-    },
-    "forceTolerance": {
       "x": 0.1,
       "y": 0.1,
       "lock": true
     },
+    "forceTolerance": {
+      "x": 1,
+      "y": 0.5,
+      "lock": false
+    },
     "holdTime": {
-      "x": 0,
-      "y": 0,
+      "x": 0.5,
+      "y": 0.5,
       "lock": true
     },
     "postProcess": {
-      "enabled": false,
+      "enabled": true,
       "samplingPeriod": 0.1,
       "includePrePost": false
     }
@@ -107,8 +103,8 @@
       "lock": true
     },
     "forceTolerance": {
-      "x": 0.1,
-      "y": 0.1,
+      "x": 1,
+      "y": 1,
       "lock": true
     },
     "holdTime": {

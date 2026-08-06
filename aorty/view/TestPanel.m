@@ -36,8 +36,17 @@ classdef TestPanel < handle
             uilabel(grid, 'Text', 'Preset:');
             panel.presetDrop = uidropdown(grid, ...
                 'Items', panel.nonEmptyItems( ...
-                panel.settings.listAppConfigs()), ...
-                'ValueChangedFcn', @(~, ~) panel.loadPreset());
+                    panel.settings.listAppConfigs()), ...
+                'ValueChangedFcn', @(~, ~) panel.loadSelectedPreset());
+            preferred = panel.settings.activeAppConfigName;
+            if isempty(preferred) && ...
+                    ismember('default', panel.presetDrop.Items)
+                preferred = 'default';
+            end
+            if ~isempty(preferred) && ...
+                    ismember(preferred, panel.presetDrop.Items)
+                panel.presetDrop.Value = preferred;
+            end
             saveButton = uibutton(grid, 'Text', 'Save', ...
                 'ButtonPushedFcn', @(~, ~) panel.savePreset(false));
             saveAsButton = uibutton(grid, 'Text', 'Save as', ...
@@ -71,6 +80,7 @@ classdef TestPanel < handle
         function config = getConfiguration(panel)
             values = panel.definitionTabs.getConfiguration();
             config = struct( ...
+                'schemaVersion', 2, ...
                 'system', struct('axisMode', panel.getAxisMode()), ...
                 'pre', values.pre, ...
                 'single', values.single, ...
@@ -82,12 +92,21 @@ classdef TestPanel < handle
         function applyPreset(panel, config)
             % Validate the complete preset before mutating any visible control.
             panel.validatePresetRoot(config);
-            definition = rmfield(config, 'system');
+            definition = rmfield(config, {'schemaVersion', 'system'});
             panel.definitionTabs.validateConfiguration(definition);
-            TestCommandBuilder.fromPreset(config, 'pre');
+            TestCommandBuilder.fromPreset( ...
+                config, 'pre', panel.settings.hwConfig);
             panel.definitionTabs.applyValidatedConfiguration(definition);
             panel.axisModeDrop.Value = config.system.axisMode;
             panel.axisModeChanged();
+        end
+
+        function loadPresetByName(panel, filename)
+            panel.settings.loadAppConfig(filename);
+            panel.applyPreset(panel.settings.appConfig);
+            if ismember(filename, panel.presetDrop.Items)
+                panel.presetDrop.Value = filename;
+            end
         end
 
         function mode = getAxisMode(panel)
@@ -99,7 +118,8 @@ classdef TestPanel < handle
         end
 
         function preview = getForceReferencePreview(panel)
-            preview = panel.definitionTabs.getForceReferencePreview();
+            preview = panel.definitionTabs.getForceReferencePreview( ...
+                panel.settings.hwConfig);
         end
 
         function enabled = isAxisActive(panel, axisName)
@@ -146,10 +166,9 @@ classdef TestPanel < handle
 
     methods (Access = private)
         %% Preset persistence and validation
-        function loadPreset(panel)
+        function loadSelectedPreset(panel)
             try
-                panel.settings.loadAppConfig(panel.presetDrop.Value);
-                panel.applyPreset(panel.settings.appConfig);
+                panel.loadPresetByName(panel.presetDrop.Value);
             catch exception
                 uialert(panel.parentFig, exception.message, ...
                     'Cannot load test preset');
@@ -170,7 +189,8 @@ classdef TestPanel < handle
                 panel.settings.appConfig = panel.getConfiguration();
                 panel.validatePresetRoot(panel.settings.appConfig);
                 TestCommandBuilder.fromPreset( ...
-                    panel.settings.appConfig, 'pre');
+                    panel.settings.appConfig, 'pre', ...
+                    panel.settings.hwConfig);
                 panel.settings.saveAppConfig(filename);
                 panel.presetDrop.Items = panel.nonEmptyItems( ...
                     panel.settings.listAppConfigs());
@@ -182,9 +202,15 @@ classdef TestPanel < handle
         end
 
         function validatePresetRoot(~, config)
-            required = {'system', 'pre', 'single', ...
+            required = {'schemaVersion', 'system', 'pre', 'single', ...
                 'cyclic', 'general', 'post'};
             TestPanel.requireExactFields(config, required, 'preset');
+            if ~isnumeric(config.schemaVersion) || ...
+                    ~isscalar(config.schemaVersion) || ...
+                    config.schemaVersion ~= 2
+                error('TestPreset:SchemaVersion', ...
+                    'preset.schemaVersion must be 2.');
+            end
             TestPanel.requireExactFields( ...
                 config.system, {'axisMode'}, 'preset.system');
             if ~ismember(char(config.system.axisMode), ...

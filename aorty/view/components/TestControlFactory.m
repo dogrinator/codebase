@@ -21,6 +21,23 @@ classdef TestControlFactory
                 'HorizontalAlignment', 'center');
         end
 
+        function grid = sectionGrid(parent, rows)
+            grid = uigridlayout(parent, [rows + 1, 5]);
+            grid.ColumnWidth = {190, '1x', '1x', 80, 72};
+            grid.RowHeight = repmat({34}, 1, rows + 1);
+            grid.Padding = [8, 6, 8, 8];
+            grid.RowSpacing = 5;
+            uilabel(grid, 'Text', 'Parameter', 'FontWeight', 'bold');
+            uilabel(grid, 'Text', 'X', 'FontWeight', 'bold', ...
+                'HorizontalAlignment', 'center');
+            uilabel(grid, 'Text', 'Y', 'FontWeight', 'bold', ...
+                'HorizontalAlignment', 'center');
+            uilabel(grid, 'Text', 'Unit', 'FontWeight', 'bold', ...
+                'HorizontalAlignment', 'center');
+            uilabel(grid, 'Text', 'Lock', 'FontWeight', 'bold', ...
+                'HorizontalAlignment', 'center');
+        end
+
         function controls = axisRow(grid, row, text, value, unit, changed)
             % The XY lock keeps both values synchronized until the user unlocks it.
             TestControlFactory.label(grid, row, 1, text, '');

@@ -127,6 +127,13 @@ mode supports off. The main `nCycleCount` is `0` for Single and `1..50` for
 Cyclic. The command arrays always contain exactly 50 `LREAL` values; MATLAB
 pads unused elements with zero.
 
+Application preset schema version 2 stores Pre-test, Single-test, and
+Cyclic-test tolerances as percentages. Before writing the fields above,
+MATLAB converts each percentage with
+`tolerance_N = tolerance_percent * fMaxForce / 100` using the selected
+hardware profile. General Test schema version 2 remains an absolute-newton
+interface and is written without this conversion.
+
 Removed `preLoadValue`, force-drop, and legacy combined-hold fields must not be
 sent.
 
@@ -337,6 +344,11 @@ image width `W` and height `H`, frame `n` begins at:
 Each frame contains `W * H` bytes. Raw acquisition uses the configured
 hardware FPS and is not reduced by TIFF sampling.
 
+Before the PLC test trigger, MATLAB prepares both recording files, discards
+camera frames queued during file creation, and records a 0.5-second Idle
+warm-up. The warm-up lets the independent camera and PLC streams establish
+overlapping coverage before test motion begins.
+
 ### `recording.h5` schema version 1
 
 | HDF5 location | Shape/columns | Purpose |
@@ -375,6 +387,9 @@ Phase eligibility is evaluated before interval sampling:
 
 - Main only: statuses `20` and `21`.
 - Include pre/post: statuses `10`, `11`, `20`, `21`, and `30`.
+- Idle status `0` is never exported, but its frames remain in the raw recording.
+- Frames outside the common X/Y PLC timestamp range are skipped with a warning;
+  PLC edge values are never extrapolated onto those frames.
 - Sampling restarts at a status transition or after an ineligible gap.
 - Sampling period `0` exports every eligible frame.
 

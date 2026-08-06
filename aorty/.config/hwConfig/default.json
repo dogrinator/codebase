@@ -2,32 +2,32 @@
   "plc": {
     "xAxis": {
       "fTenzoOffset": 0.01,
-      "fTenzoCons": 0.0002023,
+      "fTenzoCons": 2.023E-5,
       "fKp": 10,
       "fKi": 0.1,
       "fIntegralLimit": 10,
       "fForceTolerance": 0.1,
       "fMaxVelocity": 100,
       "fMaxForce": 10,
-      "fForceReliefDistance": 1.0,
-      "fForceReliefVelocity": 1.0
+      "fForceReliefDistance": 1,
+      "fForceReliefVelocity": 1
     },
     "yAxis": {
       "fTenzoOffset": 0.01,
-      "fTenzoCons": 0.000204,
+      "fTenzoCons": 2.04E-5,
       "fKp": 10,
       "fKi": 0.1,
       "fIntegralLimit": 10,
       "fForceTolerance": 0.1,
       "fMaxVelocity": 100,
       "fMaxForce": 10,
-      "fForceReliefDistance": 1.0,
-      "fForceReliefVelocity": 1.0
+      "fForceReliefDistance": 1,
+      "fForceReliefVelocity": 1
     }
   },
   "camera": {
     "exposureTimeAbs": 5000,
-    "gainRaw": 0,
+    "gainRaw": 300,
     "acquisitionFrameRateAbs": 15
   }
 }

@@ -99,8 +99,10 @@ connecting to another machine.
    run("aorty/main.m")
    ```
 
-5. The application opens offline. Use the UI switches to connect the PLC and
-   camera before starting a recorded test.
+5. The application opens offline with both `default.json` profiles loaded.
+   Use the UI switches to connect the PLC and camera before starting a
+   recorded test. Each successful connection automatically applies the
+   currently selected hardware profile to that device.
 
 At PLC connection, MATLAB reads `nInterfaceVersion` from both axes. Connection
 is rejected if either axis does not report interface version `6`.
@@ -112,7 +114,10 @@ is rejected if either axis does not report interface version `6`.
 2. Connect the camera before any recording-enabled test.
 3. Select X, Y, or Both and configure one test tab.
 4. Review force, displacement, rate, tolerance, hold-time, post-test, and
-   recording options.
+   recording options. Test-tab force tolerances are percentages of each
+   axis's configured maximum force; MATLAB converts them to newtons before
+   writing the PLC command. Imported General Test JSON tolerances remain in
+   newtons.
 5. Choose an empty output folder when recording is enabled.
 6. Start the test and monitor system status, force, displacement, and errors.
 7. Inspect `recording.h5` and `cam.bin`; create TIFF output automatically or

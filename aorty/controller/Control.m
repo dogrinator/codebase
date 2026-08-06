@@ -18,6 +18,7 @@ classdef Control < handle
         testRunning = false
         abortInProgress = false
         recordingFolderSelector = []
+        recordingWarmupHandler = []
         activePostProcessSettings = struct( ...
             'enabled', false, 'samplingPeriod', 0, ...
             'includePrePost', false)
@@ -192,7 +193,8 @@ classdef Control < handle
 
         function runPreTest(controler, app)
             config = app.getTestConfiguration();
-            commands = TestCommandBuilder.fromPreset(config, 'pre');
+            commands = TestCommandBuilder.fromPreset( ...
+                config, 'pre', controler.settings.hwConfig);
             postSettings = struct('enabled', false, ...
                 'samplingPeriod', 0, 'includePrePost', true);
             controler.startTest(app, commands, postSettings, ...
@@ -201,14 +203,16 @@ classdef Control < handle
 
         function runSingleTest(controler, app)
             config = app.getTestConfiguration();
-            commands = TestCommandBuilder.fromPreset(config, 'single');
+            commands = TestCommandBuilder.fromPreset( ...
+                config, 'single', controler.settings.hwConfig);
             controler.startTest( ...
                 app, commands, config.single.postProcess, true, 'single');
         end
 
         function runCyclicTest(controler, app)
             config = app.getTestConfiguration();
-            commands = TestCommandBuilder.fromPreset(config, 'cyclic');
+            commands = TestCommandBuilder.fromPreset( ...
+                config, 'cyclic', controler.settings.hwConfig);
             controler.startTest( ...
                 app, commands, config.cyclic.postProcess, true, 'cyclic');
         end
@@ -309,13 +313,6 @@ classdef Control < handle
 
             statuses = controler.plc.pollStatus();
             axes = controler.commandAxes(commands);
-            for index = 1:numel(axes)
-                axis = axes{index};
-                controler.operationStartCounters.(axis) = ...
-                    statuses.(axis).operationCounter;
-            end
-            controler.operationStartDrops = controler.plc.droppedSamples;
-            controler.operationStartRestarts = controler.plc.restartCounts;
             controler.samples.clear();
             controler.activePostProcessSettings = ...
                 controler.validatePostProcessSettings(postSettings);
@@ -331,7 +328,6 @@ classdef Control < handle
             controler.model.recordingDroppedSamples = ...
                 struct('X', 0, 'Y', 0);
             controler.model.recordingRestartDetected = false;
-            controler.testRunning = true;
             controler.activeTestAxes = axes;
             controler.setOperationActive(true);
             try
@@ -340,8 +336,30 @@ classdef Control < handle
                         commands, axes, ...
                         controler.activePostProcessSettings, testKind);
                     controler.model.openFilesRec(header);
+                    controler.camera.discardQueuedFrames();
                     controler.model.isRecording = true;
+                    controler.waitForRecordingWarmup();
+                    if ~controler.model.isRecording || ...
+                            ~controler.model.filesOpen
+                        error('Control:StartupCancelled', ...
+                            'Recording startup was cancelled.');
+                    end
                 end
+
+                % Establish operation and integrity baselines after the
+                % recording warm-up, immediately before the PLC trigger.
+                statuses = controler.plc.pollStatus();
+                controler.model.updateSystemStatus(statuses, axes);
+                for index = 1:numel(axes)
+                    axis = axes{index};
+                    controler.operationStartCounters.(axis) = ...
+                        statuses.(axis).operationCounter;
+                end
+                controler.operationStartDrops = ...
+                    controler.plc.droppedSamples;
+                controler.operationStartRestarts = ...
+                    controler.plc.restartCounts;
+                controler.testRunning = true;
                 controler.plc.sendTestSequence(commands);
             catch exception
                 controler.testRunning = false;
@@ -448,6 +466,16 @@ classdef Control < handle
                 controler.model.cameraFrameWidth = 0;
                 controler.model.cameraFrameHeight = 0;
             end
+        end
+
+        function waitForRecordingWarmup(controler)
+            % Keep MATLAB callbacks active while Idle camera/PLC data starts.
+            if isempty(controler.recordingWarmupHandler)
+                pause(AppInfo.RECORDING_WARMUP_SECONDS);
+            else
+                controler.recordingWarmupHandler();
+            end
+            drawnow;
         end
 
         function header = buildRecordingHeader(controler, ...

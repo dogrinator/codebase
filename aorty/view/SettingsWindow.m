@@ -7,6 +7,7 @@ classdef SettingsWindow < handle
         settings Settings
         parentFig
         fig
+        settingsChanged
     end
 
     properties (Access = private)
@@ -22,9 +23,13 @@ classdef SettingsWindow < handle
 
     methods
         %% Window lifecycle and machine-idle interlock
-        function window = SettingsWindow(settings, parentFig)
+        function window = SettingsWindow(settings, parentFig, settingsChanged)
             window.settings = settings;
             window.parentFig = parentFig;
+            if nargin < 3
+                settingsChanged = [];
+            end
+            window.settingsChanged = settingsChanged;
         end
 
         function show(window)
@@ -51,10 +56,13 @@ classdef SettingsWindow < handle
             window.configDrop = uidropdown(top, ...
                 'Items', window.nonEmptyItems(window.settings.listHwConfigs()), ...
                 'ValueChangedFcn', @(~, ~) window.loadConfig());
-            if ismember('default', window.configDrop.Items)
-                window.configDrop.Value = 'default';
+            selected = window.settings.activeHwConfigName;
+            if isempty(selected) && ismember('default', window.configDrop.Items)
+                selected = 'default';
             end
-            window.settings.loadHwConfig(window.configDrop.Value);
+            if ~isempty(selected) && ismember(selected, window.configDrop.Items)
+                window.configDrop.Value = selected;
+            end
             saveButton = uibutton(top, 'Text', 'Save', ...
                 'ButtonPushedFcn', @(~, ~) window.saveConfig(false));
             saveAsButton = uibutton(top, 'Text', 'Save as', ...
@@ -206,6 +214,7 @@ classdef SettingsWindow < handle
             try
                 window.settings.loadHwConfig(window.configDrop.Value);
                 window.refreshUI();
+                window.notifySettingsChanged();
             catch exception
                 uialert(window.fig, exception.message, 'Cannot load configuration');
             end
@@ -233,6 +242,7 @@ classdef SettingsWindow < handle
                 window.configDrop.Items = window.nonEmptyItems( ...
                     window.settings.listHwConfigs());
                 window.configDrop.Value = filename;
+                window.notifySettingsChanged();
             catch exception
                 uialert(window.fig, exception.message, 'Cannot save configuration');
             end
@@ -258,6 +268,7 @@ classdef SettingsWindow < handle
                 window.gatherConfig();
                 window.settings.applyCameraConfig();
                 window.settings.applyPlcConfig();
+                window.notifySettingsChanged();
             catch exception
                 uialert(window.fig, exception.message, 'Cannot apply configuration');
             end
@@ -297,6 +308,12 @@ classdef SettingsWindow < handle
             elseif ismember(name, nonnegative)
                 control.Limits = [0, Inf];
                 control.Tooltip = 'Value must be 0 or greater.';
+            end
+        end
+
+        function notifySettingsChanged(window)
+            if ~isempty(window.settingsChanged)
+                window.settingsChanged();
             end
         end
     end

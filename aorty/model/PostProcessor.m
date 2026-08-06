@@ -32,13 +32,47 @@ classdef PostProcessor
                     '%s', result.message);
                 return;
             end
+            phaseEligible = PostProcessor.eligibleFrameMask( ...
+                camTimestamps, options.phaseScope);
+            coverageStart = max( ...
+                [dataX.Timestamp(1); dataY.Timestamp(1)]);
+            coverageEnd = min( ...
+                [dataX.Timestamp(end); dataY.Timestamp(end)]);
+            if coverageStart <= coverageEnd
+                coverageMask = ...
+                    camTimestamps.Timestamp >= coverageStart & ...
+                    camTimestamps.Timestamp <= coverageEnd;
+            else
+                coverageMask = false(numFrames, 1);
+            end
+
+            outsideCoverage = phaseEligible & ~coverageMask;
+            skippedCount = sum(outsideCoverage);
+            if skippedCount > 0
+                earlyMask = outsideCoverage & ...
+                    camTimestamps.Timestamp < coverageStart;
+                lateMask = outsideCoverage & ~earlyMask;
+                result.message = sprintf( ...
+                    ['Skipped %d phase-eligible camera frame(s) outside ' ...
+                    'common PLC coverage (%d early, %d late).'], ...
+                    skippedCount, sum(earlyMask), sum(lateMask));
+                warning('PostProcessor:SkippedOutOfRangeFrames', ...
+                    '%s', result.message);
+            end
+
             selectedRows = PostProcessor.selectFrameRows( ...
                 camTimestamps, options.samplingPeriod, ...
-                options.phaseScope);
+                options.phaseScope, coverageMask);
             if isempty(selectedRows)
-                error('PostProcessor:NoMatchingFrames', ...
-                    ['No recorded camera frames match the selected ' ...
-                    'system statuses.']);
+                result.status = 'skipped';
+                if isempty(result.message)
+                    result.message = [ ...
+                        'No non-Idle camera frames match the selected ' ...
+                        'system statuses and common PLC coverage.'];
+                    warning('PostProcessor:NoMatchingFrames', ...
+                        '%s', result.message);
+                end
+                return;
             end
             if exist('insertText', 'file') ~= 2
                 error('PostProcessor:MissingComputerVisionToolbox', ...
@@ -340,8 +374,8 @@ classdef PostProcessor
                 {'Timestamp', 'Force', 'UntaredForce', 'Position'});
         end
 
-        function selectedRows = selectFrameRows(camTimestamps, samplingPeriod, phaseScope)
-            % Select frames from the requested phases before interval sampling.
+        function eligible = eligibleFrameMask(camTimestamps, phaseScope)
+            % Return phase eligibility without applying time sampling.
             statuses = double(camTimestamps.SystemStatus);
             switch char(phaseScope)
                 case 'main-test'
@@ -350,9 +384,25 @@ classdef PostProcessor
                     eligible = ismember( ...
                         statuses, [10, 11, 20, 21, 30]);
                 otherwise
-                    eligible = true(size(statuses));
+                    eligible = statuses ~= 0;
             end
-            candidates = find(eligible);
+            eligible = logical(eligible(:));
+        end
+
+        function selectedRows = selectFrameRows(camTimestamps, samplingPeriod, phaseScope, coverageMask)
+            % Select frames from the requested phases before interval sampling.
+            if nargin < 4 || isempty(coverageMask)
+                coverageMask = true(height(camTimestamps), 1);
+            end
+            if ~isvector(coverageMask) || ...
+                    numel(coverageMask) ~= height(camTimestamps)
+                error('PostProcessor:InvalidCoverageMask', ...
+                    'Frame coverage mask must match the camera row count.');
+            end
+            statuses = double(camTimestamps.SystemStatus);
+            eligible = PostProcessor.eligibleFrameMask( ...
+                camTimestamps, phaseScope);
+            candidates = find(eligible & logical(coverageMask(:)));
             if samplingPeriod == 0 || isempty(candidates)
                 selectedRows = candidates;
                 return;
@@ -475,6 +525,12 @@ classdef PostProcessor
 
         function value = nearestSample(data, timestamp)
             % Return the sample with the smallest timestamp difference.
+            if timestamp < data.Timestamp(1) || ...
+                    timestamp > data.Timestamp(end)
+                error('PostProcessor:TimestampOutsidePlcCoverage', ...
+                    ['Camera timestamp is outside the available PLC ' ...
+                    'sample range.']);
+            end
             [~, index] = min(abs(data.Timestamp - timestamp));
             value = data(index, :);
         end
