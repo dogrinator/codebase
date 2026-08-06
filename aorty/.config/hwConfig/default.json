@@ -3,24 +3,24 @@
     "xAxis": {
       "fTenzoOffset": 0.01,
       "fTenzoCons": 2.023E-5,
-      "fKp": 10,
+      "fKp": 1,
       "fKi": 0.1,
       "fIntegralLimit": 10,
       "fForceTolerance": 0.1,
-      "fMaxVelocity": 100,
-      "fMaxForce": 10,
+      "fMaxVelocity": 5,
+      "fMaxForce": 2.5,
       "fForceReliefDistance": 1,
       "fForceReliefVelocity": 1
     },
     "yAxis": {
       "fTenzoOffset": 0.01,
-      "fTenzoCons": 2.04E-5,
-      "fKp": 10,
+      "fTenzoCons": 5.04E-5,
+      "fKp": 1,
       "fKi": 0.1,
       "fIntegralLimit": 10,
       "fForceTolerance": 0.1,
-      "fMaxVelocity": 100,
-      "fMaxForce": 10,
+      "fMaxVelocity": 5,
+      "fMaxForce": 0.9,
       "fForceReliefDistance": 1,
       "fForceReliefVelocity": 1
     }

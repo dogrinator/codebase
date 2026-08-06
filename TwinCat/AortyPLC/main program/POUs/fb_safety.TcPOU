@@ -7,6 +7,8 @@ VAR_INPUT
 	bReset        : BOOL;
 	bHalt         : BOOL;
 	bHome         : BOOL;
+	bRestoreReference : BOOL; // Static startup reference restore; no motion
+	fRestoreReferencePosition : LREAL;
 	bEndStopL     : BOOL; // TRUE when the normalized lower switch is active
 	bEndStopH     : BOOL; // TRUE when the normalized upper switch is active
 	bExternalBusy : BOOL; // Test motion or tare is active
@@ -20,6 +22,8 @@ VAR_OUTPUT
 	nAxisErrorID       : UDINT;
 	bHoming            : BOOL;
 	bHomed             : BOOL;
+	bReferenceRestoreDone : BOOL;
+	bReferenceRestoreBusy : BOOL;
 	bStopped           : BOOL;
 	bProtectiveStop    : BOOL; // Abort active test motion but retain commanded power
 END_VAR
@@ -40,6 +44,7 @@ VAR
 	rtHome         : R_TRIG;
 
 	fbHomeTimeout  : TON;
+	fbReferenceRestoreTimeout : TON;
 	fbMoveTimeout  : TON;
 
 	eState             : E_SafetyState := E_SafetyState.Idle;
@@ -47,12 +52,16 @@ VAR
 	bResetExecute      : BOOL;
 	bHaltDonePulse     : BOOL;
 	stHomeOptions      : ST_HomingOptions;
+	fHomePosition      : LREAL;
+	eHomingMode        : MC_HomingMode;
 END_VAR
 
 VAR CONSTANT
 	HOME_PARK_POSITION : LREAL := 0.0;
 	HOME_PARK_VELOCITY : LREAL := 5.0;
 	HOME_TIMEOUT       : TIME := T#10M;
+	REFERENCE_RESTORE_TIMEOUT : TIME := T#5S;
+	REFERENCE_RESTORE_TOLERANCE : LREAL := 0.001;
 	HOME_PARK_TIMEOUT  : TIME := T#10S;
 	ERROR_POWER_FB       : UDINT := 1001;
 	ERROR_RESET_FB       : UDINT := 1002;
@@ -66,6 +75,8 @@ VAR CONSTANT
 	ERROR_UPPER_LIMIT    : UDINT := 1013;
 	ERROR_HOME_LIMIT     : UDINT := 1014;
 	ERROR_HOME_COORDINATE: UDINT := 1015;
+	ERROR_REFERENCE_RESTORE_TIMEOUT : UDINT := 1016;
+	ERROR_REFERENCE_RESTORE_INVALID : UDINT := 1017;
 END_VAR
 ]]></Declaration>
     <Implementation>
@@ -144,7 +155,50 @@ CASE eState OF
 			(bEndStopH AND stAxis.Status.PositiveDirection) THEN
 			eState := E_SafetyState.ProtectiveStop;
 		ELSIF rtHome.Q AND NOT bExternalBusy AND fbPower.Status THEN
+			bReferenceRestoreDone := FALSE;
 			eState := E_SafetyState.Homing;
+		ELSIF bRestoreReference AND NOT bExternalBusy AND fbPower.Status THEN
+			IF NOT ((fRestoreReferencePosition =
+				fRestoreReferencePosition) AND
+				ABS(fRestoreReferencePosition) < 1.0E300) THEN
+				bError := TRUE;
+				nErrorCode := ERROR_REFERENCE_RESTORE_INVALID;
+				nAxisErrorID := 0;
+				eState := E_SafetyState.ErrorStop;
+			ELSE
+				eState := E_SafetyState.RestoreReference;
+			END_IF
+		END_IF
+
+	E_SafetyState.RestoreReference:
+		IF fbReferenceRestoreTimeout.Q THEN
+			bError := TRUE;
+			nErrorCode := ERROR_REFERENCE_RESTORE_TIMEOUT;
+			nAxisErrorID := 0;
+			eState := E_SafetyState.ErrorStop;
+		ELSIF fbHome.Done THEN
+			eState := E_SafetyState.VerifyReference;
+		END_IF
+
+	E_SafetyState.VerifyReference:
+		// ReadStatus() runs before this FB, so the scan after MC_Home.Done
+		// verifies the NC result rather than trusting the retained value.
+		IF fbReferenceRestoreTimeout.Q THEN
+			bError := TRUE;
+			nErrorCode := ERROR_REFERENCE_RESTORE_TIMEOUT;
+			nAxisErrorID := 0;
+			eState := E_SafetyState.ErrorStop;
+		ELSIF NOT stAxis.Status.Homed OR
+			ABS(stAxis.NcToPlc.ActPos -
+				fRestoreReferencePosition) >
+				REFERENCE_RESTORE_TOLERANCE THEN
+			bError := TRUE;
+			nErrorCode := ERROR_REFERENCE_RESTORE_INVALID;
+			nAxisErrorID := 0;
+			eState := E_SafetyState.ErrorStop;
+		ELSE
+			bReferenceRestoreDone := TRUE;
+			eState := E_SafetyState.Complete;
 		END_IF
 
 	E_SafetyState.Homing:
@@ -213,6 +267,10 @@ END_CASE
 fbHomeTimeout(
 	IN := eState = E_SafetyState.Homing,
 	PT := HOME_TIMEOUT);
+fbReferenceRestoreTimeout(
+	IN := eState = E_SafetyState.RestoreReference OR
+		eState = E_SafetyState.VerifyReference,
+	PT := REFERENCE_RESTORE_TIMEOUT);
 fbMoveTimeout(
 	IN := eState = E_SafetyState.MoveToZero,
 	PT := HOME_PARK_TIMEOUT);
@@ -240,12 +298,25 @@ stHomeOptions.SyncVelocity := 2;
 stHomeOptions.ReferenceMode :=
 	E_EncoderReferenceMode.ENCODERREFERENCEMODE_PLCCAM;
 
-// TwinCAT NC owns the complete reference-cam search and release sequence.
+// A retained startup coordinate uses MC_Direct, which changes the NC
+// coordinate and referenced state without moving the motor. Normal homing
+// continues to use the complete reference-cam search and release sequence.
+IF eState = E_SafetyState.RestoreReference THEN
+	fHomePosition := fRestoreReferencePosition;
+	eHomingMode := MC_Direct;
+	stHomeOptions.ClearPositionLag := TRUE;
+ELSE
+	fHomePosition := -5.0;
+	eHomingMode := MC_DefaultHoming;
+	stHomeOptions.ClearPositionLag := FALSE;
+END_IF
+
 fbHome(
 	Axis := stAxis,
-	Execute := eState = E_SafetyState.Homing,
-	Position := -5.0,
-	HomingMode := MC_DefaultHoming,
+	Execute := eState = E_SafetyState.Homing OR
+		eState = E_SafetyState.RestoreReference,
+	Position := fHomePosition,
+	HomingMode := eHomingMode,
 	BufferMode := MC_Aborting,
 	Options := stHomeOptions,
 	bCalibrationCam := bEndStopL);
@@ -266,7 +337,11 @@ fbHalt(
 // Public status.
 bPowerStatus := fbPower.Status;
 bHaltDone := bHaltDonePulse OR fbHalt.Done;
-bHoming := eState = E_SafetyState.Homing OR
+bReferenceRestoreBusy :=
+	eState = E_SafetyState.RestoreReference OR
+	eState = E_SafetyState.VerifyReference;
+bHoming := bReferenceRestoreBusy OR
+	eState = E_SafetyState.Homing OR
 	eState = E_SafetyState.MoveToZero;
 bHomed := stAxis.Status.Homed;
 bStopped := stAxis.Status.StandStill;

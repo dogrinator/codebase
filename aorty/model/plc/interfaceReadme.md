@@ -109,6 +109,11 @@ TwinCAT clears Home, Reset, Save, Restore, and shared-start requests. The
 movement controller consumes Execute and Halt, and the status-buffer controller
 clears Tare after completion or rejection.
 
+Motion and tare require `bHomed=TRUE`. On startup the PLC restores a valid
+persistent incremental-axis coordinate without motion when axis power becomes
+available; if no valid coordinate exists, the operator must run normal homing.
+The Save/Restore service above remains a separate return-position feature.
+
 ### Test-sequence fields
 
 | Group | Fields |

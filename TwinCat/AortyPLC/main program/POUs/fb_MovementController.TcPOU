@@ -104,6 +104,7 @@ VAR CONSTANT
 	CYCLE_TIME : LREAL := 0.01; // dt of plc
 	VELOCITY_UPDATE_DELTA : LREAL := 0.1;
 	VELOCITY_UPDATE_CYCLES : INT := 10;
+	FORCE_REG_MIN_SPEED_FRACTION : LREAL := 0.01;
 	POSITION_EPSILON : LREAL := 0.000001;
 	FORCE_POLARITY : INT := -1;
 	STATUS_IDLE : INT := 0;
@@ -499,7 +500,10 @@ CASE nSeqState OF
 		fForceRegMaxVelocity := MIN(
 			ABS(fEndpointRate),
 			ABS(stSettings.fMaxVelocity));
-		fForceRegMinVelocity := fForceRegMaxVelocity * 0.1;
+		// Keep the anti-chatter floor small enough that force endpoints settle
+		// near the requested goal instead of at the edge of a 10% speed band.
+		fForceRegMinVelocity := fForceRegMaxVelocity *
+			FORCE_REG_MIN_SPEED_FRACTION;
 		fCmdVelocity := ABS(fEndpointRate);
 		IF fEndpointStartError * INT_TO_LREAL(FORCE_POLARITY) >= 0.0 THEN
 			mcDirection := MC_Positive_Direction;

@@ -101,7 +101,11 @@ verifyEmpty(testCase, preview.Y);
 verifyEqual(testCase, {preview.X.label}, ...
     {'Initial preload', 'Pre-cycle load', 'Pre-cycle unload'});
 verifyEqual(testCase, [preview.X.target], [12, 8, 2]);
-verifyEqual(testCase, [preview.X.tolerance], [0.2, 0.2, 0.2]);
+expectedTolerance = ...
+    config.pre.forceTolerance.x * ...
+    settings.hwConfig.plc.xAxis.fMaxForce / 100;
+verifyEqual(testCase, [preview.X.tolerance], ...
+    repmat(expectedTolerance, 1, 3));
 verifyEqual(testCase, [preview.X.tolerancePercent], [2, 2, 2]);
 
 config.pre.unloadToStart = true;
@@ -127,7 +131,9 @@ preview = PlotReferenceBuilder.build( ...
 verifyEqual(testCase, numel(preview.X), 1);
 verifyEqual(testCase, preview.X.label, 'Secondary endpoint');
 verifyEqual(testCase, preview.X.target, 15);
-verifyEqual(testCase, preview.X.tolerance, 0.25);
+verifyEqual(testCase, preview.X.tolerance, ...
+    config.single.forceTolerance.x * ...
+    settings.hwConfig.plc.xAxis.fMaxForce / 100);
 verifyEqual(testCase, preview.X.tolerancePercent, 2.5);
 
 entries = [preview.X, preview.X];

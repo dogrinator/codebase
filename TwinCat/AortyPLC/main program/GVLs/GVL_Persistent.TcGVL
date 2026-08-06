@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<TcPlcObject Version="1.1.0.1" ProductVersion="3.1.4024.15">
+  <GVL Name="GVL_Persistent" Id="{6c4627c9-22e3-4ac5-9eb9-b470f7393588}">
+    <Declaration><![CDATA[{attribute 'qualified_only'}
+VAR_GLOBAL PERSISTENT
+	// Last valid incremental-axis coordinates. MAIN updates these only while
+	// TwinCAT considers the corresponding NC axis referenced.
+	fLastPositionX      : LREAL;
+	fLastPositionY      : LREAL;
+	bLastPositionValidX : BOOL;
+	bLastPositionValidY : BOOL;
+END_VAR]]></Declaration>
+  </GVL>
+</TcPlcObject>

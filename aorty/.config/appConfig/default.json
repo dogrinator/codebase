@@ -10,6 +10,24 @@
       "lock": false
     },
     "record": false,
+    "forceTolerance": {
+      "x": 5,
+      "y": 4,
+      "lock": false
+    },
+    "preload": {
+      "enabled": true,
+      "value": {
+        "x": 1,
+        "y": 0.3,
+        "lock": false
+      },
+      "holdTime": {
+        "x": 5,
+        "y": 5,
+        "lock": true
+      }
+    },
     "cyclic": true,
     "cycles": 4,
     "load": {
@@ -23,28 +41,10 @@
       "lock": true
     },
     "unloadToStart": true,
-    "forceTolerance": {
-      "x": 0.8,
-      "y": 0.1,
-      "lock": false
-    },
     "holdTime": {
-      "x": 0.5,
-      "y": 0.5,
+      "x": 1,
+      "y": 1,
       "lock": true
-    },
-    "preload": {
-      "enabled": true,
-      "value": {
-        "x": 1,
-        "y": 0.3,
-        "lock": false
-      },
-      "holdTime": {
-        "x": 2,
-        "y": 2,
-        "lock": true
-      }
     }
   },
   "single": {

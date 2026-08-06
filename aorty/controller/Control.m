@@ -22,6 +22,7 @@ classdef Control < handle
         activePostProcessSettings = struct( ...
             'enabled', false, 'samplingPeriod', 0, ...
             'includePrePost', false)
+        lastSampleTime = struct('X', NaT, 'Y', NaT)
     end
 
     methods
@@ -60,6 +61,7 @@ classdef Control < handle
         function readCallback(controler)
             % Read data from plc and manage it
             if ~controler.plc.connected || controler.plc.disconnecting
+                controler.lastSampleTime = struct('X', NaT, 'Y', NaT);
                 controler.notifyMachineStatus([], false);
                 return;
             end
@@ -67,8 +69,8 @@ classdef Control < handle
                 [fx, fy, ufx, ufy, px, py, statuses] = ...
                     controler.plc.fifoProcess();
                 readTime = datetime('now');
-                xTimes = controler.sampleTimes(readTime, numel(fx));
-                yTimes = controler.sampleTimes(readTime, numel(fy));
+                xTimes = controler.sampleTimes(readTime, numel(fx), 'X');
+                yTimes = controler.sampleTimes(readTime, numel(fy), 'Y');
                 controler.samples.append( ...
                     fx, fy, ufx, ufy, px, py, xTimes, yTimes);
                 controler.model.updateSystemStatus( ...
@@ -280,6 +282,12 @@ classdef Control < handle
             end
             controler.startTest( ...
                 [], commands, postSettings, recordEnabled, testKind);
+        end
+
+        function times = sampleTimesForTesting( ...
+                controler, endTime, count, axisName)
+            % Offline test seam for per-axis PLC timestamp reconstruction.
+            times = controler.sampleTimes(endTime, count, axisName);
         end
     end
 
@@ -718,12 +726,30 @@ classdef Control < handle
             controler.setOperationActive(false);
         end
 
-        function times = sampleTimes(~, endTime, count)
+        function times = sampleTimes(controler, endTime, count, axisName)
             if count == 0
                 times = NaT(1, 0);
                 return;
             end
-            times = endTime - seconds((count - 1:-1:0) * AppInfo.PLC_SAMPLE_PERIOD_SECONDS);
+            axisName = upper(char(axisName));
+            if ~ismember(axisName, {'X', 'Y'})
+                error('Control:InvalidSampleAxis', ...
+                    'Sample timestamps can only be generated for X or Y.');
+            end
+
+            period = AppInfo.PLC_SAMPLE_PERIOD_SECONDS;
+            previous = controler.lastSampleTime.(axisName);
+            reanchorGap = 2 * AppInfo.PLC_READ_PERIOD_SECONDS;
+            if ismissing(previous) || ...
+                    seconds(endTime - previous) > reanchorGap
+                times = endTime - seconds((count - 1:-1:0) * period);
+            else
+                % PLC samples are produced at a fixed rate. Continue from the
+                % previous PLC sample instead of anchoring every ADS batch to
+                % a jittery MATLAB callback time, which can overlap batches.
+                times = previous + seconds((1:count) * period);
+            end
+            controler.lastSampleTime.(axisName) = times(end);
         end
 
         function message = acquisitionIntegrityError(controler)

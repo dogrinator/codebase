@@ -4,6 +4,8 @@
     <Declaration><![CDATA[TYPE E_SafetyState :
 (
 	Idle,
+	RestoreReference,
+	VerifyReference,
 	Homing,
 	MoveToZero,
 	Complete,

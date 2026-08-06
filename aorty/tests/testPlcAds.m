@@ -443,6 +443,13 @@ verifySubstring(testCase, PlcErrorCatalog.describe('Y', 2202, 0), ...
     'Unknown PLC error 2202');
 end
 
+function testPersistentReferenceErrorsAreDecoded(testCase)
+verifySubstring(testCase, PlcErrorCatalog.describe('X', 1016, 0), ...
+    'reference restore timed out');
+verifySubstring(testCase, PlcErrorCatalog.describe('Y', 1017, 0), ...
+    'reference is invalid');
+end
+
 function [plc, client] = connectedPlc()
 client = FakeAdsClient();
 plc = Plc(Model());

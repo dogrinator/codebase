@@ -16,6 +16,9 @@ classdef PlcErrorCatalog
                 case 1012, detail = 'Post-home park timeout';
                 case 1013, detail = 'Upper end stop active during post-home park';
                 case 1014, detail = 'Lower end stop active when homing completed';
+                case 1015, detail = 'Invalid coordinate after homing';
+                case 1016, detail = 'Persistent axis reference restore timed out';
+                case 1017, detail = 'Persistent axis reference is invalid';
                 case 2001, detail = 'Unsupported movement mode';
                 case 2002, detail = 'Saved-position return requested without a saved position';
                 case 2003, detail = 'Unsupported endpoint or criterion mode';
@@ -49,5 +52,4 @@ classdef PlcErrorCatalog
         end
     end
 end
-
 

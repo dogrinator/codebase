@@ -269,8 +269,33 @@ inactive peer.
 | `fTenzoBuffer[1..50]`, `fPosBuffer[1..50]` | Force and absolute-position samples |
 | `fTenzoTarOffset`, `bTarWorking` | Tare state |
 
-`bHomed` is informational and does not block MATLAB commands. Completion
+`bHomed` must be true before the PLC accepts tare or motion commands. Completion
 requires a changed operation counter, `bWorking=FALSE`, and no error.
+
+### Persistent startup reference
+
+The X and Y axes use incremental encoders. While an axis is referenced and its
+NC data is valid, `MAIN` continuously copies its actual coordinate into
+`GVL_Persistent`. After a PLC restart, cold reset, or project download:
+
+1. The retained coordinate remains available.
+2. When the operator powers the axis, `fb_safety` applies that coordinate with
+   `MC_Home` in `MC_Direct` mode.
+3. TwinCAT marks the axis referenced without moving the motor.
+4. The PLC verifies both `Homed` and the restored coordinate before enabling
+   normal commands.
+
+The first deployment, a Reset Origin, missing/corrupt persistent data, or a
+failed restore still requires a normal reference-cam home. Requesting a normal
+home invalidates the previous retained coordinate until homing succeeds.
+
+This mechanism is valid only because the leadscrews keep both axes in exactly
+the same physical position while power is removed. Do not use it on an axis
+that can move while its encoder is unavailable.
+
+Persistent data is normally written during an orderly TwinCAT shutdown. For
+recovery from an abrupt loss of controller power, configure supported NOVRAM
+or a UPS/controlled shutdown; otherwise the last boot-data file can be stale.
 
 | Value | `nSystemStatus` |
 | ---: | --- |
@@ -326,7 +351,7 @@ move and reports error `2102`.
 | `2102` | Overforce relief direction unknown |
 | `2201`, `2203` | Relative or velocity motion-function-block failure |
 
-Safety and homing codes `1001..1015`, plus the native `nAxisErrorID`, are
+Safety and homing codes `1001..1017`, plus the native `nAxisErrorID`, are
 decoded by MATLAB's `PlcErrorCatalog`.
 
 ## General Test and recording boundaries
@@ -354,20 +379,24 @@ ready:
    system-status indications.
 6. Save and restore X, Y, and Both.
 7. Tare each load cell.
-8. Home each axis and confirm that `bHomed` is informational.
-9. Jog positive and negative at low speed; confirm position and force signs.
-10. Run standalone pre-test with preload, force unload, and unload-to-start.
-11. Run displacement and force Single tests with the optional OR endpoint.
-12. Run all Cyclic load/unload mode combinations, including mixed modes.
-13. Import and run
+8. Home each axis once and confirm that `bHomed` becomes true.
+9. Record both coordinates, restart the PLC, power the axes, and confirm that
+   each becomes homed at the same coordinate without motor movement.
+10. Repeat after a PLC project download, then confirm that Reset Origin clears
+    the retained reference and requires normal homing.
+11. Jog positive and negative at low speed; confirm position and force signs.
+12. Run standalone pre-test with preload, force unload, and unload-to-start.
+13. Run displacement and force Single tests with the optional OR endpoint.
+14. Run all Cyclic load/unload mode combinations, including mixed modes.
+15. Import and run
     [`general_test_example.json`](../../../aorty/examples/general_test_example.json).
-14. Exercise every post-test action, including saved-position prerequisites.
-15. During a biaxial test, confirm simultaneous start and waiting at each
+16. Exercise every post-test action, including saved-position prerequisites.
+17. During a biaxial test, confirm simultaneous start and waiting at each
     configured barrier.
-16. Force a controlled one-axis failure and confirm that the peer halts without
+18. Force a controlled one-axis failure and confirm that the peer halts without
     deadlock.
-17. Verify STOP, reset, and both end stops.
-18. Carefully provoke the approved overforce test and confirm opposite-direction
+19. Verify STOP, reset, and both end stops.
+20. Carefully provoke the approved overforce test and confirm opposite-direction
     relief, latched error, and skipped post-test.
-19. Verify raw HDF5/binary recording, automatic TIFF output, and manual
+21. Verify raw HDF5/binary recording, automatic TIFF output, and manual
     post-processing.

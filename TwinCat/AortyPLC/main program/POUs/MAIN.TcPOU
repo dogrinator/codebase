@@ -48,6 +48,8 @@ END_VAR
 VAR_TEMP
 	bBiaxialAxesReady : BOOL;
 	bBiaxialCommonAbortRequest : BOOL;
+	bRestoreReferenceX : BOOL;
+	bRestoreReferenceY : BOOL;
 END_VAR]]></Declaration>
     <Implementation>
       <ST><![CDATA[////////////////////////////////
@@ -57,6 +59,27 @@ END_VAR]]></Declaration>
 // Refresh NC status before making any safety or motion decision
 GVL_Axis.xAxis.ReadStatus();
 GVL_Axis.yAxis.ReadStatus();
+
+// Requesting a physical home deliberately invalidates the old retained
+// coordinate. Only a successfully referenced axis will make it valid again.
+IF stMoveCommandX.bHome THEN
+	GVL_Persistent.bLastPositionValidX := FALSE;
+END_IF
+IF stMoveCommandY.bHome THEN
+	GVL_Persistent.bLastPositionValidY := FALSE;
+END_IF
+
+// On the first powered scan after a PLC/NC restart, statically restore each
+// incremental axis to its last persistent coordinate. MC_Direct performs no
+// motor movement. A normal reference-cam home always takes priority.
+bRestoreReferenceX :=
+	GVL_Persistent.bLastPositionValidX AND
+	NOT GVL_Axis.xAxis.Status.Homed AND
+	NOT fbSafetyX.bReferenceRestoreDone;
+bRestoreReferenceY :=
+	GVL_Persistent.bLastPositionValidY AND
+	NOT GVL_Axis.yAxis.Status.Homed AND
+	NOT fbSafetyY.bReferenceRestoreDone;
 
 // Normalize the active-low physical switches
 bEndStopLxActive := NOT nEndStopLx;
@@ -70,6 +93,8 @@ fbSafetyX(
     bReset := stMoveCommandX.bReset,
     bHalt := stMoveCommandX.bHalt OR fbMovementControllerX.stateHalt,
     bHome := stMoveCommandX.bHome,
+	bRestoreReference := bRestoreReferenceX,
+	fRestoreReferencePosition := GVL_Persistent.fLastPositionX,
     bEndStopL := bEndStopLxActive,
 	bEndStopH := bEndStopHxActive,
 	bExternalBusy := fbMovementControllerX.bBusy OR stSystemStatusX.bTarWorking
@@ -81,7 +106,9 @@ fbSafetyY(
     bReset := stMoveCommandY.bReset,
     bHalt := stMoveCommandY.bHalt OR fbMovementControllerY.stateHalt,
     bHome := stMoveCommandY.bHome,
-	bEndStopL := bEndStopLyActive,
+	bRestoreReference := bRestoreReferenceY,
+	fRestoreReferencePosition := GVL_Persistent.fLastPositionY,
+    bEndStopL := bEndStopLyActive,
 	bEndStopH := bEndStopHyActive,
 	bExternalBusy := fbMovementControllerY.bBusy OR stSystemStatusY.bTarWorking
 );
@@ -92,7 +119,8 @@ fbSafetyY(
 
 fbSystemBufferX(
 	stSystemStatus:= stSystemStatusX,
-	bBlockTar:= fbMovementControllerX.bBusy OR fbSafetyX.bHoming,
+	bBlockTar:= fbMovementControllerX.bBusy OR fbSafetyX.bHoming OR
+		NOT fbSafetyX.bHomed,
 	nRawTenzo:= -nRawTenzoX,
 	fTenzoCons:=stSettingsX.fTenzoCons,
 	fTenzoOffset:= stSettingsX.fTenzoOffset,
@@ -101,7 +129,8 @@ fbSystemBufferX(
 	
 fbSystemBufferY(
 	stSystemStatus:= stSystemStatusY,
-	bBlockTar:= fbMovementControllerY.bBusy OR fbSafetyY.bHoming,
+	bBlockTar:= fbMovementControllerY.bBusy OR fbSafetyY.bHoming OR
+		NOT fbSafetyY.bHomed,
 	nRawTenzo:= nRawTenzoY,
 	fTenzoCons:=stSettingsY.fTenzoCons,
 	fTenzoOffset:= stSettingsY.fTenzoOffset,
@@ -121,6 +150,7 @@ bBiaxialAxesReady :=
 	NOT fbMovementControllerY.bError AND
 	NOT fbSafetyX.bError AND NOT fbSafetyY.bError AND
 	NOT fbSafetyX.bHoming AND NOT fbSafetyY.bHoming AND
+	fbSafetyX.bHomed AND fbSafetyY.bHomed AND
 	NOT stSystemStatusX.bTarWorking AND
 	NOT stSystemStatusY.bTarWorking AND
 	fbSafetyX.bPowerStatus AND fbSafetyY.bPowerStatus;
@@ -177,7 +207,8 @@ fbMovementControllerX(
 	bHaltDone := fbSafetyX.bHaltDone,
 	bSafetyError := fbSafetyX.bError,
 	bProtectiveStop := fbSafetyX.bProtectiveStop,
-	bExternalBusy := fbSafetyX.bHoming OR stSystemStatusX.bTarWorking,
+	bExternalBusy := fbSafetyX.bHoming OR
+		NOT fbSafetyX.bHomed OR stSystemStatusX.bTarWorking,
 	bSyncEnabled := fbBiaxialCoordinator.bSyncActive,
 	bSyncRelease := fbBiaxialCoordinator.bSyncRelease,
 	bSyncAbort := fbBiaxialCoordinator.bAbortX,
@@ -192,7 +223,8 @@ fbMovementControllerY(
 	bHaltDone := fbSafetyY.bHaltDone,
 	bSafetyError := fbSafetyY.bError,
 	bProtectiveStop := fbSafetyY.bProtectiveStop,
-	bExternalBusy := fbSafetyY.bHoming OR stSystemStatusY.bTarWorking,
+	bExternalBusy := fbSafetyY.bHoming OR
+		NOT fbSafetyY.bHomed OR stSystemStatusY.bTarWorking,
 	bSyncEnabled := fbBiaxialCoordinator.bSyncActive,
 	bSyncRelease := fbBiaxialCoordinator.bSyncRelease,
 	bSyncAbort := fbBiaxialCoordinator.bAbortY,
@@ -245,6 +277,29 @@ fbStatusPublisherY(
 	bStartError := fbBiaxialCoordinator.bStartError,
 	nStartErrorCode := fbBiaxialCoordinator.nStartErrorCode,
 	stSystemStatus := stSystemStatusY);
+
+// Track the last valid coordinate continuously in persistent PLC memory.
+// Values are never replaced while an axis is unreferenced, homing, or in an
+// NC error, so startup cannot accidentally retain the raw zero coordinate.
+IF fbSafetyX.bHomed AND NOT fbSafetyX.bHoming AND
+	NOT GVL_Axis.xAxis.Status.Error AND
+	(GVL_Axis.xAxis.NcToPlc.ActPos =
+		GVL_Axis.xAxis.NcToPlc.ActPos) AND
+	ABS(GVL_Axis.xAxis.NcToPlc.ActPos) < 1.0E300 THEN
+	GVL_Persistent.fLastPositionX :=
+		GVL_Axis.xAxis.NcToPlc.ActPos;
+	GVL_Persistent.bLastPositionValidX := TRUE;
+END_IF
+
+IF fbSafetyY.bHomed AND NOT fbSafetyY.bHoming AND
+	NOT GVL_Axis.yAxis.Status.Error AND
+	(GVL_Axis.yAxis.NcToPlc.ActPos =
+		GVL_Axis.yAxis.NcToPlc.ActPos) AND
+	ABS(GVL_Axis.yAxis.NcToPlc.ActPos) < 1.0E300 THEN
+	GVL_Persistent.fLastPositionY :=
+		GVL_Axis.yAxis.NcToPlc.ActPos;
+	GVL_Persistent.bLastPositionValidY := TRUE;
+END_IF
 
 // Home and reset are one-shot commands
 stMoveCommandX.bHome := FALSE;

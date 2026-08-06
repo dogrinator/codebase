@@ -43,6 +43,25 @@ verifyEqual(testCase, sort({files.name}), ...
 clear cleanup;
 end
 
+function testControllerSampleClockDoesNotOverlapJitteryBatches(testCase)
+[controler, ~, ~] = connectedController(testCase.TestData.root);
+base = datetime(2026, 8, 6, 12, 0, 0);
+
+first = controler.sampleTimesForTesting(base, 3, 'X');
+second = controler.sampleTimesForTesting( ...
+    base + milliseconds(15), 2, 'X');
+yFirst = controler.sampleTimesForTesting( ...
+    base + milliseconds(15), 2, 'Y');
+
+verifyEqual(testCase, seconds(diff([first, second])) * 1000, ...
+    repmat(10, 1, 4), 'AbsTol', 1e-9);
+verifyEqual(testCase, yFirst, ...
+    base + milliseconds([5, 15]));
+verifyError(testCase, ...
+    @() controler.sampleTimesForTesting(base, 1, 'Z'), ...
+    'Control:InvalidSampleAxis');
+end
+
 function testExistingRecordingIsNotOverwritten(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
