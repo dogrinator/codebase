@@ -165,7 +165,9 @@ classdef TestDefinitionTabs < handle
         %% Test-tab construction
         function createPreTestTab(view, tab)
             root = uigridlayout(tab, [4, 1]);
-            root.RowHeight = {160, 160, 300, 44};
+            % Include each panel title in addition to its grid rows so no
+            % editable row is clipped at the section boundary.
+            root.RowHeight = {200, 165, 325, 44};
             root.Padding = [8, 8, 8, 8];
             root.RowSpacing = 8;
             root.Scrollable = 'on';
