@@ -180,6 +180,7 @@ classdef TestPanel < handle
             if saveAs
                 answer = inputdlg('Preset name:', 'Save test preset', ...
                     [1, 45], {'new_test'});
+                restoreFigureFocus(panel.parentFig);
                 if isempty(answer) || isempty(strtrim(answer{1}))
                     return;
                 end

@@ -28,6 +28,38 @@ verifyEqual(testCase, numel(client.DeletedHandles), 6);
 verifyEqual(testCase, numel(unique(client.DeletedHandles)), 6);
 end
 
+function testPersistentCheckpointDiagnostics(testCase)
+client = FakeAdsClient();
+ads = PlcAds(client);
+ads.initialize(true);
+client.setSymbol('MAIN.bPersistentPositionSaved', true);
+client.setSymbol('MAIN.bPersistentPositionSaveBusy', false);
+client.setSymbol('MAIN.bPersistentPositionSaveError', true);
+client.setSymbol('MAIN.nPersistentPositionSaveErrorID', uint32(16));
+client.setSymbol('MAIN.nPersistentPositionCheckpointCounter', uint32(7));
+
+state = ads.readPersistentPositionCheckpoint();
+verifyTrue(testCase, state.saved);
+verifyFalse(testCase, state.busy);
+verifyTrue(testCase, state.error);
+verifyEqual(testCase, state.errorID, uint32(16));
+verifyEqual(testCase, state.counter, uint32(7));
+end
+
+function testPowerOffWaitsForFreshPersistentCheckpoint(testCase)
+client = FakeAdsClient();
+client.AutoCheckpointOnPowerOff = true;
+client.setStatus('X', struct('homed', true));
+plc = Plc(Model());
+plc.connectClientForTesting(client);
+cleanup = onCleanup(@() plc.disconnectPLC());
+
+plc.setPower({'X'}, false);
+verifyEqual(testCase, client.getSymbol( ...
+    'MAIN.nPersistentPositionCheckpointCounter'), uint32(1));
+clear cleanup;
+end
+
 function testFailedFacadeInitializationStaysDisconnected(testCase)
 client = FakeAdsClient();
 client.FailCreateAt = 5;

@@ -293,7 +293,7 @@ classdef Control < handle
 
     %% Help methods for main functions
     methods (Access = private)
-        function startTest(controler, ~, commands, postSettings, recordEnabled, testKind)
+        function startTest(controler, app, commands, postSettings, recordEnabled, testKind)
             if controler.testRunning || controler.plc.isWorking
                 error('Control:Busy', 'A PLC operation is already active.');
             end
@@ -313,6 +313,9 @@ classdef Control < handle
             if recordEnabled
                 if isempty(controler.recordingFolderSelector)
                     folder = uigetdir('', 'Choose test output folder');
+                    if ~isempty(app)
+                        restoreFigureFocus(app.fig);
+                    end
                 else
                     folder = controler.recordingFolderSelector();
                 end

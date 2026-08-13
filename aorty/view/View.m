@@ -49,6 +49,10 @@ classdef View < handle
             end
             try
                 app.controller.camera.closeCam();
+            catch
+                % Camera cleanup must not prevent PLC power-off.
+            end
+            try
                 app.controller.plc.disconnectPLC();
             catch
                 % Hardware objects may already have been released.
@@ -368,6 +372,7 @@ classdef View < handle
 
         function onManualPostProcess(app)
             folder = uigetdir('', 'Choose recorded test directory');
+            restoreFigureFocus(app.fig);
             if isequal(folder, 0)
                 return;
             end

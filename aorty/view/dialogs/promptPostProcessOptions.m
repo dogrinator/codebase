@@ -46,6 +46,7 @@ uiwait(dialog);
 if isvalid(dialog)
     delete(dialog);
 end
+restoreFigureFocus(parent);
 
     function acceptDialog(~, ~)
         % Copy UI values before the figure is deleted by the outer scope.

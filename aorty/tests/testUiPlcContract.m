@@ -156,3 +156,31 @@ verifyNotEmpty(testCase, strfind(controllerSource, ...
 verifyNotEmpty(testCase, strfind(controllerSource, ...
     '''outputFolder'', fullfile('));
 end
+
+function testDialogsRestoreOwningWindowFocus(testCase)
+root = testCase.TestData.root;
+files = {
+    fullfile(root, 'view', 'SettingsWindow.m')
+    fullfile(root, 'view', 'TestPanel.m')
+    fullfile(root, 'view', 'View.m')
+    fullfile(root, 'view', 'components', 'TestDefinitionTabs.m')
+    fullfile(root, 'view', 'dialogs', 'promptPostProcessOptions.m')
+    fullfile(root, 'controller', 'Control.m')};
+
+for index = 1:numel(files)
+    source = fileread(files{index});
+    verifyNotEmpty(testCase, strfind(source, 'restoreFigureFocus('), ...
+        sprintf('Missing focus restoration in %s.', files{index}));
+end
+
+helper = fileread(fullfile(root, 'view', 'support', ...
+    'restoreFigureFocus.m'));
+verifyNotEmpty(testCase, strfind(helper, 'drawnow'));
+verifyNotEmpty(testCase, strfind(helper, 'figure(parentFig)'));
+end
+
+function testHardwareSettingsFieldsAreScrollable(testCase)
+source = fileread(fullfile(testCase.TestData.root, ...
+    'view', 'SettingsWindow.m'));
+verifyNotEmpty(testCase, strfind(source, "grid.Scrollable = 'on';"));
+end

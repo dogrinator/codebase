@@ -158,6 +158,7 @@ for symbol = {'fLastPositionX', 'fLastPositionY', ...
 end
 verifyNotEmpty(testCase, strfind(project, ...
     'GVLs\GVL_Persistent.TcGVL'));
+verifyNotEmpty(testCase, strfind(project, 'Tc2_Utilities'));
 verifyNotEmpty(testCase, strfind(safetyState, 'RestoreReference'));
 verifyNotEmpty(testCase, strfind(safetyState, 'VerifyReference'));
 verifyNotEmpty(testCase, strfind(safety, 'MC_Direct'));
@@ -167,6 +168,16 @@ verifyNotEmpty(testCase, strfind(main, ...
     'NOT fbSafetyX.bHomed OR stSystemStatusX.bTarWorking'));
 verifyNotEmpty(testCase, strfind(main, ...
     'NOT fbSafetyY.bHomed OR stSystemStatusY.bTarWorking'));
+verifyNotEmpty(testCase, strfind(main, 'FB_WritePersistentData'));
+verifyNotEmpty(testCase, strfind(main, ...
+    'TwinCAT_SystemInfoVarList._AppInfo.AdsPort'));
+verifyNotEmpty(testCase, strfind(main, 'SPDM_VAR_BOOST'));
+verifyNotEmpty(testCase, strfind(main, 'ftPowerRequestX.Q'));
+verifyNotEmpty(testCase, strfind(main, 'ftPowerRequestY.Q'));
+verifyNotEmpty(testCase, strfind(main, ...
+    'bPersistentPositionSaveError'));
+verifyNotEmpty(testCase, strfind(main, ...
+    'nPersistentPositionCheckpointCounter'));
 end
 
 function testGeneratedTmcStatusLayout(testCase)

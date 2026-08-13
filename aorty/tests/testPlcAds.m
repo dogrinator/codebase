@@ -387,6 +387,24 @@ verifyFalse(testCase, plc.connected);
 verifyFalse(testCase, plc.disconnecting);
 end
 
+function testDisconnectPowersOffBothAxes(testCase)
+[plc, client] = connectedPlc();
+client.clearWrites();
+
+plc.disconnectPLC();
+
+symbols = writtenSymbols(client);
+powerWrites = endsWith(symbols, '.bPower');
+verifyEqual(testCase, symbols(powerWrites), { ...
+    'MAIN.stMoveCommandX.bPower', ...
+    'MAIN.stMoveCommandY.bPower'});
+verifyEqual(testCase, cellfun( ...
+    @(entry) logical(entry.value), client.Writes(powerWrites)), ...
+    [false, false]);
+verifyFalse(testCase, plc.connected);
+verifyFalse(testCase, plc.disconnecting);
+end
+
 function testSavedPostRequiresSavedCoordinate(testCase)
 client = FakeAdsClient();
 client.SavedPositionValid = false;

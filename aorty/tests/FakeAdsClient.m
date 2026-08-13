@@ -10,6 +10,7 @@ classdef FakeAdsClient < handle
         DeletedHandles = zeros(1, 0, 'int32')
         Writes = {}
         DeleteErrorMessage = ''
+        AutoCheckpointOnPowerOff = false
     end
 
     properties (Access = private)
@@ -84,6 +85,22 @@ classdef FakeAdsClient < handle
             client.Values(symbol) = stored;
             client.Writes{end + 1} = struct( ...
                 'symbol', symbol, 'value', stored);
+            if client.AutoCheckpointOnPowerOff && ...
+                    endsWith(symbol, '.bPower') && ~logical(stored)
+                counterSymbol = ...
+                    'MAIN.nPersistentPositionCheckpointCounter';
+                if isKey(client.Values, counterSymbol)
+                    counter = uint32(client.Values(counterSymbol));
+                else
+                    counter = uint32(0);
+                end
+                client.Values(counterSymbol) = counter + 1;
+                client.Values('MAIN.bPersistentPositionSaved') = true;
+                client.Values('MAIN.bPersistentPositionSaveBusy') = false;
+                client.Values('MAIN.bPersistentPositionSaveError') = false;
+                client.Values('MAIN.nPersistentPositionSaveErrorID') = ...
+                    uint32(0);
+            end
         end
 
         function setStatus(client, axisName, values)

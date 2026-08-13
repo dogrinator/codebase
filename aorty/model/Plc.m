@@ -74,6 +74,19 @@ classdef Plc < handle
             if plc.disconnecting
                 return;
             end
+            % Keep ADS available until both axes have received their
+            % power-off command (and any required position checkpoint has
+            % completed). Disconnect remains best-effort so a PLC fault
+            % cannot prevent the client and its handles from being released.
+            if plc.connected && ~isempty(plc.ads) && ~isempty(plc.client)
+                try
+                    plc.setPower({'X', 'Y'}, false);
+                catch exception
+                    warning('PLC:PowerOffBeforeDisconnect', ...
+                        ['PLC power-off did not complete cleanly before ' ...
+                        'disconnect: %s'], exception.message);
+                end
+            end
             % Prepare ads for next conection 
             plc.disconnecting = true;
             oldAds = plc.ads;
@@ -335,9 +348,53 @@ classdef Plc < handle
         function setPower(plc, axes, enabled)
             plc.requireConnection();
             axes = plc.normalizeAxes(axes);
+
+            waitForCheckpoint = false;
+            checkpointBefore = uint32(0);
+            if ~enabled
+                statuses = plc.pollStatus();
+                for index = 1:numel(axes)
+                    axis = axes{index};
+                    waitForCheckpoint = waitForCheckpoint || ...
+                        (statuses.(axis).powered && statuses.(axis).homed);
+                end
+                if waitForCheckpoint
+                    checkpoint = ...
+                        plc.ads.readPersistentPositionCheckpoint();
+                    checkpointBefore = checkpoint.counter;
+                end
+            end
+
             for index = 1:numel(axes)
                 plc.ads.writeCommand( ...
                     axes{index}, 'power', logical(enabled));
+            end
+
+            % Do not let the operator cut controller power before TwinCAT has
+            % written the last referenced coordinate to its boot-data file.
+            if waitForCheckpoint
+                deadline = tic;
+                while toc(deadline) < 8
+                    checkpoint = ...
+                        plc.ads.readPersistentPositionCheckpoint();
+                    if checkpoint.error
+                        error('PLC:PersistentPositionSave', ...
+                            ['Axis power is off, but the position checkpoint ' ...
+                            'failed with ADS error 0x%08X. Do not switch off ' ...
+                            'the controller; home again or repair persistent ' ...
+                            'storage first.'], checkpoint.errorID);
+                    end
+                    if checkpoint.saved && ...
+                            checkpoint.counter ~= checkpointBefore
+                        return;
+                    end
+                    pause(0.05);
+                    drawnow limitrate;
+                end
+                error('PLC:PersistentPositionSaveTimeout', ...
+                    ['Axis power is off, but the PLC did not confirm its ' ...
+                    'position checkpoint within 8 seconds. Do not switch ' ...
+                    'off the controller.']);
             end
         end
 

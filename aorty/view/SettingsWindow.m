@@ -106,6 +106,7 @@ classdef SettingsWindow < handle
             window.plcYUI = struct();
             window.applyButton = [];
             window.editControls = gobjects(0);
+            restoreFigureFocus(window.parentFig);
         end
 
         function value = isOpen(window)
@@ -173,6 +174,7 @@ classdef SettingsWindow < handle
             grid.ColumnWidth = {210, '1x'};
             grid.RowHeight = repmat({34}, 1, numel(names));
             grid.Padding = [12, 12, 12, 12];
+            grid.Scrollable = 'on';
             fields = struct();
             for index = 1:numel(names)
                 name = names{index};
@@ -231,6 +233,7 @@ classdef SettingsWindow < handle
             if saveAs
                 answer = inputdlg('Configuration name:', ...
                     'Save hardware configuration', [1, 45], {'new_hardware'});
+                restoreFigureFocus(window.fig);
                 if isempty(answer) || isempty(strtrim(answer{1}))
                     return;
                 end

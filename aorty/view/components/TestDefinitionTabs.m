@@ -335,7 +335,7 @@ classdef TestDefinitionTabs < handle
             grid = TestControlFactory.formGrid(tab, 6);
             view.controls.general.testFile = TestControlFactory.textRow( ...
                 grid, 2, 'Complete JSON definition', 'No file selected');
-            browse = uibutton(grid, 'Text', 'Browse JSON', ...
+            browse = uibutton(grid, 'Text', 'Browse', ...
                 'ButtonPushedFcn', @(~, ~) view.browseGeneralTest());
             browse.Layout.Row = 2;
             browse.Layout.Column = 5;
@@ -451,6 +451,7 @@ classdef TestDefinitionTabs < handle
         function browseGeneralTest(view)
             [file, folder] = uigetfile({'*.json', ...
                 'General Test JSON (*.json)'});
+            restoreFigureFocus(view.parentFig);
             if isequal(file, 0)
                 return;
             end

@@ -289,13 +289,37 @@ The first deployment, a Reset Origin, missing/corrupt persistent data, or a
 failed restore still requires a normal reference-cam home. Requesting a normal
 home invalidates the previous retained coordinate until homing succeeds.
 
+TwinCAT ordinarily writes `PERSISTENT` values to `Port_851.bootdata` only on an
+orderly runtime shutdown. This project also checkpoints the current references
+with `FB_WritePersistentData` after a successful home and after an operator
+power-off request. The write starts only after both axes have been stable for
+one second. When the app switches off a referenced axis, it waits for a new
+successful checkpoint before returning. Before removing controller power,
+confirm online that `MAIN.bPersistentPositionSaved=TRUE` and
+`MAIN.bPersistentPositionSaveError=FALSE`. If a write fails,
+`MAIN.nPersistentPositionSaveErrorID` contains the ADS error.
+
 This mechanism is valid only because the leadscrews keep both axes in exactly
 the same physical position while power is removed. Do not use it on an axis
 that can move while its encoder is unavailable.
 
-Persistent data is normally written during an orderly TwinCAT shutdown. For
-recovery from an abrupt loss of controller power, configure supported NOVRAM
-or a UPS/controlled shutdown; otherwise the last boot-data file can be stale.
+The automatic checkpoint closes the common gap between disabling the motors
+and cutting controller power, but it cannot save a position after power has
+already disappeared. For power loss at an arbitrary instant, configure a
+supported NOVRAM Retain Handler or a UPS/controlled shutdown. If either axis
+can move while its incremental encoder is unavailable, use an absolute encoder
+or reference again; a saved software coordinate is not safe in that case.
+
+### Software-limit commissioning
+
+The checked-in NC configuration is not yet symmetric: Y has its lower software
+limit enabled at the default `0 mm`, X has no enabled lower software limit, and
+neither `10000 mm` upper limit is enabled. Do not guess the missing travel
+values. After the restart-coordinate check above passes repeatedly, measure the
+approved safe working interval for each axis, allow enough distance for the
+axis to decelerate before the physical end stop, and then enable both lower and
+upper NC software-limit monitoring. Keep the physical end stops active; the
+software limits are an additional layer, not a replacement.
 
 | Value | `nSystemStatus` |
 | ---: | --- |
@@ -382,21 +406,24 @@ ready:
 8. Home each axis once and confirm that `bHomed` becomes true.
 9. Record both coordinates, restart the PLC, power the axes, and confirm that
    each becomes homed at the same coordinate without motor movement.
-10. Repeat after a PLC project download, then confirm that Reset Origin clears
+10. Switch off both axes in the app, confirm
+    `MAIN.bPersistentPositionSaved=TRUE`, then cycle controller power and
+    verify both restored coordinates before commissioning software limits.
+11. Repeat after a PLC project download, then confirm that Reset Origin clears
     the retained reference and requires normal homing.
-11. Jog positive and negative at low speed; confirm position and force signs.
-12. Run standalone pre-test with preload, force unload, and unload-to-start.
-13. Run displacement and force Single tests with the optional OR endpoint.
-14. Run all Cyclic load/unload mode combinations, including mixed modes.
-15. Import and run
+12. Jog positive and negative at low speed; confirm position and force signs.
+13. Run standalone pre-test with preload, force unload, and unload-to-start.
+14. Run displacement and force Single tests with the optional OR endpoint.
+15. Run all Cyclic load/unload mode combinations, including mixed modes.
+16. Import and run
     [`general_test_example.json`](../../../aorty/examples/general_test_example.json).
-16. Exercise every post-test action, including saved-position prerequisites.
-17. During a biaxial test, confirm simultaneous start and waiting at each
+17. Exercise every post-test action, including saved-position prerequisites.
+18. During a biaxial test, confirm simultaneous start and waiting at each
     configured barrier.
-18. Force a controlled one-axis failure and confirm that the peer halts without
+19. Force a controlled one-axis failure and confirm that the peer halts without
     deadlock.
-19. Verify STOP, reset, and both end stops.
-20. Carefully provoke the approved overforce test and confirm opposite-direction
+20. Verify STOP, reset, and both end stops.
+21. Carefully provoke the approved overforce test and confirm opposite-direction
     relief, latched error, and skipped post-test.
-21. Verify raw HDF5/binary recording, automatic TIFF output, and manual
+22. Verify raw HDF5/binary recording, automatic TIFF output, and manual
     post-processing.

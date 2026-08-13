@@ -43,6 +43,30 @@ VAR
 	// PLC-owned synchronized start request
 	bStartBiaxialTest : BOOL; // ADS one-shot after both axis commands are prepared
 
+	// Persistent-axis checkpoint diagnostics. A successful checkpoint creates
+	// an up-to-date Port_851.bootdata file before controller power is removed.
+	bPersistentPositionSaved : BOOL;
+	bPersistentPositionSaveBusy : BOOL;
+	bPersistentPositionSaveError : BOOL;
+	nPersistentPositionSaveErrorID : UDINT;
+	nPersistentPositionCheckpointCounter : UDINT;
+
+	fbWritePersistentData : FB_WritePersistentData;
+	fbPersistentPositionSettle : TON;
+	ftPowerRequestX : F_TRIG;
+	ftPowerRequestY : F_TRIG;
+	rtPersistentValidX : R_TRIG;
+	rtPersistentValidY : R_TRIG;
+	bPersistentInitialCheckpoint : BOOL := TRUE;
+	bPersistentCheckpointPending : BOOL;
+	bPersistentCheckpointInFlight : BOOL;
+	bPersistentCheckpointStart : BOOL;
+	bPersistentSafeToWrite : BOOL;
+	fCheckpointPositionX : LREAL;
+	fCheckpointPositionY : LREAL;
+	bCheckpointValidX : BOOL;
+	bCheckpointValidY : BOOL;
+
 END_VAR
 
 VAR_TEMP
@@ -300,6 +324,113 @@ IF fbSafetyY.bHomed AND NOT fbSafetyY.bHoming AND
 		GVL_Axis.yAxis.NcToPlc.ActPos;
 	GVL_Persistent.bLastPositionValidY := TRUE;
 END_IF
+
+///////////////////////////////////////////////////
+//// Persistent coordinate disk checkpoint ///////
+///////////////////////////////////////////////////
+
+// PERSISTENT values in RAM are normally copied to Port_851.bootdata only on
+// an orderly TwinCAT stop. Create a checkpoint after a normal home and when
+// the operator removes commanded motor power so a later hard power-off does
+// not fall back to an older coordinate. Never write continuously while the
+// axes move; that would both save an unsafe intermediate coordinate and wear
+// the controller's flash storage.
+ftPowerRequestX(CLK := stMoveCommandX.bPower);
+ftPowerRequestY(CLK := stMoveCommandY.bPower);
+rtPersistentValidX(CLK := GVL_Persistent.bLastPositionValidX);
+rtPersistentValidY(CLK := GVL_Persistent.bLastPositionValidY);
+
+IF bPersistentInitialCheckpoint OR ftPowerRequestX.Q OR
+	ftPowerRequestY.Q OR rtPersistentValidX.Q OR
+	rtPersistentValidY.Q THEN
+	bPersistentCheckpointPending := TRUE;
+	bPersistentPositionSaved := FALSE;
+	bPersistentPositionSaveError := FALSE;
+	nPersistentPositionSaveErrorID := 0;
+	bPersistentInitialCheckpoint := FALSE;
+END_IF
+
+// Mark the public diagnostic false as soon as a referenced coordinate moves
+// away from the last successfully written snapshot. A new disk write remains
+// intentionally tied to home/power-off rather than every test endpoint.
+IF bPersistentPositionSaved AND (
+	(GVL_Persistent.bLastPositionValidX <>
+		bCheckpointValidX) OR
+	(GVL_Persistent.bLastPositionValidY <>
+		bCheckpointValidY) OR
+	(GVL_Persistent.bLastPositionValidX AND
+		ABS(GVL_Persistent.fLastPositionX -
+			fCheckpointPositionX) > 0.001) OR
+	(GVL_Persistent.bLastPositionValidY AND
+		ABS(GVL_Persistent.fLastPositionY -
+			fCheckpointPositionY) > 0.001)) THEN
+	bPersistentPositionSaved := FALSE;
+END_IF
+
+// Wait for a stable non-moving state before writing. An already loaded
+// persistent coordinate may be checkpointed while its axis is unpowered; if
+// powered, the NC axis must be referenced, stopped and error-free.
+bPersistentSafeToWrite :=
+	(GVL_Persistent.bLastPositionValidX OR
+		GVL_Persistent.bLastPositionValidY) AND
+	NOT fbMovementControllerX.bBusy AND
+	NOT fbMovementControllerY.bBusy AND
+	NOT fbSafetyX.bHoming AND NOT fbSafetyY.bHoming AND
+	NOT stSystemStatusX.bTarWorking AND
+	NOT stSystemStatusY.bTarWorking AND
+	(NOT fbSafetyX.bPowerStatus OR
+		(fbSafetyX.bHomed AND fbSafetyX.bStopped AND
+			NOT GVL_Axis.xAxis.Status.Error)) AND
+	(NOT fbSafetyY.bPowerStatus OR
+		(fbSafetyY.bHomed AND fbSafetyY.bStopped AND
+			NOT GVL_Axis.yAxis.Status.Error));
+
+fbPersistentPositionSettle(
+	IN := bPersistentCheckpointPending AND
+		NOT bPersistentCheckpointInFlight AND
+		bPersistentSafeToWrite,
+	PT := T#1S);
+
+bPersistentCheckpointStart :=
+	fbPersistentPositionSettle.Q AND
+	NOT fbWritePersistentData.BUSY AND
+	NOT bPersistentCheckpointInFlight;
+
+fbWritePersistentData(
+	NETID := '',
+	PORT := TwinCAT_SystemInfoVarList._AppInfo.AdsPort,
+	START := bPersistentCheckpointStart,
+	TMOUT := T#5S,
+	MODE := SPDM_VAR_BOOST);
+
+IF bPersistentCheckpointStart THEN
+	bPersistentCheckpointInFlight := TRUE;
+	fCheckpointPositionX := GVL_Persistent.fLastPositionX;
+	fCheckpointPositionY := GVL_Persistent.fLastPositionY;
+	bCheckpointValidX := GVL_Persistent.bLastPositionValidX;
+	bCheckpointValidY := GVL_Persistent.bLastPositionValidY;
+ELSIF bPersistentCheckpointInFlight AND
+	NOT fbWritePersistentData.BUSY THEN
+	bPersistentCheckpointInFlight := FALSE;
+	bPersistentCheckpointPending := FALSE;
+	IF fbWritePersistentData.ERR THEN
+		bPersistentPositionSaved := FALSE;
+		bPersistentPositionSaveError := TRUE;
+		nPersistentPositionSaveErrorID :=
+			fbWritePersistentData.ERRID;
+	ELSE
+		bPersistentPositionSaved := TRUE;
+		bPersistentPositionSaveError := FALSE;
+		nPersistentPositionSaveErrorID := 0;
+		nPersistentPositionCheckpointCounter :=
+			nPersistentPositionCheckpointCounter + 1;
+	END_IF
+END_IF
+
+bPersistentPositionSaveBusy :=
+	bPersistentCheckpointPending OR
+	bPersistentCheckpointInFlight OR
+	fbWritePersistentData.BUSY;
 
 // Home and reset are one-shot commands
 stMoveCommandX.bHome := FALSE;
