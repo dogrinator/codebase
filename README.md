@@ -162,6 +162,25 @@ sampling period filters only post-processed output. See the
 [interface and data-contract guide](aorty/model/plc/interfaceReadme.md) for
 the HDF5 schema, sample-loss handling, and fixed TIFF layout.
 
+## Offline test validation
+
+`TestValidation` loads one `recording.h5` directly, calculates descriptive
+integrity and regulation metrics, and plots the raw X/Y force and position
+signals with phase, target, and tolerance overlays. It does not require
+`cam.bin` and does not assign pass/fail results.
+
+```matlab
+cd aorty
+addpath(genpath(pwd))
+
+validation = TestValidation("C:\tests\recording.h5");
+metrics = validation.analyze();
+fig = validation.plot();
+
+% Or choose a file and perform all three steps at once:
+[metrics, fig, validation] = TestValidation.open();
+```
+
 ## Verification sequence
 
 ### 1. Offline suite
