@@ -53,8 +53,7 @@ classdef MachinePanel < handle
 
     methods
         %% Live display updates and machine state
-        function panel = MachinePanel( ...
-                parent, callbacks, axisModeGetter, previewGetter)
+        function panel = MachinePanel(parent, callbacks, axisModeGetter, previewGetter)
             panel.callbacks = callbacks;
             panel.axisModeGetter = axisModeGetter;
             panel.previewGetter = previewGetter;
@@ -136,15 +135,12 @@ classdef MachinePanel < handle
                     words{end + 1} = 'saved'; %#ok<AGROW>
                 end
                 if state.error
-                    words{end + 1} = sprintf( ...
-                        'ERROR %u', state.errorCode); %#ok<AGROW>
+                    words{end + 1} = sprintf('ERROR %u', state.errorCode); %#ok<AGROW>
                 end
                 index = 1 + strcmp(axis, 'Y');
-                summaries{index} = sprintf( ...
-                    '%s: %s', axis, strjoin(words, ', '));
+                summaries{index} = sprintf('%s: %s', axis, strjoin(words, ', '));
             end
-            panel.machineStatusLabel.Text = ...
-                strjoin(summaries, '   |   ');
+            panel.machineStatusLabel.Text = strjoin(summaries, '   |   ');
             if statuses.X.error || statuses.Y.error
                 panel.machineStatusLabel.FontColor = [0.75, 0.1, 0.1];
             elseif statuses.X.working || statuses.Y.working
@@ -211,16 +207,14 @@ classdef MachinePanel < handle
             axes = TestCommandBuilder.axesForMode(panel.axisModeGetter());
             powered = panel.connected && ~isempty(panel.statuses);
             for index = 1:numel(axes)
-                powered = powered && ...
-                    panel.statuses.(axes{index}).powered;
+                powered = powered && panel.statuses.(axes{index}).powered;
             end
         end
 
         function idle = isIdle(panel)
             idle = ~panel.operationActive;
             if idle && ~isempty(panel.statuses)
-                idle = ~panel.statuses.X.working && ...
-                    ~panel.statuses.Y.working;
+                idle = ~panel.statuses.X.working && ~panel.statuses.Y.working;
             end
         end
     end
@@ -276,8 +270,7 @@ classdef MachinePanel < handle
             end
         end
 
-        function [axesHandle, lines] = ...
-                createPlot(panel, parent, axisName, color)
+        function [axesHandle, lines] = createPlot(panel, parent, axisName, color)
             axesHandle = uiaxes(parent);
             title(axesHandle, [axisName, ' axis']);
             xlabel(axesHandle, 'Time [s]');
@@ -504,19 +497,14 @@ classdef MachinePanel < handle
             startTime = panel.plotTime.(axisName);
             % Each axis owns a monotonic display timeline across incoming batches.
             if ~isempty(forceValues)
-                forceTime = startTime + ...
-                    samplePeriod * (1:numel(forceValues));
-                addpoints(panel.plotLines.(axisName).Force, ...
-                    forceTime, forceValues);
+                forceTime = startTime + samplePeriod * (1:numel(forceValues));
+                addpoints(panel.plotLines.(axisName).Force, forceTime, forceValues);
             end
             if ~isempty(displacementValues)
-                displacementTime = startTime + ...
-                    samplePeriod * (1:numel(displacementValues));
-                addpoints(panel.plotLines.(axisName).Displacement, ...
-                    displacementTime, displacementValues);
+                displacementTime = startTime + samplePeriod * (1:numel(displacementValues));
+                addpoints(panel.plotLines.(axisName).Displacement, displacementTime, displacementValues);
             end
-            panel.plotTime.(axisName) = ...
-                startTime + samplePeriod * count;
+            panel.plotTime.(axisName) = startTime + samplePeriod * count;
             panel.updateAxisTimeWindow(axisName, axesHandle);
         end
 

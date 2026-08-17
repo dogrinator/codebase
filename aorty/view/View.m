@@ -25,9 +25,7 @@ classdef View < handle
         function app = View(controller)
             app.controller = controller;
             app.createMainWindow();
-            app.settingsWindow = SettingsWindow( ...
-                controller.settings, app.fig, ...
-                @() app.previewChanged());
+            app.settingsWindow = SettingsWindow(controller.settings, app.fig, @() app.previewChanged());
             app.loadStartupDefaults();
             app.updateErrorStatus(false, '');
             app.updateMachineStatus([], false);
@@ -43,7 +41,7 @@ classdef View < handle
             catch
             end
             try
-            % Abort is best-effort because shutdown may follow a controller error.
+                % Abort is best-effort because shutdown may follow a controller error.
                 app.controller.safeAbort('Application shutdown');
             catch
             end
@@ -66,8 +64,7 @@ classdef View < handle
             applicationKey = 'AortyApplicationView';
             if isappdata(groot, applicationKey)
                 registered = getappdata(groot, applicationKey);
-                if isempty(registered) || ~isvalid(registered) || ...
-                        isequal(registered, app)
+                if isempty(registered) || ~isvalid(registered) || isequal(registered, app)
                     rmappdata(groot, applicationKey);
                 end
             end
@@ -76,8 +73,7 @@ classdef View < handle
 
         function connectCameraCallback(app, src)
             % Connection changes are locked while acquisition may own the camera.
-            if app.operationActive || app.controller.testRunning || ...
-                    app.controller.model.isRecording
+            if app.operationActive || app.controller.testRunning || app.controller.model.isRecording
                 if app.controller.camera.connected
                     src.Value = 'ON';
                 else
@@ -110,8 +106,7 @@ classdef View < handle
             try
                 app.ensureHardwareConfigLoaded();
                 app.controller.settings.applyPlcConfig();
-                app.updateMachineStatus( ...
-                    app.controller.plc.pollStatus(), true);
+                app.updateMachineStatus( app.controller.plc.pollStatus(), true);
             catch exception
                 app.controller.plc.disconnectPLC();
                 src.Value = 'OFF';
@@ -218,8 +213,7 @@ classdef View < handle
                 'runGeneral', @(~, ~) app.onRunGeneralTest(), ...
                 'axisModeChanged', @() app.axisModeChanged(), ...
                 'previewChanged', @() app.previewChanged());
-            app.testPanel = TestPanel( ...
-                app.controller.settings, app.fig, callbacks);
+            app.testPanel = TestPanel(app.controller.settings, app.fig, callbacks);
             app.createToolbar(mainGrid);
             app.testPanel.create(mainGrid);
 
@@ -285,12 +279,10 @@ classdef View < handle
             if ~connected || isempty(statuses)
                 app.systemStatusLabel.Text = 'Disconnected';
                 app.systemStatusLabel.FontColor = [0.35, 0.35, 0.35];
-                app.systemStatusLabel.BackgroundColor = ...
-                    [0.88, 0.88, 0.88];
+                app.systemStatusLabel.BackgroundColor = [0.88, 0.88, 0.88];
                 return;
             end
-            values = [double(statuses.X.systemStatus), ...
-                double(statuses.Y.systemStatus)];
+            values = [double(statuses.X.systemStatus), double(statuses.Y.systemStatus)];
             active = values(values ~= 0);
             if isempty(active)
                 status = 0;
@@ -360,8 +352,7 @@ classdef View < handle
         %% UI callbacks
         function axisModeChanged(app)
             app.machinePanel.refreshAxisMode();
-            app.testPanel.setMachineAvailability( ...
-                app.machinePanel.connected, app.machinePanel.statuses);
+            app.testPanel.setMachineAvailability(app.machinePanel.connected, app.machinePanel.statuses);
         end
 
         function previewChanged(app)
@@ -435,8 +426,7 @@ classdef View < handle
                 action = @() app.controller.tare(app.getAxisMode());
                 titleText = 'Cannot tare load cells';
             else
-                action = @() app.controller.moveToLowerLimit( ...
-                    app.getAxisMode());
+                action = @() app.controller.moveToLowerLimit(app.getAxisMode());
                 titleText = 'Cannot move to lower limit';
             end
             app.runUiAction(action, titleText);
@@ -465,7 +455,7 @@ classdef View < handle
             powered = app.machinePanel.selectedAxesPowered();
             app.runUiAction( ...
                 @() app.controller.setPower( ...
-                    app.getAxisMode(), ~powered), ...
+                app.getAxisMode(), ~powered), ...
                 'Cannot change axis power');
         end
 
@@ -488,8 +478,8 @@ classdef View < handle
             manual = app.machinePanel.getManualMotion();
             app.runUiAction( ...
                 @() app.controller.jog(axisName, direction, ...
-                    manual.distance.(axisName), ...
-                    manual.speed.(axisName)), ...
+                manual.distance.(axisName), ...
+                manual.speed.(axisName)), ...
                 sprintf('Cannot jog %s axis', upper(axisName)));
         end
 

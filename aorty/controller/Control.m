@@ -8,7 +8,7 @@ classdef Control < handle
         settings Settings
         plcReadTimer
         displayTimer
-        app
+        app View
         samples AcquisitionBuffer
 
         operationStartCounters = struct('X', uint32(0), 'Y', uint32(0))
@@ -66,15 +66,12 @@ classdef Control < handle
                 return;
             end
             try
-                [fx, fy, ufx, ufy, px, py, statuses] = ...
-                    controler.plc.fifoProcess();
+                [fx, fy, ufx, ufy, px, py, statuses] = controler.plc.fifoProcess();
                 readTime = datetime('now');
                 xTimes = controler.sampleTimes(readTime, numel(fx), 'X');
                 yTimes = controler.sampleTimes(readTime, numel(fy), 'Y');
-                controler.samples.append( ...
-                    fx, fy, ufx, ufy, px, py, xTimes, yTimes);
-                controler.model.updateSystemStatus( ...
-                    statuses, controler.activeTestAxes);
+                controler.samples.append(fx, fy, ufx, ufy, px, py, xTimes, yTimes);
+                controler.model.updateSystemStatus(statuses, controler.activeTestAxes);
                 controler.updateStatusUI(statuses);
                 controler.notifyMachineStatus(statuses, true);
                 integrityError = controler.acquisitionIntegrityError();
@@ -234,8 +231,7 @@ classdef Control < handle
         end
 
         function result = runManualPostProcessing(controler, folderPath, samplingPeriod, includePrePost)
-            if controler.testRunning || controler.model.isRecording || ...
-                    controler.model.filesOpen
+            if controler.testRunning || controler.model.isRecording || controler.model.filesOpen
                 error('Control:RecordingActive', ...
                     ['Post-processing cannot start while a test ' ...
                     'recording is active.']);
@@ -250,8 +246,7 @@ classdef Control < handle
 
         function safeAbort(controler, reason)
             if controler.abortInProgress, return; end
-            wasActive = controler.testRunning || controler.model.isRecording || ...
-                controler.model.filesOpen;
+            wasActive = controler.testRunning || controler.model.isRecording || controler.model.filesOpen;
             controler.abortInProgress = true;
             cleanup = onCleanup(@() controler.finishAbortCleanup());
             controler.testRunning = false;
@@ -261,8 +256,7 @@ classdef Control < handle
                     controler.plc.stop({'X', 'Y'});
                 end
             catch exception
-                warning('Control:AbortStop', ...
-                    'Could not stop PLC during abort: %s', exception.message);
+                warning('Control:AbortStop', 'Could not stop PLC during abort: %s', exception.message);
             end
             if wasActive
                 controler.finishTest(reason);
