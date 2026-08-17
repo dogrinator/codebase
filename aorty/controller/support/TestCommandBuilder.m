@@ -2,6 +2,7 @@ classdef TestCommandBuilder
     %TESTCOMMANDBUILDER Converts UI and General Test definitions to PLC commands.
 
     methods (Static)
+        %% Public command construction
         function commands = fromPreset(config, testType, hwConfig)
             if nargin < 3 || isempty(hwConfig)
                 error('Control:MissingHardwareConfig', ...
@@ -150,6 +151,7 @@ classdef TestCommandBuilder
     end
 
     methods (Static, Access = private)
+        %% Command mapping helpers
         function command = applyPreTest( ...
                 command, pre, field, enabled, tolerance)
             command.includePreTest = logical(enabled);

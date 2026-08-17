@@ -6,13 +6,13 @@ classdef Plc < handle
     properties
         model Model
 
-        % Ads con data
+        % ADS connection settings and client
         amsNetID = '5.85.113.174.1.1'
         adsPort = 851
         dllPath = 'C:\Program Files (x86)\Beckhoff\TwinCAT\3.1\Components\Plc\LacBinaries\GAC_MSIL\TwinCAT.Ads\4.3.28.0__180016cd49e5e8c3\TwinCAT.Ads.dll'
         client
 
-        % Plc state variables
+        % PLC connection and machine state
         connected = false
         disconnecting = false
         status = struct('X', struct(), 'Y', struct())
@@ -34,7 +34,7 @@ classdef Plc < handle
         end
 
         function value = get.droppedSamples(plc)
-            % Constantly check if data are not lost
+            % Expose live transport counters without duplicating their state.
             if isempty(plc.ads)
                 value = struct('X', 0, 'Y', 0);
             else
@@ -42,7 +42,7 @@ classdef Plc < handle
             end
         end
 
-        %% Plc connect / disconnect
+        %% PLC connection lifecycle
         function connectPLC(plc, app, src)
             if src.Value ~= "ON"
                 plc.disconnectPLC();
@@ -51,7 +51,7 @@ classdef Plc < handle
             end
 
             try
-                % Clear old client and create new with var handles
+                % Release a stale client before creating a complete ADS session.
                 plc.disconnectPLC();
                 NET.addAssembly(plc.dllPath);
                 plc.client = TwinCAT.Ads.TcAdsClient();
@@ -87,7 +87,7 @@ classdef Plc < handle
                         'disconnect: %s'], exception.message);
                 end
             end
-            % Prepare ads for next conection 
+            % Clear facade state before releasing the detached ADS objects.
             plc.disconnecting = true;
             oldAds = plc.ads;
             oldClient = plc.client;
@@ -127,9 +127,9 @@ classdef Plc < handle
             plc.resetStreamingState();
         end
 
-        %% Read plc data
+        %% PLC acquisition and status
         function [forceX, forceY, untaredX, untaredY, posX, posY, statuses] = fifoProcess(plc)
-            % Read axis data and select only valid vector data
+            % Read valid FIFO samples and derive untared force values.
             plc.requireConnection();
             [forceX, posX, plc.status.X] = plc.ads.readAxisSnapshot('X');
             [forceY, posY, plc.status.Y] = plc.ads.readAxisSnapshot('Y');
@@ -140,7 +140,7 @@ classdef Plc < handle
         end
 
         function statuses = pollStatus(plc)
-            % Raw axis data read without post procesing so invalid vectors
+            % Poll status without consuming FIFO sample vectors.
             plc.requireConnection();
             plc.status.X = plc.ads.readAxisStatus('X');
             plc.status.Y = plc.ads.readAxisStatus('Y');
@@ -149,7 +149,7 @@ classdef Plc < handle
         end
 
 
-        %% Main plc control logic
+        %% Machine commands and test control
         function accepted = SendCommands(plc, mode, xPos, xVel, yPos, yVel)
             % Both selected axes are fully prepared before either Execute
             % trigger is raised, preventing half-started biaxial commands.
@@ -160,7 +160,7 @@ classdef Plc < handle
                     'Only PLC modes 1 and 2 use basic scalar commands.');
             end
 
-            % Raw axis data read for error/busy check
+            % Reject commands before writing when a selected axis is unavailable.
             statuses = plc.pollStatus();
             activeX = ~isempty(xPos);
             activeY = ~isempty(yPos);
@@ -173,7 +173,7 @@ classdef Plc < handle
                     'A selected axis is busy or in error.');
             end
 
-            % Validate commands and send them 
+            % Validate both selected commands before writing either axis.
             if activeX, plc.ensureAxisPowered('X'); end
             if activeY, plc.ensureAxisPowered('Y'); end
             if activeX
@@ -421,13 +421,13 @@ classdef Plc < handle
         end
 
         function values = readAxisConfig(plc, axisName)
-            % Needed at start of recording for test clasification
+            % Capture the applied PLC settings in recording metadata.
             plc.requireConnection();
             values = plc.ads.readAxisConfig(axisName);
         end
     end
 
-    %% Helper methods for PLC control
+    %% Private PLC coordination helpers
     methods (Access = private)
         function ensureAxisPowered(plc, axisName)
             statusNow = plc.ads.readAxisStatus(axisName);

@@ -1,7 +1,8 @@
 classdef PostProcessor
-    %PostProcessor Aligns recorded sensor samples to camera frames and exports TIFFs.
+    %POSTPROCESSOR Aligns recorded sensor samples to camera frames and exports TIFFs.
 
     methods (Static)
+        %% Recording processing
         % Process recorded data and save annotated camera frames.
         function result = processData(folderPath, options)
             % folderPath is the directory containing recording.h5 and cam.bin.
@@ -89,7 +90,7 @@ classdef PostProcessor
             frameWidth = recording.frameWidth;
             frameHeight = recording.frameHeight;
 
-            %% Open Binary Camera File
+            %% Open the binary camera file
             camBinFile = fullfile(folderPath, 'cam.bin');
             fid = fopen(camBinFile, 'rb');
             if fid == -1
@@ -99,7 +100,7 @@ classdef PostProcessor
 
             bytesPerFrame = frameWidth * frameHeight; % For Mono8
 
-            % Create output folder for processed images
+            % Create the output folder before opening any frame files.
             processedFramesFolder = options.outputFolder;
             existingFrames = dir(fullfile( ...
                 processedFramesFolder, 'processed_frame_*.tiff'));
@@ -112,10 +113,10 @@ classdef PostProcessor
                 mkdir(processedFramesFolder);
             end
 
-            %% Synchronize and process
+            %% Synchronize and process frames
             outputIndex = 0;
             for i = 1:numFrames
-                % Read raw frame data
+                % Read one complete raw frame.
                 rawFrameData = fread(fid, bytesPerFrame, '*uint8');
                 if isempty(rawFrameData) || length(rawFrameData) < bytesPerFrame
                     warning(['Reached end of cam.bin unexpectedly or frame ', num2str(i), ' is incomplete. Skipping remaining frames.']);
@@ -126,10 +127,10 @@ classdef PostProcessor
                 end
                 outputIndex = outputIndex + 1;
 
-                % Reshape to image matrix
+                % Restore the recorded image dimensions.
                 imgFrame = reshape(rawFrameData, frameHeight, frameWidth);
 
-                % Get camera timestamp for the current frame
+                % Use the recorded timestamp for PLC sample alignment.
                 cameraTime = camTimestamps.Timestamp(i);
                 %% Match the nearest sensor values
                 sampleX = PostProcessor.nearestSample(dataX, cameraTime);
@@ -141,7 +142,7 @@ classdef PostProcessor
                 matchedUntaredY = sampleY.UntaredForce;
                 matchedPositionY = sampleY.Position;
 
-                %% Process and Save the Image
+                %% Annotate and save the image
                 txtOverlay = sprintf('X: %.5f | Y: %.5f', matchedX, matchedY);
                 delta = cameraTime - baseTime;
                 baseTimeStr = char(string(baseTime, 'dd.MM.yyyy HH:mm:ss'));
@@ -160,7 +161,7 @@ classdef PostProcessor
                     'TextColor', 'white', ...
                     'BoxOpacity', 0.5);
 
-                % Save annotated frame as TIFF in the processed_frames folder
+                % Preserve the external TIFF layout expected by consumers.
                 outputFileName = fullfile(processedFramesFolder, ...
                     ['processed_frame_', num2str(outputIndex, '%04d'), ...
                     '.tiff']);
@@ -178,6 +179,7 @@ classdef PostProcessor
             disp('--- Post-processing complete ---');
         end
 
+        %% Options and recording input
         function options = normalizeOptions(folderPath, options)
             % Apply defaults and validate all caller-provided options.
             if ~(ischar(folderPath) || ...
@@ -360,6 +362,7 @@ classdef PostProcessor
                 'frameHeight', frameHeight);
         end
 
+        %% Sample selection and alignment
         function data = sampleTable( ...
                 values, startTime, axisName, plcInterval)
             % Convert one axis dataset to a timestamped sample table.
@@ -452,6 +455,7 @@ classdef PostProcessor
             selectedRows = selectedRows(1:selectedCount);
         end
 
+        %% Compatible TIFF output
         function writeLegacyTiff(filename, frame, description)
             % Preserve the downstream Basler-compatible single-strip TIFF:
             % little endian, IFD at byte 8, metadata at byte 256, pixels at

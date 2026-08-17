@@ -1,5 +1,5 @@
 classdef PlcAds < handle
-    % PlcAds Owns the TwinCAT ADS symbols and binary PLC data contract.
+    %PLCADS Owns the TwinCAT ADS symbols and binary PLC data contract.
     % The caller owns the client connection; this class owns only handles,
     % transport buffers, packet decoding, and streaming state.
 
@@ -32,11 +32,11 @@ classdef PlcAds < handle
             % Every created handle is registered immediately so a partial
             % initialization can always be cleaned up safely.
             if nargin < 2
-                testing = false; % Used for offline ads testing 
+                testing = false; % Offline tests use ordinary MATLAB buffers.
             end
-            ads.releaseHandles(); % Clear handles so no duplicity
+            ads.releaseHandles(); % Prevent duplicate handles after reconnecting.
             try
-                % Create all handles
+                % Create the complete handle set before exposing the transport.
                 ads.handles.X = ads.createAxisHandles('X');
                 ads.handles.Y = ads.createAxisHandles('Y');
                 ads.handles.biaxialStart = ...
@@ -76,7 +76,7 @@ classdef PlcAds < handle
         end
 
         function releaseHandles(ads)
-            % Disconnect from ads
+            % Delete every owned handle independently during best-effort cleanup.
             handlesToDelete = ads.ownedHandles;
             ads.ownedHandles = zeros(1, 0, 'int32');
             ads.handles = struct();
@@ -95,13 +95,13 @@ classdef PlcAds < handle
         end
 
         function resetStreamingState(ads)
-            % Reset com safety from last run
+            % A new connection starts with no prior streaming baseline.
             ads.lastSampleCounter = struct('X', [], 'Y', []);
             ads.droppedSamples = struct('X', 0, 'Y', 0);
             ads.restartCounts = struct('X', 0, 'Y', 0);
         end
 
-        %% Methods for reading / writing decoded data
+        %% Decoded status and command operations
         function [forceData, positionData, statusNow] = readAxisSnapshot(ads, axisName)
             statusNow = ads.readAxisStatus(axisName);
             counterAfter = statusNow.sampleCounter;
@@ -320,7 +320,7 @@ classdef PlcAds < handle
         end
     end
 
-    %% Create ads linking handles needed for com
+    %% ADS symbol-handle construction
     methods (Access = private)
         function handles = createAxisHandles(ads, axisName)
             statusRoot = sprintf('MAIN.stSystemStatus%s', axisName);
@@ -420,10 +420,9 @@ classdef PlcAds < handle
             ads.ownedHandles(end + 1) = handle;
         end
 
-        %% Read / Write raw data
+        %% Raw ADS reads and writes
         function writeArray(ads, axisName, bufferName, handle, values)
-            % Write whole vector to plc
-
+            % Pad command vectors to the fixed PLC array contract.
             values = double(values(:)');
             if numel(values) > ads.COMMAND_ARRAY_LENGTH
                 error('PLC:ArrayTooLong', ...
@@ -434,12 +433,11 @@ classdef PlcAds < handle
             for index = 1:ads.COMMAND_ARRAY_LENGTH
                 ads.netBuffers.(axisName).(bufferName)(index) = buffer(index);
             end
-            ads.client.WriteAny(handle, ...
-                ads.netBuffers.(axisName).(bufferName));
+            ads.client.WriteAny(handle, ads.netBuffers.(axisName).(bufferName));
         end
 
         function bytes = readStatusPacket(ads, handle)
-            % Read raw status data as whole packet from plc for quicker reading
+            % Read one packed status snapshot to keep its fields consistent.
 
             if ismethod(ads.client, 'ReadStatusPacket')
                 bytes = uint8(ads.client.ReadStatusPacket( ...
@@ -502,7 +500,7 @@ classdef PlcAds < handle
         end
 
         function expected = isExpectedDisconnectError(~, exception)
-            % Helper for error cals
+            % Ignore only errors that mean the ADS handle is already unavailable.
             message = lower(char(exception.message));
             expected = contains(message, '0x710') || ...
                 contains(message, 'symbol could not be found') || ...
@@ -511,7 +509,7 @@ classdef PlcAds < handle
         end
     end
 
-    %% Helping methods for decoding specific var types
+    %% Binary status-packet decoding
     methods (Static, Access = private)
         function values = decodeLrealArray(bytes, byteOffset, count)
             first = byteOffset + 1;

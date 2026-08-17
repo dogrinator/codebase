@@ -2,6 +2,7 @@ classdef GeneralTestDefinition
     % Loads and validates the complete, versioned General Test JSON format.
 
     methods (Static)
+        %% Loading, validation, and summary
         function definition = load(filename)
             if ~(ischar(filename) || (isstring(filename) && isscalar(filename)))
                 error('GeneralTest:InvalidFile', 'Select one General Test JSON file.');
@@ -96,6 +97,7 @@ classdef GeneralTestDefinition
     end
 
     methods (Static, Access = private)
+        %% Test-section validation
         function validatePreTest(value, axisMode)
             GeneralTestDefinition.requireFields(value, ...
                 {'enabled', 'cyclic', 'cycles', 'rate', ...
@@ -214,6 +216,7 @@ classdef GeneralTestDefinition
             end
         end
 
+        %% Primitive schema validation
         function axisScalar(value, path, mustBePositive)
             GeneralTestDefinition.requireFields(value, {'x', 'y'}, path);
             for axis = {'x', 'y'}

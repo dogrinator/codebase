@@ -15,6 +15,7 @@ test sequencing, biaxial synchronization, and protective behavior.
 | Guide | Use it for |
 | --- | --- |
 | This README | Installation, first run, normal workflow, and project navigation |
+| [MATLAB architecture](aorty/ARCHITECTURE.md) | Component responsibilities and application execution flows |
 | [General Test guide](aorty/examples/generalTestReadme.md) | Authoring and importing versioned General Test JSON |
 | [MATLAB–TwinCAT interface guide](aorty/model/plc/interfaceReadme.md) | ADS symbols, packet layout, recording contracts, and communication tests |
 | [TwinCAT PLC guide](<TwinCat/AortyPLC/main program/READMEPLC.md>) | PLC states, synchronization, errors, deployment, and commissioning |

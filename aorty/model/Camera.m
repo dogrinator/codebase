@@ -4,11 +4,11 @@ classdef Camera < handle
     properties
         model Model
 
-        % Camera interface
+        % Image Acquisition Toolbox objects
         cameraHW
         cameraSrc
 
-        % Camera info variables
+        % Acquisition and preview state
         latestFrame = [];
         camStartTime
         connected = false;
@@ -16,6 +16,7 @@ classdef Camera < handle
     end
 
     methods
+        %% Connection and acquisition
         function camera = Camera(model)
             camera.model = model;
         end
@@ -25,7 +26,7 @@ classdef Camera < handle
                 try
                     camera.closeCam();
 
-                    % Refresh the Image Acquisition Toolbox after a camera has been unplugged/reconnected
+                    % Refresh hardware discovery after a camera reconnect.
                     imaqreset;
                     hwInfo = imaqhwinfo('gige');
                     if isempty(hwInfo.DeviceInfo)
@@ -34,12 +35,12 @@ classdef Camera < handle
                              'camera power, Ethernet connection, and network settings.']);
                     end
 
-                    % Search for camera id and connect to id
+                    % Use the first detected GigE camera.
                     deviceID = hwInfo.DeviceInfo(1).DeviceID;
                     camera.cameraHW = videoinput('gige', deviceID, 'Mono8');
                     camera.cameraSrc = getselectedsource(camera.cameraHW);
 
-                    % Trigger properties (just to be shure)
+                    % Disable device-side triggering modes when supported.
                     for sel = {'FrameStart','AcquisitionStart','FrameBurstStart'}
                         try
                             camera.cameraSrc.TriggerSelector = sel{1};
@@ -48,21 +49,21 @@ classdef Camera < handle
                         end
                     end
 
-                    % Init camera com setup for better stability
+                    % Tune packet transport when the source exposes these controls.
                     if isprop(camera.cameraSrc,'PacketSize'),  camera.cameraSrc.PacketSize  = 8000; end
                     if isprop(camera.cameraSrc,'PacketDelay'), camera.cameraSrc.PacketDelay = 500;  end
 
-                    % Trigger mandatory setup 
-                    camera.cameraHW.FramesPerTrigger = 1;   % 1 frame per trigger
-                    camera.cameraHW.TriggerRepeat = Inf; % repeat forever
+                    % Acquire one frame per repeated immediate trigger.
+                    camera.cameraHW.FramesPerTrigger = 1;
+                    camera.cameraHW.TriggerRepeat = Inf;
                     triggerconfig(camera.cameraHW, 'immediate');
 
-                    % Link fun. and get start time
+                    % Anchor relative frame times and register the callback.
                     camera.camStartTime = datetime('now');
                     camera.cameraHW.FramesAcquiredFcnCount = 1;
                     camera.cameraHW.FramesAcquiredFcn = @(s,ev) camera.acquireFrame(s);
 
-                    % Flush camera and start aquisition
+                    % Start with an empty queue so preview and recording are current.
                     camera.latestFrame = [];
                     flushdata(camera.cameraHW);
                     start(camera.cameraHW);
@@ -83,18 +84,17 @@ classdef Camera < handle
 
         function acquireFrame(camera, src)
             try
-                % Check if camera exist and is working
+                % A callback may arrive while the camera is being released.
                 if isempty(src) || ~isvalid(src), return; end
                 if src.FramesAvailable < 1,        return; end
 
-                % Get img and time
+                % Convert the source-relative frame time to an absolute time.
                 [frame, relativeTime] = getdata(src, 1);
                 timeStamp = camera.camStartTime + seconds(relativeTime);
 
-                % Link for recording
                 camera.model.saveCameraFrame(frame, timeStamp);
 
-                % Preview downsampling (Not needed on better pc but mi netebook is dying)
+                % Downsample preview only; recording retains the full frame.
                 camera.latestFrame = frame(1:3:end, 1:3:end);
 
             catch ME
@@ -110,8 +110,7 @@ classdef Camera < handle
 
         function discardQueuedFrames(camera)
             % Discard frames acquired while recording files were prepared.
-            if ~camera.connected || isempty(camera.cameraHW) || ...
-                    ~isvalid(camera.cameraHW)
+            if ~camera.connected || isempty(camera.cameraHW) || ~isvalid(camera.cameraHW)
                 error('Camera:NotConnected', ...
                     'Cannot prepare recording while the camera is disconnected.');
             end
@@ -122,7 +121,7 @@ classdef Camera < handle
         function closeCam(camera)
             camera.latestFrame = [];
 
-            % Safly disconnect and delete camera ewen if error stopped it
+            % Attempt both cleanup steps even after an acquisition error.
             if ~isempty(camera.cameraHW) && isvalid(camera.cameraHW)
                 try
                     stop(camera.cameraHW);
@@ -135,7 +134,7 @@ classdef Camera < handle
                     warning("Camera:DeleteFailed", "Could not delete camera: %s", exception.message);
                 end
             end
-            % Final cleanup
+            % Clear state even when the hardware object was already invalid.
             camera.cameraHW = [];
             camera.cameraSrc = [];
             camera.connected = false;

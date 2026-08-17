@@ -1,5 +1,5 @@
 classdef RecordingStore < handle
-    %RecordingStore Owns the two-file recording and append-only HDF5 data.
+    %RECORDINGSTORE Owns the two-file recording and append-only HDF5 data.
 
     properties (SetAccess = private)
         h5Path
@@ -30,6 +30,7 @@ classdef RecordingStore < handle
     end
 
     methods
+        %% Recording lifecycle
         function store = RecordingStore(folderPath, header)
             % Resolve output paths and expected camera frame size.
 
@@ -73,6 +74,7 @@ classdef RecordingStore < handle
             end
         end
 
+        %% Append operations
         function appendAxis(store, axisName, timestamps, forceValues, untaredForceValues, positionValues)
             % Validate the target axis and sample vectors.
             store.requireOpen();
@@ -229,7 +231,7 @@ classdef RecordingStore < handle
         end
     end
 
-    %% Methods for file handling
+    %% Private HDF5 file handling
     methods (Access = private)
         function createHdf5(store, header)
             % Create the HDF5 datasets and recording metadata.
@@ -359,6 +361,7 @@ classdef RecordingStore < handle
     end
 
     methods (Static, Access = private)
+        %% Metadata and cleanup helpers
         function createMarker(filename, path)
             h5create(filename, path, [1 1], 'Datatype', 'uint8');
             h5write(filename, path, uint8(1));

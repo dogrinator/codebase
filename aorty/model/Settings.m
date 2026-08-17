@@ -4,11 +4,11 @@ classdef Settings < handle
         plc    Plc 
         camera Camera
 
-        % Config direstories
+        % Configuration directories
         hwPath
         appPath
 
-        % Config data
+        % Loaded configuration data
         hwConfig  = [];
         appConfig = [];
         activeHwConfigName = ''
@@ -17,10 +17,9 @@ classdef Settings < handle
 
     methods
         function settings = Settings(plc, camera)
-            % Hw class link for settings aply
             settings.plc = plc;
             settings.camera = camera;
-            % Set file path
+            % Resolve configuration paths independently of the working folder.
             applicationRoot = fileparts(fileparts(mfilename('fullpath')));
             settings.hwPath = fullfile(applicationRoot, '.config', 'hwConfig');
             settings.appPath = fullfile(applicationRoot, '.config', 'appConfig');
@@ -166,7 +165,7 @@ classdef Settings < handle
         end
     end
 
-    %% Json files handling
+    %% JSON file handling
     methods (Static, Access = private)
         function names = listJsonFiles(folder)
             files = dir(fullfile(folder, '*.json'));

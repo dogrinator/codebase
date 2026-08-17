@@ -34,8 +34,7 @@ classdef Control < handle
             else
                 controler.camera = Camera(model);
             end
-            controler.camera.errorHandler = @(exception) ...
-                controler.handleRuntimeError(exception, 'Camera error');
+            controler.camera.errorHandler = @(exception) controler.handleRuntimeError(exception, 'Camera error');
             if nargin >= 2 && ~isempty(plc)
                 controler.plc = plc;
             else
@@ -57,9 +56,9 @@ classdef Control < handle
             start(controler.displayTimer);
         end
 
-        %% Periodical main timers functions
+        %% Periodic acquisition and display callbacks
         function readCallback(controler)
-            % Read data from plc and manage it
+            % Read one PLC batch before updating state and test progress.
             if ~controler.plc.connected || controler.plc.disconnecting
                 controler.lastSampleTime = struct('X', NaT, 'Y', NaT);
                 controler.notifyMachineStatus([], false);
@@ -86,21 +85,18 @@ classdef Control < handle
         end
 
         function updateDisplay(controler)
-            % Update app graphs and camera image
+            % Drain buffered data independently of the faster PLC read timer.
             viewApp = controler.app;
             if isempty(viewApp) || ~isvalid(viewApp) || ...
                     isempty(viewApp.fig) || ~isvalid(viewApp.fig)
                 return;
             end
-            if controler.camera.connected && ...
-                    ~isempty(controler.camera.latestFrame)
+            if controler.camera.connected && ~isempty(controler.camera.latestFrame)
                 try
-                    viewApp.updateCameraFrame( ...
-                        controler.camera.latestFrame);
+                    viewApp.updateCameraFrame(controler.camera.latestFrame);
                     controler.camera.latestFrame = [];
                 catch exception
-                    controler.handleRuntimeError( ...
-                        exception, 'Display update error');
+                    controler.handleRuntimeError(exception, 'Display update error');
                 end
             end
 
@@ -109,8 +105,7 @@ classdef Control < handle
                 try
                     controler.samples.flush(controler.model);
                 catch exception
-                    controler.handleRuntimeError( ...
-                        exception, 'Recording write error');
+                    controler.handleRuntimeError(exception, 'Recording write error');
                     return;
                 end
             else
@@ -118,16 +113,14 @@ classdef Control < handle
             end
 
             try
-                viewApp.appendPlotData( ...
-                    plotBatch, AppInfo.PLC_SAMPLE_PERIOD_SECONDS);
+                viewApp.appendPlotData(plotBatch, AppInfo.PLC_SAMPLE_PERIOD_SECONDS);
                 drawnow limitrate nocallbacks;
             catch exception
-                controler.handleRuntimeError( ...
-                    exception, 'Display update error');
+                controler.handleRuntimeError(exception, 'Display update error');
             end
         end
 
-        %% Callable functions for View class
+        %% View-facing operations
         function panicStop(controler, button)
             try
                 controler.safeAbort('Operator STOP');
@@ -146,14 +139,12 @@ classdef Control < handle
 
         function tare(controler, axisMode)
             controler.requireIdleOperation('tare the load cells');
-            controler.plc.tare( ...
-                TestCommandBuilder.axesForMode(axisMode));
+            controler.plc.tare(TestCommandBuilder.axesForMode(axisMode));
         end
 
         function moveToLowerLimit(controler, axisMode)
             controler.requireIdleOperation('home an axis');
-            controler.plc.moveToLowerLimit( ...
-                TestCommandBuilder.axesForMode(axisMode));
+            controler.plc.moveToLowerLimit(TestCommandBuilder.axesForMode(axisMode));
         end
 
         function resetErrors(controler)
@@ -173,14 +164,12 @@ classdef Control < handle
 
         function setPower(controler, axisMode, enabled)
             controler.requireIdleOperation('change axis power');
-            controler.plc.setPower( ...
-                TestCommandBuilder.axesForMode(axisMode), enabled);
+            controler.plc.setPower(TestCommandBuilder.axesForMode(axisMode), enabled);
         end
 
         function savePosition(controler, app)
             controler.requireIdleOperation('save a position');
-            controler.plc.savePosition( ...
-                TestCommandBuilder.axesForMode(app.getAxisMode()));
+            controler.plc.savePosition(TestCommandBuilder.axesForMode(app.getAxisMode()));
         end
 
         function restorePosition(controler, app)
@@ -192,8 +181,7 @@ classdef Control < handle
 
         function runPreTest(controler, app)
             config = app.getTestConfiguration();
-            commands = TestCommandBuilder.fromPreset( ...
-                config, 'pre', controler.settings.hwConfig);
+            commands = TestCommandBuilder.fromPreset(config, 'pre', controler.settings.hwConfig);
             postSettings = struct('enabled', false, ...
                 'samplingPeriod', 0, 'includePrePost', true);
             controler.startTest(app, commands, postSettings, ...
@@ -202,18 +190,14 @@ classdef Control < handle
 
         function runSingleTest(controler, app)
             config = app.getTestConfiguration();
-            commands = TestCommandBuilder.fromPreset( ...
-                config, 'single', controler.settings.hwConfig);
-            controler.startTest( ...
-                app, commands, config.single.postProcess, true, 'single');
+            commands = TestCommandBuilder.fromPreset(config, 'single', controler.settings.hwConfig);
+            controler.startTest(app, commands, config.single.postProcess, true, 'single');
         end
 
         function runCyclicTest(controler, app)
             config = app.getTestConfiguration();
-            commands = TestCommandBuilder.fromPreset( ...
-                config, 'cyclic', controler.settings.hwConfig);
-            controler.startTest( ...
-                app, commands, config.cyclic.postProcess, true, 'cyclic');
+            commands = TestCommandBuilder.fromPreset(config, 'cyclic', controler.settings.hwConfig);
+            controler.startTest(app, commands, config.cyclic.postProcess, true, 'cyclic');
         end
 
         function runGeneralTest(controler, app)
@@ -274,18 +258,16 @@ classdef Control < handle
             if nargin < 5
                 testKind = 'test';
             end
-            controler.startTest( ...
-                [], commands, postSettings, recordEnabled, testKind);
+            controler.startTest([], commands, postSettings, recordEnabled, testKind);
         end
 
-        function times = sampleTimesForTesting( ...
-                controler, endTime, count, axisName)
+        function times = sampleTimesForTesting(controler, endTime, count, axisName)
             % Offline test seam for per-axis PLC timestamp reconstruction.
             times = controler.sampleTimes(endTime, count, axisName);
         end
     end
 
-    %% Help methods for main functions
+    %% Private test, recording, and lifecycle coordination
     methods (Access = private)
         function startTest(controler, app, commands, postSettings, recordEnabled, testKind)
             if controler.testRunning || controler.plc.isWorking

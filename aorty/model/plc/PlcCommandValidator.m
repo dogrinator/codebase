@@ -1,10 +1,10 @@
 classdef PlcCommandValidator
-    % PlcCommandValidator Pure validation for commands sent to TwinCAT so
-    % there are no owerflow values or incorect lenghts of vectors.
-    % Also checking if all mandatory data are set
+    %PLCCOMMANDVALIDATOR Validates complete commands before any ADS writes.
+    % It rejects missing fields, invalid scalar ranges, mismatched arrays,
+    % and incompatible biaxial commands.
 
     methods (Static)
-        %% move rel / force pi validation
+        %% Basic motion validation
         function basic(firstValue, secondValue)
             if ~isnumeric(firstValue) || ~isscalar(firstValue) || ...
                     ~isfinite(firstValue) || ~isnumeric(secondValue) || ...
@@ -16,7 +16,7 @@ classdef PlcCommandValidator
             end
         end
 
-        %% Main test validation
+        %% Test-command validation
         function test(command, statusNow)
             required = {'includePreTest', 'preTestOnly', ...
                 'preCycleCount', 'preloadEnabled', 'preloadValue', ...
@@ -127,7 +127,7 @@ classdef PlcCommandValidator
             end
         end
 
-        %% Axis validation
+        %% Biaxial command and hardware-setting validation
         function biaxial(commandX, commandY)
             fields = {'includePreTest', 'preTestOnly', ...
                 'preCycleCount', 'preloadEnabled', ...

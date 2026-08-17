@@ -7,6 +7,7 @@ classdef TestValidation < handle
     end
 
     methods
+        %% Loading, analysis, and plotting
         function validator = TestValidation(filePath)
             if nargin < 1
                 error('TestValidation:MissingRecording', ...
@@ -137,6 +138,7 @@ classdef TestValidation < handle
     end
 
     methods (Static)
+        %% Interactive entry point
         function [metrics, fig, validator] = open(filePath)
             % Select or open one recording, then analyse and plot it.
             metrics = [];
@@ -159,6 +161,7 @@ classdef TestValidation < handle
     end
 
     methods (Access = private)
+        %% Metric calculation and plot annotations
         function result = axisMetrics(validator)
             rows = cell(0, 11);
             for item = validator.Recording.ActiveAxes
@@ -383,6 +386,7 @@ classdef TestValidation < handle
     end
 
     methods (Static, Access = private)
+        %% Recording input and normalization
         function path = normalizePath(value)
             if ~(ischar(value) || ...
                     (isstring(value) && isscalar(value)))
@@ -532,6 +536,7 @@ classdef TestValidation < handle
             end
         end
 
+        %% Recorded sample and phase interpretation
         function [samples, recovered] = sampleTable(values, axisName, interval)
             if size(values, 1) ~= 4 || any(~isfinite(values), 'all')
                 error('TestValidation:InvalidRecording', ...
@@ -623,6 +628,7 @@ classdef TestValidation < handle
                 'StopSeconds', 'DurationSeconds'});
         end
 
+        %% Target reconstruction
         function definitions = targetDefinitions(recording)
             rows = cell(0, 9);
             for item = recording.ActiveAxes
@@ -787,6 +793,7 @@ classdef TestValidation < handle
             end
         end
 
+        %% Plot presentation
         function addPhaseBands(axesHandle, segments)
             if isempty(segments)
                 return;
@@ -897,6 +904,7 @@ classdef TestValidation < handle
             end
         end
 
+        %% Value and table helpers
         function [warnings, matches] = countWarning( ...
                 warnings, label, recorded, actual)
             matches = isnan(recorded) || recorded == actual;
