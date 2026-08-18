@@ -19,6 +19,24 @@ verifyEqual(testCase, lower(definition.cyclic.unloadMode), 'displacement');
 verifyNotEmpty(testCase, GeneralTestDefinition.summary(definition));
 end
 
+function testCanonicalExampleStaysBelowDefaultForceLimits(testCase)
+definition = GeneralTestDefinition.load(testCase.TestData.example);
+root = fileparts(fileparts(testCase.TestData.example));
+hardware = jsondecode(fileread(fullfile(root, ...
+    'configuration', 'profiles', 'hardware', 'default.json')));
+
+forceTargetsX = [definition.preTest.preload.value.x, ...
+    definition.preTest.load.x, definition.preTest.unload.x, ...
+    definition.cyclic.loadValues.x(:)'];
+forceTargetsY = [definition.preTest.preload.value.y, ...
+    definition.preTest.load.y, definition.preTest.unload.y, ...
+    definition.cyclic.loadValues.y(:)'];
+verifyLessThan(testCase, max(abs(forceTargetsX)), ...
+    hardware.plc.xAxis.fMaxForce);
+verifyLessThan(testCase, max(abs(forceTargetsY)), ...
+    hardware.plc.yAxis.fMaxForce);
+end
+
 function testSchemaVersionAndMalformedCounts(testCase)
 definition = GeneralTestDefinition.load(testCase.TestData.example);
 definition.schemaVersion = 3;

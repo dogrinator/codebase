@@ -8,7 +8,7 @@ This guide focuses on PLC behavior and commissioning. Related references:
 
 - [Project setup and operator workflow](../../../README.md)
 - [General Test JSON](../../../aorty/examples/generalTestReadme.md)
-- [ADS, packet, recording, and communication tests](../../../aorty/model/plc/interfaceReadme.md)
+- [ADS, packet, recording, and communication tests](../../../aorty/hardware/plc/interfaceReadme.md)
 
 > [!CAUTION]
 > The MATLAB STOP button is a controlled software halt, not a safety-rated
@@ -339,7 +339,7 @@ software limits are an additional layer, not a replacement.
 Status priority is Error, Homing, Stopping, Taring, then the active controller
 operation. The exact packet offsets and circular-buffer recovery algorithm are
 documented in the
-[interface guide](../../../aorty/model/plc/interfaceReadme.md#status-packet).
+[interface guide](../../../aorty/hardware/plc/interfaceReadme.md#status-packet).
 
 ## `ST_Settings` and overforce behavior
 
@@ -380,14 +380,14 @@ decoded by MATLAB's `PlcErrorCatalog`.
 
 ## General Test and recording boundaries
 
-General Test schema 1 maps validated JSON into `ST_MoveCommand`; the PLC does
+General Test schema 2 maps validated JSON into `ST_MoveCommand`; the PLC does
 not parse JSON. See the [General Test guide](../../../aorty/examples/generalTestReadme.md)
 for every field, strict validation rule, and example.
 
 MATLAB records the current PLC status into `recording.h5` and writes raw Mono8
 frames to `cam.bin`. The PLC publishes samples and phase status but does not
 write files or create TIFF output. Legacy CSV recordings are not supported.
-See the [interface guide](../../../aorty/model/plc/interfaceReadme.md#recording-contract)
+See the [interface guide](../../../aorty/hardware/plc/interfaceReadme.md#recording-contract)
 for the HDF5 schema, loss detection, recovery rules, and TIFF byte layout.
 
 ## Commissioning checklist

@@ -125,12 +125,12 @@ classdef Camera < handle
             if ~isempty(camera.cameraHW) && isvalid(camera.cameraHW)
                 try
                     stop(camera.cameraHW);
-                catch
+                catch exception
                     warning("Camera:StopFailed", "Could not stop camera: %s", exception.message);
                 end
                 try
                     delete(camera.cameraHW);
-                catch
+                catch exception
                     warning("Camera:DeleteFailed", "Could not delete camera: %s", exception.message);
                 end
             end

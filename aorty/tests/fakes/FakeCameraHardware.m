@@ -3,6 +3,7 @@ classdef FakeCameraHardware < handle
         VideoResolution = [2, 2]
         FlushCount = 0
         FailFlush = false
+        FailStop = false
     end
 
     methods
@@ -12,6 +13,13 @@ classdef FakeCameraHardware < handle
                     'Injected camera flush failure.');
             end
             camera.FlushCount = camera.FlushCount + 1;
+        end
+
+        function stop(camera)
+            if camera.FailStop
+                error('FakeCamera:StopFailed', ...
+                    'Injected camera stop failure.');
+            end
         end
     end
 end

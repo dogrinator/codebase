@@ -64,9 +64,14 @@ verifyEqual(testCase, preload.TimeToFirstToleranceSeconds, ...
     0.2, 'AbsTol', 1e-12);
 verifyEqual(testCase, preload.DirectionalOvershoot, ...
     0.05, 'AbsTol', 1e-12);
-verifyGreaterThanOrEqual(testCase, ...
-    preload.LongestContinuousInToleranceSeconds, 1.0);
-verifyEmpty(testCase, metrics.Warnings);
+verifyEqual(testCase, preload.TotalInToleranceSeconds, ...
+    1.1, 'AbsTol', 1e-12);
+verifyEqual(testCase, preload.LongestContinuousInToleranceSeconds, ...
+    1.1, 'AbsTol', 1e-12);
+verifyLessThanOrEqual(testCase, preload.TotalInToleranceSeconds, ...
+    preload.PhaseDurationSeconds);
+verifyTrue(testCase, any(contains( ...
+    metrics.Warnings, 'shares one recorded PLC status')));
 clear cleanup;
 end
 
@@ -82,7 +87,7 @@ lines = findall(fig, 'Type', 'line');
 patches = findall(fig, 'Type', 'patch');
 
 verifyEqual(testCase, numel(axesHandles), 2);
-verifyGreaterThanOrEqual(testCase, numel(lines), 8);
+verifyGreaterThanOrEqual(testCase, numel(lines), 6);
 verifyGreaterThan(testCase, numel(patches), 2);
 displayNames = string(get(lines, 'DisplayName'));
 verifyTrue(testCase, any(displayNames == "X axis"));
@@ -181,6 +186,25 @@ verifyTrue(testCase, all(isnan( ...
     xLoad.TimeToFirstToleranceSeconds)));
 verifyTrue(testCase, any(contains( ...
     metrics.Warnings, 'variable per-cycle targets')));
+clear cleanup;
+end
+
+function testCyclicEndpointMetricsRequireSubphaseStatus(testCase)
+[folder, filename] = createRecording();
+cleanup = onCleanup(@() removeFolder(folder));
+validator = RecordingAnalysis(filename);
+
+metrics = validator.analyze();
+xLoad = metrics.Targets( ...
+    metrics.Targets.Axis == "X" & ...
+    metrics.Targets.Role == "Load endpoint", :);
+
+verifyEqual(testCase, height(xLoad), 1);
+verifyFalse(testCase, xLoad.MetricsAvailable);
+verifyTrue(testCase, isnan(xLoad.TimeToFirstToleranceSeconds));
+verifyTrue(testCase, isnan(xLoad.DirectionalOvershoot));
+verifyTrue(testCase, any(contains( ...
+    metrics.Warnings, 'shares one recorded PLC status')));
 clear cleanup;
 end
 

@@ -11,12 +11,12 @@
     "holdTime": {"x": 0.2, "y": 0.2},
     "preload": {
       "enabled": true,
-      "value": {"x": 0.5, "y": 0.5},
+      "value": {"x": 0.5, "y": 0.3},
       "forceTolerance": {"x": 0.1, "y": 0.1},
       "holdTime": {"x": 0.2, "y": 0.2}
     },
-    "load": {"x": 5.0, "y": 5.0},
-    "unload": {"x": 0.5, "y": 0.5},
+    "load": {"x": 1.5, "y": 0.7},
+    "unload": {"x": 0.2, "y": 0.2},
     "unloadToStart": false
   },
   "cyclic": {
@@ -26,8 +26,8 @@
     "forceTolerance": {"x": 0.1, "y": 0.1},
     "holdTime": {"x": 0.1, "y": 0.1},
     "loadValues": {
-      "x": [5.0, 7.5, 10.0],
-      "y": [5.0, 7.5, 10.0]
+      "x": [1.0, 1.5, 2.0],
+      "y": [0.4, 0.55, 0.7]
     },
     "unloadValues": {
       "x": [0.0, 0.0, 0.0],

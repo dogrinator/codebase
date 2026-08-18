@@ -43,6 +43,19 @@ verifyEqual(testCase, sort({files.name}), ...
 clear cleanup;
 end
 
+function testCameraCloseSurvivesStopFailure(testCase)
+recordingSession = RecordingSession();
+camera = Camera(recordingSession);
+camera.cameraHW = FakeCameraHardware();
+camera.cameraHW.FailStop = true;
+camera.connected = true;
+
+verifyWarning(testCase, @() camera.closeCam(), 'Camera:StopFailed');
+verifyFalse(testCase, camera.connected);
+verifyEmpty(testCase, camera.cameraHW);
+verifyEmpty(testCase, camera.cameraSrc);
+end
+
 function testControllerSampleClockDoesNotOverlapJitteryBatches(testCase)
 [controler, ~, ~] = connectedController(testCase.TestData.root);
 base = datetime(2026, 8, 6, 12, 0, 0);

@@ -26,7 +26,7 @@ command is written to the PLC.
 
 ```mermaid
 flowchart TD
-    File["Select General Test JSON"] --> Parse["Parse and validate schema 1"]
+    File["Select General Test JSON"] --> Parse["Parse and validate schema 2"]
     Parse -->|Invalid| Reject["Show validation error; write nothing"]
     Parse -->|Valid| Map["Build one command per active axis"]
     Map --> Ready["Check PLC status, saved-position requirement, and power"]

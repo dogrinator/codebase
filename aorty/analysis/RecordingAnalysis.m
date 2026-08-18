@@ -261,7 +261,9 @@ classdef RecordingAnalysis < handle
                 definition = definitions(index, :);
                 axisName = char(definition.Axis);
                 samples = recording.(axisName);
+                coarseEndpointPhase = ismember(definition.Status, [11, 21]);
                 available = ~definition.Ambiguous && ...
+                    ~coarseEndpointPhase && ...
                     ~isempty(recording.Camera) && ~isempty(samples);
                 firstReach = NaN;
                 overshoot = NaN;
@@ -276,7 +278,13 @@ classdef RecordingAnalysis < handle
                 if definition.Ambiguous
                     warnings(end + 1, 1) = sprintf( ...
                         ['%s-axis %s uses variable per-cycle targets; ' ...
-                        'timing and overshoot metrics are unavailable.'], ...
+                         'timing and overshoot metrics are unavailable.'], ...
+                        axisName, char(definition.Role)); %#ok<AGROW>
+                elseif coarseEndpointPhase
+                    warnings(end + 1, 1) = sprintf( ...
+                        ['%s-axis %s shares one recorded PLC status with ' ...
+                         'the opposite endpoint; timing and overshoot ' ...
+                         'metrics are unavailable.'], ...
                         axisName, char(definition.Role)); %#ok<AGROW>
                 elseif available
                     statuses = RecordingAnalysis.sampleStatuses( ...
@@ -298,13 +306,14 @@ classdef RecordingAnalysis < handle
                                 direction * errorValues(first:end));
                         end
                         inFraction = mean(inside);
-                        dt = RecordingAnalysis.samplePeriod(phaseTime);
-                        totalInside = sum(inside) * dt;
                         runs = RecordingAnalysis.logicalRuns(inside);
                         entryCount = size(runs, 1);
+                        totalInside = 0;
                         if ~isempty(runs)
-                            lengths = runs(:, 2) - runs(:, 1) + 1;
-                            longestInside = max(lengths) * dt;
+                            durations = phaseTime(runs(:, 2)) - ...
+                                phaseTime(runs(:, 1));
+                            totalInside = sum(durations);
+                            longestInside = max(durations);
                             meanError = mean(errorValues(inside));
                             stdError = std(errorValues(inside));
                         end
@@ -345,6 +354,9 @@ classdef RecordingAnalysis < handle
             xLimits = axesHandle.XLim;
             for index = 1:height(definitions)
                 definition = definitions(index, :);
+                if ismember(definition.Status, [11, 21])
+                    continue;
+                end
                 axisName = char(definition.Axis);
                 intervals = segments(segments.Status == definition.Status, :);
                 if isempty(intervals)
@@ -783,14 +795,6 @@ classdef RecordingAnalysis < handle
         function runs = logicalRuns(mask)
             edges = diff([false; logical(mask(:)); false]);
             runs = [find(edges == 1), find(edges == -1) - 1];
-        end
-
-        function period = samplePeriod(time)
-            if numel(time) < 2
-                period = 0;
-            else
-                period = median(diff(time));
-            end
         end
 
         %% Plot presentation

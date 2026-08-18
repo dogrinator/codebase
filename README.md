@@ -176,6 +176,10 @@ integrity and regulation metrics, and plots the raw X/Y force and position
 signals with phase, target, and tolerance overlays. It does not require
 `cam.bin` and does not assign pass/fail results.
 
+Endpoint-specific timing and overshoot metrics require a recorded status that
+identifies one endpoint. The current pre-cycle and cyclic statuses combine load
+and unload, so those target rows are marked unavailable rather than inferred.
+
 ```matlab
 cd aorty
 addpath(genpath(pwd))

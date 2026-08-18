@@ -12,8 +12,7 @@ classdef MachinePanel < handle
         powerButton
         errorButton
 
-        % PLC status and machine-idle state
-        settingsIdle = true
+        % PLC status state
         connected = false
         statuses = []
     end
