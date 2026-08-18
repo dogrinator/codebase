@@ -24,6 +24,8 @@ verifyEqual(testCase, ...
     firstView.controller.settings.activeAppConfigName, 'default');
 verifyEqual(testCase, ...
     firstView.getTestConfiguration().schemaVersion, 2);
+verifyEqual(testCase, AppInfo.POSITION_LIMITS_MM.X, [0, 50]);
+verifyEqual(testCase, AppInfo.POSITION_LIMITS_MM.Y, [0, 50]);
 applicationTimers = timerfindall;
 if ~isempty(applicationTimers)
     stop(applicationTimers);
@@ -55,7 +57,14 @@ firstView.testPanel.applyPreset(currentPreset);
 verifyEqual(testCase, ...
     firstView.getTestConfiguration().system.axisMode, 'Both');
 verifyEqual(testCase, firstView.machinePanel.sampleCountField.Value, 500);
-referenceLines = findall(firstView.fig, 'Type', 'ConstantLine');
+positionLimitLines = findPositionLimitLines(firstView.fig);
+verifyEqual(testCase, numel(positionLimitLines), 4);
+verifyEqual(testCase, sort([positionLimitLines.Value]), [0, 0, 50, 50]);
+verifyTrue(testCase, all(strcmp({positionLimitLines.Visible}, 'off')));
+for index = 1:numel(positionLimitLines)
+    verifyNotEmpty(testCase, positionLimitLines(index).Label);
+end
+referenceLines = findForceReferenceLines(firstView.fig);
 verifyNotEmpty(testCase, referenceLines);
 for index = 1:numel(referenceLines)
     verifyEmpty(testCase, referenceLines(index).Label);
@@ -66,12 +75,10 @@ capturedUnload = findall(firstView.testPanel.tabs, ...
 verifyEqual(testCase, numel(capturedUnload), 1);
 capturedUnload.Value = false;
 capturedUnload.ValueChangedFcn(capturedUnload, []);
-withUnloadReference = numel(findall( ...
-    firstView.fig, 'Type', 'ConstantLine'));
+withUnloadReference = numel(findForceReferenceLines(firstView.fig));
 capturedUnload.Value = true;
 capturedUnload.ValueChangedFcn(capturedUnload, []);
-withoutUnloadReference = numel(findall( ...
-    firstView.fig, 'Type', 'ConstantLine'));
+withoutUnloadReference = numel(findForceReferenceLines(firstView.fig));
 verifyGreaterThan(testCase, ...
     withUnloadReference, withoutUnloadReference);
 firstView.machinePanel.sampleCountField.Value = 120;
@@ -81,11 +88,25 @@ verifyEqual(testCase, firstView.machinePanel.sampleCountField.Value, 120);
 firstView.machinePanel.modeDrop.Value = 'Displacement';
 firstView.machinePanel.modeDrop.ValueChangedFcn( ...
     firstView.machinePanel.modeDrop, []);
-verifyEmpty(testCase, findall(firstView.fig, 'Type', 'ConstantLine'));
+verifyEmpty(testCase, findForceReferenceLines(firstView.fig));
+positionLimitLines = findPositionLimitLines(firstView.fig);
+verifyEqual(testCase, numel(positionLimitLines), 4);
+verifyTrue(testCase, all(strcmp({positionLimitLines.Visible}, 'on')));
 firstView.machinePanel.modeDrop.Value = 'Force';
 firstView.machinePanel.modeDrop.ValueChangedFcn( ...
     firstView.machinePanel.modeDrop, []);
-verifyNotEmpty(testCase, findall(firstView.fig, 'Type', 'ConstantLine'));
+verifyNotEmpty(testCase, findForceReferenceLines(firstView.fig));
+positionLimitLines = findPositionLimitLines(firstView.fig);
+verifyEqual(testCase, numel(positionLimitLines), 4);
+verifyTrue(testCase, all(strcmp({positionLimitLines.Visible}, 'off')));
+firstView.machinePanel.modeDrop.Value = 'Displacement';
+firstView.machinePanel.modeDrop.ValueChangedFcn( ...
+    firstView.machinePanel.modeDrop, []);
+verifyEqual(testCase, numel(findPositionLimitLines(firstView.fig)), 4);
+firstView.machinePanel.modeDrop.Value = 'Force';
+firstView.machinePanel.modeDrop.ValueChangedFcn( ...
+    firstView.machinePanel.modeDrop, []);
+verifyEqual(testCase, numel(findPositionLimitLines(firstView.fig)), 4);
 batch = struct( ...
     'Force', struct('X', 1:200, 'Y', 201:400), ...
     'Displacement', struct('X', 401:600, 'Y', 601:800));
@@ -150,6 +171,15 @@ for index = 1:numel(definitionControls)
 end
 verifyTrue(testCase, enabledAfterUnlock);
 clear cleanup;
+end
+
+function lines = findPositionLimitLines(fig)
+lines = findall(fig, 'Type', 'ConstantLine', 'Tag', 'PositionLimit');
+end
+
+function lines = findForceReferenceLines(fig)
+lines = findall(fig, 'Type', 'ConstantLine');
+lines = lines(~strcmp({lines.Tag}, 'PositionLimit'));
 end
 
 function closeApplication(applicationKey)

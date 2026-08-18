@@ -1,93 +1,73 @@
 # Aorty MATLAB review notes
 
-Brainstorming candidates, not approved changes. Checked items were completed as
-documentation/readability-only work and did not intentionally change behavior.
+Prioritized review work. Unchecked items remain proposals and should be planned
+and verified separately before implementation.
 
-## Project-wide
+## Useful next
 
-### Review class and folder organization
+### Enforce configured velocity limits
 
-- [ ] Group classes by clear responsibility and ownership where navigation is
-  confusing; account for MATLAB path and package behavior before moving files.
-- [ ] Preserve the high-level MVC separation, but replace the generic `Model` name
-  if its responsibility remains specifically recording state and coordination.
+- [ ] Apply each axis's configured `fMaxVelocity` to manual-motion and
+  test-speed inputs while retaining the existing positive minimum.
 
-### Review forced line wrapping
+### Centralize hardware and shutdown lifecycle
 
-- [x] Relax the strict line-length limit where wrapping makes simple conditions or
-  expressions harder to read.
-- [x] Keep sensible wrapping for long function arguments, structs, and genuinely
-  complex statements.
+- [ ] Remove UI controls and alerts from `Camera` and `Plc`; let them return
+  results or throw errors while `View` owns presentation.
+- [ ] Let `Control` coordinate camera and PLC connection workflows, including
+  applying the selected hardware configuration.
+- [ ] Let `Control` stop its timers, abort active work, and release camera and
+  PLC resources before `View` removes the UI.
+- [ ] Run each shutdown cleanup independently and warn when one fails so it
+  cannot prevent the remaining cleanup attempts.
 
-### Improve comments and class navigation
+### Clarify acquisition-buffer ownership
 
-- [x] Group facade methods, event handlers, controller-facing updates, and private
-  helpers into clearly named MATLAB `%%` sections.
-- [x] Add concise comments for intent, state transitions, safety rules, and unusual
-  decisions; avoid comments that only repeat the code.
+- [ ] Make `AcquisitionBuffer` return or drain batches without writing directly
+  to `Model`.
+- [ ] Let `Control` decide whether drained data is displayed, recorded,
+  discarded, or cleared after a disconnect.
 
-### Add an architecture overview
+## Useful later or blocked
 
-- [x] Create a root `README.md` and a concise architecture document with Mermaid
-  component and execution-flow diagrams.
-- [x] Add folder-specific READMEs only for complex subsystems that need them.
+### Encapsulate test and recording sessions
 
-### Review repeated class helpers
-
-- [ ] Find repeated stateless methods and extract shared functions only where this
-  improves ownership and removes real duplication.
-
-### Review test-only production seams
-
-- [ ] Move test-only defaults and branches into test fixtures where practical;
-  retain useful dependency injection and genuine optional arguments.
-
-### Strengthen MVC boundaries
-
-- [ ] Keep UI controls and alerts out of `Camera` and `Plc`; return results or
-  errors through `Control` for presentation by `View`.
-
-## View
-
-### Add meaningful operating limits
-
-- [ ] Set logical minimum and maximum values for numeric UI inputs such as speed.
-- [ ] Show the hardware-safe minimum and maximum positions on displacement plots.
-
-### Extract manual post-processing UI
-
-- [ ] Consider a `PostProcessingView` that owns folder/options dialogs, progress,
-  results, and focus restoration while `Control` keeps processing orchestration.
-- [ ] Keep `restoreFigureFocus` shared while multiple UI components need it.
-
-### Consider extracting the main toolbar
-
-- [ ] Consider a `MainToolbar`/`AppToolbar` component with a small interface that
-  owns toolbar controls and presentation; keep workflows in `View`.
-
-### Simplify best-effort shutdown cleanup
-
-- [ ] Replace repeated silent `try/catch` blocks with a helper that warns and lets
-  each timer or hardware cleanup run independently.
-
-## Controller
-
-### Consider extracting test execution
-
-- [ ] Evaluate a `TestSession` that owns test state, transitions, and its optional
-  recording lifecycle while `Control` coordinates the UI and hardware.
-- [ ] Split out an internal `RecordingSession` later only if that responsibility
-  remains large; keep file writing in `RecordingStore`.
-
-### Review acquisition-buffer ownership
-
-- [ ] Avoid `AcquisitionBuffer` depending directly on `Model`; let its owner drain
-  batches and decide whether to display, record, or discard them.
-- [ ] Move disconnect-time buffer clearing out of `View` and into `Control`.
-
-### Clarify lifecycle ownership
-
-- [ ] Let `Control` shut down the timers and hardware resources it owns; `View`
-  should request shutdown and then remove its UI.
-- [ ] Keep recording state privately writable behind explicit prepare, start,
+- [ ] Replace direct recording-state mutation with explicit prepare, start,
   finish, and abort operations.
+- [ ] Evaluate a `TestSession` for operation state, transitions, integrity
+  counters, and optional recording coordination.
+- [ ] Rename or replace the generic `Model` only as part of that responsibility
+  change; introduce a separate `RecordingSession` only if the recording
+  responsibility remains large.
+- [ ] Keep file persistence in `RecordingStore`.
+
+### Display safe position limits after commissioning
+
+- [ ] Commission authoritative safe X/Y travel limits and make them available
+  to MATLAB before implementing plot overlays.
+- [ ] Once available, expose those limits through the machine configuration or
+  status contract and show them on displacement plots.
+
+Do not infer position limits from the current asymmetric TwinCAT defaults.
+
+## Completed
+
+### Readability and navigation
+
+- [x] Relax forced line wrapping where it made simple expressions harder to
+  read while retaining sensible wrapping for genuinely complex statements.
+- [x] Group facade methods, event handlers, controller-facing updates, and
+  private helpers into clearly named MATLAB `%%` sections.
+- [x] Add concise comments for intent, state transitions, safety rules, and
+  unusual decisions without repeating the code.
+
+### Architecture documentation
+
+- [x] Provide a root `README.md` and a concise architecture document with
+  Mermaid component and execution-flow diagrams.
+- [x] Keep subsystem documentation only where the subsystem needs it.
+
+### Shared focus restoration
+
+- [x] Keep `restoreFigureFocus` as shared UI support while multiple components
+  need it.

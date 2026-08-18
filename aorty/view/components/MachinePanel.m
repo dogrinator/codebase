@@ -43,6 +43,7 @@ classdef MachinePanel < handle
 
         % Live plot state, force references, and hover selection
         forceReferences = struct('X', [], 'Y', [])
+        positionLimitLines = struct('X', [], 'Y', [])
         operationActive = false
         plotTime = struct('X', 0, 'Y', 0)
         sampleCount = 500
@@ -260,6 +261,10 @@ classdef MachinePanel < handle
                 layout, 'X', [0.1, 0.45, 0.8]);
             [panel.fyAxes, panel.plotLines.Y] = panel.createPlot( ...
                 layout, 'Y', [0.85, 0.35, 0.18]);
+            panel.positionLimitLines.X = panel.createPositionLimitLines( ...
+                panel.fxAxes, 'X');
+            panel.positionLimitLines.Y = panel.createPositionLimitLines( ...
+                panel.fyAxes, 'Y');
             panel.liveActionButton = uibutton(layout, ...
                 'Text', 'Tare load cells', ...
                 'ButtonPushedFcn', @(~, ~) panel.callbacks.liveAction());
@@ -285,6 +290,20 @@ classdef MachinePanel < handle
                 'Color', color, 'LineWidth', 1.3, ...
                 'MaximumNumPoints', panel.sampleCount, ...
                 'Visible', 'off');
+        end
+
+        function lines = createPositionLimitLines(~, axesHandle, axisName)
+            limits = AppInfo.POSITION_LIMITS_MM.(axisName);
+            labels = {'Visual minimum', 'Visual maximum'};
+            lines = gobjects(1, numel(limits));
+            for index = 1:numel(limits)
+                lines(index) = yline(axesHandle, limits(index), '--', ...
+                    sprintf('%s: %g mm', labels{index}, limits(index)), ...
+                    'Color', [0.75, 0.16, 0.16], 'LineWidth', 1.25, ...
+                    'LabelHorizontalAlignment', 'left', ...
+                    'Visible', 'off', 'HitTest', 'off', ...
+                    'PickableParts', 'none', 'Tag', 'PositionLimit');
+            end
         end
 
         function createMachinePanel(panel, parent)
@@ -529,7 +548,23 @@ classdef MachinePanel < handle
                 ylabel(panel.fyAxes, 'Displacement [mm]');
                 panel.liveActionButton.Text = 'Auto home';
             end
+            panel.updatePositionLimitLines(mode);
             panel.updateForceReferenceLines();
+        end
+
+        function updatePositionLimitLines(panel, mode)
+            visibility = 'off';
+            if strcmp(mode, 'Displacement')
+                visibility = 'on';
+            end
+            for axisItem = {'X', 'Y'}
+                lines = panel.positionLimitLines.(axisItem{1});
+                for index = 1:numel(lines)
+                    if isgraphics(lines(index))
+                        lines(index).Visible = visibility;
+                    end
+                end
+            end
         end
 
         function sampleCountChanged(panel, value)
@@ -892,7 +927,8 @@ classdef MachinePanel < handle
 
         function text = displacementTooltip(~)
             text = ['Displacement plots show the absolute NC axis ' ...
-                'position. Endpoint overlays are shown only for Force.'];
+                'position. Visual position limits come from AppInfo and are ' ...
+                'not enforced. Endpoint overlays are shown only for Force.'];
         end
     end
 end

@@ -6,5 +6,6 @@ classdef AppInfo
         PLC_SAMPLE_PERIOD_SECONDS = 0.01
         PLC_READ_PERIOD_SECONDS = 0.25
         RECORDING_WARMUP_SECONDS = 0.5
+        POSITION_LIMITS_MM = struct('X', [0, 50], 'Y', [0, 50])
     end
 end
