@@ -4,7 +4,7 @@ This guide describes how the MATLAB application divides responsibility and how
 its main workflows move through those components. For PLC internals and the ADS
 wire contract, see the
 [TwinCAT PLC guide](<../TwinCat/AortyPLC/main program/READMEPLC.md>) and the
-[MATLAB-TwinCAT interface guide](model/plc/interfaceReadme.md).
+[MATLAB-TwinCAT interface guide](hardware/plc/interfaceReadme.md).
 
 ## Component responsibilities
 
@@ -17,12 +17,12 @@ flowchart LR
     Plc --> Ads["PlcAds transport"]
     Ads <--> TwinCAT["TwinCAT PLC"]
     Control --> Buffer["AcquisitionBuffer"]
-    Camera --> Model["Model recording coordination"]
-    Buffer --> Model["Model recording coordination"]
-    Model --> Store["RecordingStore"]
+    Camera --> RecordingSession["RecordingSession recording coordination"]
+    Buffer --> RecordingSession["RecordingSession recording coordination"]
+    RecordingSession --> Store["RecordingStore"]
     Store --> Files["recording.h5 and cam.bin"]
     Files --> Processor["PostProcessor"]
-    Files --> Validation["TestValidation"]
+    Files --> Validation["RecordingAnalysis"]
     View --> Settings["Settings"]
     Control --> Settings
     Settings --> Camera
@@ -36,10 +36,10 @@ flowchart LR
   encoding, and packet decoding.
 - `Camera` owns camera acquisition and the latest captured frame.
 - `AcquisitionBuffer` holds PLC samples between the read and display timers.
-- `Model` coordinates recording state and delegates file persistence to
-  `RecordingStore`.
+- `RecordingSession` coordinates recording state and delegates file
+  persistence to `RecordingStore`.
 - `PostProcessor` reads completed recordings and exports compatible TIFF
-  frames. `TestValidation` performs separate offline analysis of HDF5 data.
+  frames. `RecordingAnalysis` performs separate offline analysis of HDF5 data.
 
 ## Test execution flow
 
@@ -83,11 +83,11 @@ flowchart TD
     Store --> Ready["Recording becomes active"]
     Ready --> Camera["Camera callback supplies full Mono8 frames"]
     Ready --> Plc["Read timer receives PLC FIFO batches"]
-    Camera --> CameraWrite["Model appends frame bytes, timestamps, and status"]
+    Camera --> CameraWrite["RecordingSession appends frame bytes, timestamps, and status"]
     CameraWrite --> CamBin["cam.bin and camera rows in recording.h5"]
     Plc --> Buffer["AcquisitionBuffer"]
     Buffer --> Display["Display timer drains plot data"]
-    Buffer --> HDF5["Model appends axis samples to recording.h5"]
+    Buffer --> HDF5["RecordingSession appends axis samples to recording.h5"]
     HDF5 --> Finish["Control finishes or aborts recording"]
     CamBin --> Finish
     Finish --> Closed["RecordingStore closes both files independently"]

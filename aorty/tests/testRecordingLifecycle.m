@@ -13,21 +13,21 @@ function testModelWritesSystemStatusRecordingContract(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
 
-model = Model();
-model.selectedFolder = folder;
-model.cameraFrameWidth = 2;
-model.cameraFrameHeight = 2;
-model.isRecording = true;
-model.openFilesRec();
-model.currentSystemStatus = int16(21);
-model.saveCameraFrame(uint8([1, 2; 3, 4]), ...
+recordingSession = RecordingSession();
+recordingSession.selectedFolder = folder;
+recordingSession.cameraFrameWidth = 2;
+recordingSession.cameraFrameHeight = 2;
+recordingSession.isRecording = true;
+recordingSession.openFilesRec();
+recordingSession.currentSystemStatus = int16(21);
+recordingSession.saveCameraFrame(uint8([1, 2; 3, 4]), ...
     datetime(2026, 7, 30, 12, 0, 0));
 sampleTime = datetime('now');
-model.saveAxisSamples('X', sampleTime + milliseconds([0, 10]), ...
+recordingSession.saveAxisSamples('X', sampleTime + milliseconds([0, 10]), ...
     [1, 2], [3, 4], [5, 6]);
-model.saveAxisSamples('Y', sampleTime, 7, 8, 9);
-model.isRecording = false;
-model.finalizeRecording('completed', 'Completed');
+recordingSession.saveAxisSamples('Y', sampleTime, 7, 8, 9);
+recordingSession.isRecording = false;
+recordingSession.finalizeRecording('completed', 'Completed');
 
 recording = PostProcessor.readRecording(folder);
 rows = recording.cameraRows;
@@ -71,33 +71,33 @@ assert(fid ~= -1);
 fprintf(fid, 'existing data');
 fclose(fid);
 
-model = Model();
-model.selectedFolder = folder;
-model.isRecording = true;
-verifyError(testCase, @() model.openFilesRec(), ...
-    'Model:RecordingFilesExist');
+recordingSession = RecordingSession();
+recordingSession.selectedFolder = folder;
+recordingSession.isRecording = true;
+verifyError(testCase, @() recordingSession.openFilesRec(), ...
+    'RecordingStore:RecordingFilesExist');
 verifyEqual(testCase, fileread(filename), 'existing data');
-verifyFalse(testCase, model.filesOpen);
+verifyFalse(testCase, recordingSession.filesOpen);
 clear cleanup;
 end
 
 function testAxisFieldsMustMatchButAxesMayDiffer(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
-model = Model();
-model.selectedFolder = folder;
-model.openFilesRec();
-model.isRecording = true;
-verifyError(testCase, @() model.saveAxisSamples( ...
+recordingSession = RecordingSession();
+recordingSession.selectedFolder = folder;
+recordingSession.openFilesRec();
+recordingSession.isRecording = true;
+verifyError(testCase, @() recordingSession.saveAxisSamples( ...
     'X', datetime('now') + milliseconds([0, 10]), ...
     [1, 2], 3, [4, 5]), ...
-    'Model:RecordingVectorLength');
+    'RecordingStore:RecordingVectorLength');
 sampleTime = datetime('now');
-model.saveAxisSamples('X', sampleTime + milliseconds([0, 10]), ...
+recordingSession.saveAxisSamples('X', sampleTime + milliseconds([0, 10]), ...
     [1, 2], [3, 4], [5, 6]);
-model.saveAxisSamples('Y', sampleTime, 7, 8, 9);
-model.isRecording = false;
-model.finalizeRecording('aborted', 'Test complete');
+recordingSession.saveAxisSamples('Y', sampleTime, 7, 8, 9);
+recordingSession.isRecording = false;
+recordingSession.finalizeRecording('aborted', 'Test complete');
 verifySize(testCase, h5read(fullfile( ...
     folder, 'recording.h5'), '/plc/X/samples'), [4, 2]);
 verifySize(testCase, h5read(fullfile( ...
@@ -140,13 +140,13 @@ fprintf(fid, 'previous recording');
 fclose(fid);
 
 [controler, ~, command] = connectedController(testCase.TestData.root);
-controler.model.selectedFolder = oldFolder;
+controler.recordingSession.selectedFolder = oldFolder;
 controler.recordingFolderSelector = @failFolderPrompt;
 controler.startTestForTesting( ...
     struct('X', command, 'Y', []), postSettings(), false);
 verifyTrue(testCase, controler.testRunning);
-verifyFalse(testCase, controler.model.isRecording);
-verifyFalse(testCase, controler.model.filesOpen);
+verifyFalse(testCase, controler.recordingSession.isRecording);
+verifyFalse(testCase, controler.recordingSession.filesOpen);
 
 status = completionStatus();
 controler.processTestStatusForTesting(struct('X', status));
@@ -162,8 +162,8 @@ controler.startTestForTesting( ...
     struct('X', command, 'Y', []), postSettings(), false);
 controler.safeAbort('Operator abort');
 verifyFalse(testCase, controler.testRunning);
-verifyFalse(testCase, controler.model.filesOpen);
-verifyEqual(testCase, controler.model.currentSystemStatus, int16(0));
+verifyFalse(testCase, controler.recordingSession.filesOpen);
+verifyEqual(testCase, controler.recordingSession.currentSystemStatus, int16(0));
 
 [controler, client, command] = connectedController(testCase.TestData.root);
 bad = command;
@@ -173,8 +173,8 @@ verifyError(testCase, @() controler.startTestForTesting( ...
     struct('X', bad, 'Y', []), postSettings(), false), ...
     'PLC:InvalidTestCommand');
 verifyFalse(testCase, controler.testRunning);
-verifyFalse(testCase, controler.model.filesOpen);
-verifyEqual(testCase, controler.model.currentSystemStatus, int16(0));
+verifyFalse(testCase, controler.recordingSession.filesOpen);
+verifyEqual(testCase, controler.recordingSession.currentSystemStatus, int16(0));
 end
 
 function testRecordingRequiresConnectedCameraBeforeFolderSelection(testCase)
@@ -192,7 +192,7 @@ verifyEqual(testCase, exception.identifier, 'Control:CameraDisconnected');
 verifyEqual(testCase, exception.message, ...
     'Connect the camera before starting a recorded test.');
 verifyFalse(testCase, controler.testRunning);
-verifyFalse(testCase, controler.model.filesOpen);
+verifyFalse(testCase, controler.recordingSession.filesOpen);
 end
 
 function testRecordedStartupFlushesAndWarmsBeforeTrigger(testCase)
@@ -217,8 +217,8 @@ clear cleanup;
 
     function verifyWarmupState()
         warmupCalled = true;
-        verifyTrue(testCase, controler.model.filesOpen);
-        verifyTrue(testCase, controler.model.isRecording);
+        verifyTrue(testCase, controler.recordingSession.filesOpen);
+        verifyTrue(testCase, controler.recordingSession.isRecording);
         verifyFalse(testCase, controler.testRunning);
         verifyEmpty(testCase, client.Writes);
         client.setStatus('X', struct('operationCounter', uint32(7)));
@@ -239,8 +239,8 @@ verifyError(testCase, @() controler.startTestForTesting( ...
 
 verifyEmpty(testCase, client.Writes);
 verifyFalse(testCase, controler.testRunning);
-verifyFalse(testCase, controler.model.isRecording);
-verifyFalse(testCase, controler.model.filesOpen);
+verifyFalse(testCase, controler.recordingSession.isRecording);
+verifyFalse(testCase, controler.recordingSession.filesOpen);
 verifyEqual(testCase, strtrim(char(h5readatt( ...
     fullfile(folder, 'recording.h5'), '/metadata', 'status'))), ...
     'aborted');
@@ -258,16 +258,16 @@ cleanup = onCleanup(@() removeTemporaryFolder(folder));
 controler.recordingFolderSelector = @() folder;
 controler.startTestForTesting( ...
     struct('X', command, 'Y', []), postSettings(), true);
-verifyTrue(testCase, controler.model.isRecording);
-verifyTrue(testCase, controler.model.filesOpen);
+verifyTrue(testCase, controler.recordingSession.isRecording);
+verifyTrue(testCase, controler.recordingSession.filesOpen);
 verifyTrue(testCase, isfile(fullfile(folder, 'recording.h5')));
 verifyTrue(testCase, isfile(fullfile(folder, 'cam.bin')));
 
 status = completionStatus();
 controler.processTestStatusForTesting(struct('X', status));
 verifyFalse(testCase, controler.testRunning);
-verifyFalse(testCase, controler.model.isRecording);
-verifyFalse(testCase, controler.model.filesOpen);
+verifyFalse(testCase, controler.recordingSession.isRecording);
+verifyFalse(testCase, controler.recordingSession.filesOpen);
 recordingStatus = strtrim(char(h5readatt( ...
     fullfile(folder, 'recording.h5'), '/metadata', 'status')));
 verifyEqual(testCase, recordingStatus, 'completed');
@@ -277,15 +277,15 @@ end
 function testAcquisitionTimestampsArePreserved(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
-model = Model();
-model.selectedFolder = folder;
-model.openFilesRec();
-model.isRecording = true;
+recordingSession = RecordingSession();
+recordingSession.selectedFolder = folder;
+recordingSession.openFilesRec();
+recordingSession.isRecording = true;
 base = datetime('now');
-model.saveAxisSamples('X', base + milliseconds([0, 125]), ...
+recordingSession.saveAxisSamples('X', base + milliseconds([0, 125]), ...
     [1, 2], [3, 4], [5, 6]);
-model.isRecording = false;
-model.finalizeRecording('completed', 'Completed');
+recordingSession.isRecording = false;
+recordingSession.finalizeRecording('completed', 'Completed');
 values = h5read(fullfile(folder, 'recording.h5'), ...
     '/plc/X/samples');
 verifyEqual(testCase, diff(values(1, :)), 0.125, ...
@@ -296,12 +296,12 @@ end
 function testRecordingMetadataReportsIntegrityLoss(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
-model = Model();
-model.selectedFolder = folder;
-model.openFilesRec();
-model.recordingDroppedSamples = struct('X', 3, 'Y', 1);
-model.recordingRestartDetected = true;
-model.finalizeRecording('aborted', 'Integrity failure');
+recordingSession = RecordingSession();
+recordingSession.selectedFolder = folder;
+recordingSession.openFilesRec();
+recordingSession.recordingDroppedSamples = struct('X', 3, 'Y', 1);
+recordingSession.recordingRestartDetected = true;
+recordingSession.finalizeRecording('aborted', 'Integrity failure');
 filename = fullfile(folder, 'recording.h5');
 verifyEqual(testCase, h5readatt(filename, '/metadata', ...
     'x_dropped_sample_count'), uint64(3));
@@ -400,13 +400,13 @@ end
 
 function [controler, client, command] = connectedController(~)
 client = FakeAdsClient();
-plc = Plc(Model());
+plc = Plc(RecordingSession());
 plc.connectClientForTesting(client);
-model = plc.model;
-camera = Camera(model);
+recordingSession = plc.recordingSession;
+camera = Camera(recordingSession);
 camera.cameraHW = FakeCameraHardware();
 camera.connected = true;
-controler = Control(model, plc, camera);
+controler = Control(recordingSession, plc, camera);
 controler.recordingWarmupHandler = @() [];
 settings = Settings(plc, camera);
 settings.loadHwConfig('default');

@@ -24,7 +24,7 @@ and verified separately before implementation.
 ### Clarify acquisition-buffer ownership
 
 - [ ] Make `AcquisitionBuffer` return or drain batches without writing directly
-  to `Model`.
+  to `RecordingSession`.
 - [ ] Let `Control` decide whether drained data is displayed, recorded,
   discarded, or cleared after a disconnect.
 
@@ -36,9 +36,8 @@ and verified separately before implementation.
   finish, and abort operations.
 - [ ] Evaluate a `TestSession` for operation state, transitions, integrity
   counters, and optional recording coordination.
-- [ ] Rename or replace the generic `Model` only as part of that responsibility
-  change; introduce a separate `RecordingSession` only if the recording
-  responsibility remains large.
+- [ ] Keep `RecordingSession` focused on recording if test execution moves to
+  a dedicated `TestSession`.
 - [ ] Keep file persistence in `RecordingStore`.
 
 ### Display safe position limits after commissioning
@@ -51,6 +50,15 @@ and verified separately before implementation.
 Do not infer position limits from the current asymmetric TwinCAT defaults.
 
 ## Completed
+
+### Feature-oriented project structure
+
+- [x] Group application, configuration, hardware, test-definition, recording,
+  analysis, and UI code by responsibility.
+- [x] Rename the recording coordinator and offline analysis entry point to
+  match their actual roles.
+- [x] Keep automated tests and local recording archives outside the production
+  MATLAB path.
 
 ### Readability and navigation
 

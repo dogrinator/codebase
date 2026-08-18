@@ -256,7 +256,7 @@ configured hardware FPS. When `includePrePost` is false, only statuses `20`
 and `21` are eligible for TIFF output; when true, statuses `10`, `11`, `20`,
 `21`, and `30` are eligible.
 
-See the [interface and data-contract guide](../model/plc/interfaceReadme.md)
+See the [interface and data-contract guide](../hardware/plc/interfaceReadme.md)
 for recording and TIFF details.
 
 ## Strict validation and legacy fields
@@ -293,5 +293,5 @@ Before importing a new file, confirm:
 ## Related documentation
 
 - [Project overview](../../README.md)
-- [MATLAB–TwinCAT interface](../model/plc/interfaceReadme.md)
+- [MATLAB–TwinCAT interface](../hardware/plc/interfaceReadme.md)
 - [TwinCAT PLC sequence](<../../TwinCat/AortyPLC/main program/READMEPLC.md>)

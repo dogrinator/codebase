@@ -2,7 +2,7 @@ classdef Camera < handle
     %CAMERA Owns the GigE camera and forwards frames to recording and preview.
 
     properties
-        model Model
+        recordingSession RecordingSession
 
         % Image Acquisition Toolbox objects
         cameraHW
@@ -17,8 +17,8 @@ classdef Camera < handle
 
     methods
         %% Connection and acquisition
-        function camera = Camera(model)
-            camera.model = model;
+        function camera = Camera(recordingSession)
+            camera.recordingSession = recordingSession;
         end
 
         function connectCamera(camera, app, src)
@@ -92,7 +92,7 @@ classdef Camera < handle
                 [frame, relativeTime] = getdata(src, 1);
                 timeStamp = camera.camStartTime + seconds(relativeTime);
 
-                camera.model.saveCameraFrame(frame, timeStamp);
+                camera.recordingSession.saveCameraFrame(frame, timeStamp);
 
                 % Downsample preview only; recording retains the full frame.
                 camera.latestFrame = frame(1:3:end, 1:3:end);

@@ -11,9 +11,13 @@ arguments
     action (1,1) string {mustBeMember(action, ["start", "restart"])} = "start"
 end
 
-% Add all subdirectories to workspace
+% Add only production source directories to the MATLAB path.
 projectRoot = fileparts(mfilename("fullpath"));
-addpath(genpath(projectRoot));
+sourceFolders = ["application", "analysis", "configuration", ...
+    "hardware", "recording", "test_definition", "ui"];
+for index = 1:numel(sourceFolders)
+    addpath(genpath(fullfile(projectRoot, sourceFolders(index))));
+end
 
 % App key that is checked in reopening
 applicationKey = "AortyApplicationView";
@@ -48,8 +52,8 @@ if isappdata(groot, applicationKey)
 end
 
 % Construct a completely fresh application.
-model = Model();
-controller = Control(model);
+recordingSession = RecordingSession();
+controller = Control(recordingSession);
 view = View(controller);
 
 setappdata(groot, applicationKey, view);

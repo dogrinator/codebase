@@ -21,8 +21,10 @@ classdef Settings < handle
             settings.camera = camera;
             % Resolve configuration paths independently of the working folder.
             applicationRoot = fileparts(fileparts(mfilename('fullpath')));
-            settings.hwPath = fullfile(applicationRoot, '.config', 'hwConfig');
-            settings.appPath = fullfile(applicationRoot, '.config', 'appConfig');
+            profileRoot = fullfile(applicationRoot, ...
+                'configuration', 'profiles');
+            settings.hwPath = fullfile(profileRoot, 'hardware');
+            settings.appPath = fullfile(profileRoot, 'application');
         end
 
         %% Hardware configuration

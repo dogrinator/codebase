@@ -32,9 +32,9 @@ classdef AcquisitionBuffer < handle
                 'X', buffer.positionX, 'Y', buffer.positionY));
         end
 
-        function flush(buffer, model)
-            buffer.flushAxis(model, 'X');
-            buffer.flushAxis(model, 'Y');
+        function flush(buffer, recordingSession)
+            buffer.flushAxis(recordingSession, 'X');
+            buffer.flushAxis(recordingSession, 'Y');
         end
 
         function clear(buffer)
@@ -50,7 +50,7 @@ classdef AcquisitionBuffer < handle
     end
 
     methods (Access = private)
-        function flushAxis(buffer, model, axisName)
+        function flushAxis(buffer, recordingSession, axisName)
             if strcmp(axisName, 'X')
                 force = buffer.forceX;
                 untared = buffer.untaredForceX;
@@ -68,7 +68,7 @@ classdef AcquisitionBuffer < handle
 
             % Clear only after a successful write so a transient failure
             % cannot silently discard samples.
-            model.saveAxisSamples( ...
+            recordingSession.saveAxisSamples( ...
                 axisName, timestamps, force, untared, position);
             if strcmp(axisName, 'X')
                 buffer.forceX = [];

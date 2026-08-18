@@ -1,5 +1,5 @@
-classdef Model < handle
-    %MODEL Coordinates recording state and delegates synchronized writes.
+classdef RecordingSession < handle
+    %RECORDINGSESSION Coordinates recording state and synchronized writes.
 
     properties
         % Recording lifecycle and acquisition state
@@ -26,36 +26,36 @@ classdef Model < handle
 
     methods
         %% Recording file lifecycle
-        function openFilesRec(model, header)
-            if model.filesOpen
+        function openFilesRec(recordingSession, header)
+            if recordingSession.filesOpen
                 return;
             end
             if nargin < 2 || isempty(header)
-                header = model.defaultRecordingHeader();
+                header = recordingSession.defaultRecordingHeader();
             end
-            model.recordingStore = RecordingStore( ...
-                model.selectedFolder, header);
-            model.filesOpen = true;
-            model.recordingStatus = 'recording';
-            model.recordingReason = '';
+            recordingSession.recordingStore = RecordingStore( ...
+                recordingSession.selectedFolder, header);
+            recordingSession.filesOpen = true;
+            recordingSession.recordingStatus = 'recording';
+            recordingSession.recordingReason = '';
         end
 
 
-        function finalizeRecording(model, status, reason)
-            model.recordingStatus = lower(char(status));
-            model.recordingReason = char(reason);
-            if ~model.filesOpen || isempty(model.recordingStore)
+        function finalizeRecording(recordingSession, status, reason)
+            recordingSession.recordingStatus = lower(char(status));
+            recordingSession.recordingReason = char(reason);
+            if ~recordingSession.filesOpen || isempty(recordingSession.recordingStore)
                 return;
             end
-            store = model.recordingStore;
-            model.filesOpen = false;
-            model.recordingStore = [];
+            store = recordingSession.recordingStore;
+            recordingSession.filesOpen = false;
+            recordingSession.recordingStore = [];
             try
                 integrity = struct( ...
-                    'droppedSamples', model.recordingDroppedSamples, ...
-                    'restartDetected', model.recordingRestartDetected);
-                store.finalize(model.recordingStatus, ...
-                    model.recordingReason, integrity);
+                    'droppedSamples', recordingSession.recordingDroppedSamples, ...
+                    'restartDetected', recordingSession.recordingRestartDetected);
+                store.finalize(recordingSession.recordingStatus, ...
+                    recordingSession.recordingReason, integrity);
             catch exception
                 try store.close(); catch, end
                 rethrow(exception);
@@ -63,46 +63,46 @@ classdef Model < handle
         end
 
         %% Acquisition writes
-        function saveAxisSamples(model, axisName, timestamps, forceValues, untaredForceValues, positionValues)
-            if ~model.isRecording
+        function saveAxisSamples(recordingSession, axisName, timestamps, forceValues, untaredForceValues, positionValues)
+            if ~recordingSession.isRecording
                 return;
             end
-            model.recordingStore.appendAxis(axisName, timestamps, ...
+            recordingSession.recordingStore.appendAxis(axisName, timestamps, ...
                 forceValues, untaredForceValues, positionValues);
         end
 
-        function saveCameraFrame(model, frame, timeStamp)
-            if model.isRecording
-                model.recordingStore.appendFrame( ...
-                    frame, timeStamp, model.recordIndex, ...
-                    model.currentSystemStatus);
-                model.recordIndex = model.recordIndex + 1;
+        function saveCameraFrame(recordingSession, frame, timeStamp)
+            if recordingSession.isRecording
+                recordingSession.recordingStore.appendFrame( ...
+                    frame, timeStamp, recordingSession.recordIndex, ...
+                    recordingSession.currentSystemStatus);
+                recordingSession.recordIndex = recordingSession.recordIndex + 1;
             end
         end
 
-        function updateSystemStatus(model, statuses, activeAxes)
+        function updateSystemStatus(recordingSession, statuses, activeAxes)
             if isempty(activeAxes)
-                model.currentSystemStatus = int16(0);
+                recordingSession.currentSystemStatus = int16(0);
                 return;
             end
             axis = activeAxes{1};
             if isempty(statuses) || ~isfield(statuses, axis) || ...
                     ~isfield(statuses.(axis), 'systemStatus')
-                model.currentSystemStatus = int16(0);
+                recordingSession.currentSystemStatus = int16(0);
                 return;
             end
-            model.currentSystemStatus = ...
+            recordingSession.currentSystemStatus = ...
                 int16(statuses.(axis).systemStatus);
         end
 
     end
 
     methods (Access = private)
-        function header = defaultRecordingHeader(model)
+        function header = defaultRecordingHeader(recordingSession)
             camera = struct( ...
                 'connected', false, ...
-                'width', double(model.cameraFrameWidth), ...
-                'height', double(model.cameraFrameHeight), ...
+                'width', double(recordingSession.cameraFrameWidth), ...
+                'height', double(recordingSession.cameraFrameHeight), ...
                 'pixel_format', 'Mono8', ...
                 'exposure_time', NaN, ...
                 'gain', NaN, ...

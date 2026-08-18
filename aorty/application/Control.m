@@ -4,7 +4,7 @@ classdef Control < handle
     properties
         camera Camera
         plc Plc
-        model Model
+        recordingSession RecordingSession
         settings Settings
         plcReadTimer
         displayTimer
@@ -26,19 +26,19 @@ classdef Control < handle
     end
 
     methods
-        function controler = Control(model, plc, camera)
-            controler.model = model;
+        function controler = Control(recordingSession, plc, camera)
+            controler.recordingSession = recordingSession;
             controler.samples = AcquisitionBuffer();
             if nargin >= 3 && ~isempty(camera)
                 controler.camera = camera;
             else
-                controler.camera = Camera(model);
+                controler.camera = Camera(recordingSession);
             end
             controler.camera.errorHandler = @(exception) controler.handleRuntimeError(exception, 'Camera error');
             if nargin >= 2 && ~isempty(plc)
                 controler.plc = plc;
             else
-                controler.plc = Plc(model);
+                controler.plc = Plc(recordingSession);
             end
             controler.settings = Settings(controler.plc, controler.camera);
         end
@@ -70,7 +70,7 @@ classdef Control < handle
                 xTimes = controler.sampleTimes(readTime, numel(fx), 'X');
                 yTimes = controler.sampleTimes(readTime, numel(fy), 'Y');
                 controler.samples.append(fx, fy, ufx, ufy, px, py, xTimes, yTimes);
-                controler.model.updateSystemStatus(statuses, controler.activeTestAxes);
+                controler.recordingSession.updateSystemStatus(statuses, controler.activeTestAxes);
                 controler.updateStatusUI(statuses);
                 controler.notifyMachineStatus(statuses, true);
                 integrityError = controler.acquisitionIntegrityError();
@@ -101,9 +101,9 @@ classdef Control < handle
             end
 
             plotBatch = controler.samples.plotBatch();
-            if controler.model.isRecording
+            if controler.recordingSession.isRecording
                 try
-                    controler.samples.flush(controler.model);
+                    controler.samples.flush(controler.recordingSession);
                 catch exception
                     controler.handleRuntimeError(exception, 'Recording write error');
                     return;
@@ -215,7 +215,7 @@ classdef Control < handle
         end
 
         function result = runManualPostProcessing(controler, folderPath, samplingPeriod, includePrePost)
-            if controler.testRunning || controler.model.isRecording || controler.model.filesOpen
+            if controler.testRunning || controler.recordingSession.isRecording || controler.recordingSession.filesOpen
                 error('Control:RecordingActive', ...
                     ['Post-processing cannot start while a test ' ...
                     'recording is active.']);
@@ -230,7 +230,7 @@ classdef Control < handle
 
         function safeAbort(controler, reason)
             if controler.abortInProgress, return; end
-            wasActive = controler.testRunning || controler.model.isRecording || controler.model.filesOpen;
+            wasActive = controler.testRunning || controler.recordingSession.isRecording || controler.recordingSession.filesOpen;
             controler.abortInProgress = true;
             cleanup = onCleanup(@() controler.finishAbortCleanup());
             controler.testRunning = false;
@@ -305,16 +305,16 @@ classdef Control < handle
                 controler.validatePostProcessSettings(postSettings);
             if recordEnabled
                 controler.prepareRecording(folder);
-                controler.model.recordingStatus = 'starting';
-                controler.model.recordingReason = '';
+                controler.recordingSession.recordingStatus = 'starting';
+                controler.recordingSession.recordingReason = '';
             else
                 controler.activePostProcessSettings.enabled = false;
-                controler.model.isRecording = false;
+                controler.recordingSession.isRecording = false;
             end
-            controler.model.updateSystemStatus(statuses, axes);
-            controler.model.recordingDroppedSamples = ...
+            controler.recordingSession.updateSystemStatus(statuses, axes);
+            controler.recordingSession.recordingDroppedSamples = ...
                 struct('X', 0, 'Y', 0);
-            controler.model.recordingRestartDetected = false;
+            controler.recordingSession.recordingRestartDetected = false;
             controler.activeTestAxes = axes;
             controler.setOperationActive(true);
             try
@@ -322,12 +322,12 @@ classdef Control < handle
                     header = controler.buildRecordingHeader( ...
                         commands, axes, ...
                         controler.activePostProcessSettings, testKind);
-                    controler.model.openFilesRec(header);
+                    controler.recordingSession.openFilesRec(header);
                     controler.camera.discardQueuedFrames();
-                    controler.model.isRecording = true;
+                    controler.recordingSession.isRecording = true;
                     controler.waitForRecordingWarmup();
-                    if ~controler.model.isRecording || ...
-                            ~controler.model.filesOpen
+                    if ~controler.recordingSession.isRecording || ...
+                            ~controler.recordingSession.filesOpen
                         error('Control:StartupCancelled', ...
                             'Recording startup was cancelled.');
                     end
@@ -336,7 +336,7 @@ classdef Control < handle
                 % Establish operation and integrity baselines after the
                 % recording warm-up, immediately before the PLC trigger.
                 statuses = controler.plc.pollStatus();
-                controler.model.updateSystemStatus(statuses, axes);
+                controler.recordingSession.updateSystemStatus(statuses, axes);
                 for index = 1:numel(axes)
                     axis = axes{index};
                     controler.operationStartCounters.(axis) = ...
@@ -352,22 +352,22 @@ classdef Control < handle
                 controler.testRunning = false;
                 controler.activeTestAxes = {};
                 if recordEnabled
-                    controler.model.isRecording = false;
+                    controler.recordingSession.isRecording = false;
                     reason = ['Startup failed: ', exception.message];
-                    if controler.model.filesOpen
+                    if controler.recordingSession.filesOpen
                         try
-                            controler.model.finalizeRecording( ...
+                            controler.recordingSession.finalizeRecording( ...
                                 'aborted', reason);
                         catch finalizeException
                             warning('Control:RecordingFinalize', ...
                                 '%s', finalizeException.message);
                         end
                     else
-                        controler.model.recordingStatus = 'aborted';
-                        controler.model.recordingReason = reason;
+                        controler.recordingSession.recordingStatus = 'aborted';
+                        controler.recordingSession.recordingReason = reason;
                     end
                 end
-                controler.model.currentSystemStatus = int16(0);
+                controler.recordingSession.currentSystemStatus = int16(0);
                 controler.activePostProcessSettings.enabled = false;
                 controler.setOperationActive(false);
                 rethrow(exception);
@@ -442,16 +442,16 @@ classdef Control < handle
         end
 
         function prepareRecording(controler, folder)
-            controler.model.selectedFolder = folder;
-            controler.model.recordIndex = 1;
+            controler.recordingSession.selectedFolder = folder;
+            controler.recordingSession.recordIndex = 1;
             if ~isempty(controler.camera.cameraHW) && ...
                     isvalid(controler.camera.cameraHW)
                 resolution = controler.camera.cameraHW.VideoResolution;
-                controler.model.cameraFrameWidth = resolution(1);
-                controler.model.cameraFrameHeight = resolution(2);
+                controler.recordingSession.cameraFrameWidth = resolution(1);
+                controler.recordingSession.cameraFrameHeight = resolution(2);
             else
-                controler.model.cameraFrameWidth = 0;
-                controler.model.cameraFrameHeight = 0;
+                controler.recordingSession.cameraFrameWidth = 0;
+                controler.recordingSession.cameraFrameHeight = 0;
             end
         end
 
@@ -547,26 +547,26 @@ classdef Control < handle
 
         function finishRecording(controler, reason)
             if nargin < 2 || isempty(reason), reason = 'Completed'; end
-            if ~controler.model.isRecording, return; end
+            if ~controler.recordingSession.isRecording, return; end
             flushError = [];
             try
-                controler.samples.flush(controler.model);
+                controler.samples.flush(controler.recordingSession);
             catch exception
                 flushError = exception;
                 reason = ['Recording write failed: ', exception.message];
             end
-            controler.model.isRecording = false;
+            controler.recordingSession.isRecording = false;
             [dropCounts, restartDetected] = ...
                 controler.recordingIntegrity();
-            controler.model.recordingDroppedSamples = dropCounts;
-            controler.model.recordingRestartDetected = restartDetected;
+            controler.recordingSession.recordingDroppedSamples = dropCounts;
+            controler.recordingSession.recordingRestartDetected = restartDetected;
             if strcmpi(reason, 'Completed')
                 recordingStatus = 'completed';
             else
                 recordingStatus = 'aborted';
             end
             try
-                controler.model.finalizeRecording( ...
+                controler.recordingSession.finalizeRecording( ...
                     recordingStatus, char(reason));
             catch exception
                 warning('Control:RecordingFinalize', '%s', exception.message);
@@ -582,11 +582,11 @@ classdef Control < handle
                     'phaseScope', ...
                     controler.phaseScope(postSettings.includePrePost), ...
                     'outputFolder', fullfile( ...
-                    controler.model.selectedFolder, ...
+                    controler.recordingSession.selectedFolder, ...
                     'processed_frames'));
                 try
                     PostProcessor.processData( ...
-                        controler.model.selectedFolder, options);
+                        controler.recordingSession.selectedFolder, options);
                 catch exception
                     warning('Control:PostProcess', '%s', exception.message);
                     if ~isempty(controler.app) && isvalid(controler.app)
@@ -596,7 +596,7 @@ classdef Control < handle
                     end
                 end
             end
-            controler.model.currentSystemStatus = int16(0);
+            controler.recordingSession.currentSystemStatus = int16(0);
             controler.setOperationActive(false);
             if ~isempty(flushError)
                 warning('Control:RecordingWrite', '%s', flushError.message);
@@ -610,15 +610,15 @@ classdef Control < handle
 
         function finishTest(controler, reason)
             if nargin < 2 || isempty(reason), reason = 'Completed'; end
-            if controler.model.isRecording
+            if controler.recordingSession.isRecording
                 controler.finishRecording(reason);
                 return;
             end
-            if controler.model.filesOpen
-                controler.model.finalizeRecording('aborted', char(reason));
+            if controler.recordingSession.filesOpen
+                controler.recordingSession.finalizeRecording('aborted', char(reason));
             end
             controler.activePostProcessSettings.enabled = false;
-            controler.model.currentSystemStatus = int16(0);
+            controler.recordingSession.currentSystemStatus = int16(0);
             controler.setOperationActive(false);
         end
 
@@ -686,7 +686,7 @@ classdef Control < handle
         end
 
         function requireIdleOperation(controler, actionText)
-            if controler.testRunning || controler.model.isRecording || ...
+            if controler.testRunning || controler.recordingSession.isRecording || ...
                     controler.plc.isWorking
                 error('Control:OperationActive', ...
                     'Cannot %s while a test or motion is active.', actionText);
@@ -737,8 +737,8 @@ classdef Control < handle
                 return;
             end
             [drops, restartDetected] = controler.recordingIntegrity();
-            controler.model.recordingDroppedSamples = drops;
-            controler.model.recordingRestartDetected = restartDetected;
+            controler.recordingSession.recordingDroppedSamples = drops;
+            controler.recordingSession.recordingRestartDetected = restartDetected;
             if restartDetected
                 message = ['PLC streaming counter restarted during the ' ...
                     'operation. The recording is incomplete.'];

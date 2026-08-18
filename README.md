@@ -17,7 +17,7 @@ test sequencing, biaxial synchronization, and protective behavior.
 | This README | Installation, first run, normal workflow, and project navigation |
 | [MATLAB architecture](aorty/ARCHITECTURE.md) | Component responsibilities and application execution flows |
 | [General Test guide](aorty/examples/generalTestReadme.md) | Authoring and importing versioned General Test JSON |
-| [MATLAB–TwinCAT interface guide](aorty/model/plc/interfaceReadme.md) | ADS symbols, packet layout, recording contracts, and communication tests |
+| [MATLAB–TwinCAT interface guide](aorty/hardware/plc/interfaceReadme.md) | ADS symbols, packet layout, recording contracts, and communication tests |
 | [TwinCAT PLC guide](<TwinCat/AortyPLC/main program/READMEPLC.md>) | PLC states, synchronization, errors, deployment, and commissioning |
 
 ## System architecture
@@ -54,14 +54,16 @@ The main responsibilities are deliberately separated:
 ```text
 aorty/
   main.m                         MATLAB entry point
-  controller/                    Test, acquisition, and recording coordination
-  model/                         PLC, camera, settings, and recording models
-  model/plc/                     ADS transport and command validation
-  view/                          Operator UI
+  application/                   Runtime coordination and acquisition buffering
+  configuration/                 Settings and application/hardware profiles
+  hardware/                      Camera and PLC integration
+  hardware/plc/                  ADS transport and command validation
+  test_definition/               Test schemas and PLC command construction
+  recording/                     Recording session and file persistence
+  analysis/                      Offline analysis and TIFF export
+  ui/                            Operator interface
   examples/                      General Test JSON and authoring guide
-  tests/                         Offline and interface-contract tests
-  .config/appConfig/             UI presets
-  .config/hwConfig/              PLC and camera settings
+  tests/                         Offline tests, contracts, and fake hardware
 TwinCat/AortyPLC/
   aortyPLC.tsproj                TwinCAT system project
   main program/
@@ -75,7 +77,7 @@ TwinCat/AortyPLC/
 
 - MATLAB with UI support and .NET interoperability.
 - The Beckhoff TwinCAT ADS assembly used by
-  `aorty/model/plc/PlcAds.m`.
+  `aorty/hardware/plc/PlcAds.m`.
 - A TwinCAT/XAE installation for building and deploying the PLC project.
 - Image Acquisition Toolbox for recorded tests.
 - Computer Vision Toolbox only when annotated TIFF export is required
@@ -90,10 +92,10 @@ connecting to another machine.
 
 1. Build and deploy `TwinCat/AortyPLC/aortyPLC.tsproj`.
 2. Confirm that TwinCAT generated the symbols in `main program.tmc`.
-3. Review the deployment properties in `aorty/model/Plc.m` (AMS route, ADS
-   port, and assembly path), then review
-   `aorty/.config/hwConfig/default.json` for camera, force calibration,
-   velocity, maximum-force, and relief settings.
+3. Review the deployment properties in `aorty/hardware/plc/Plc.m` (AMS route,
+   ADS port, and assembly path), then review
+   `aorty/configuration/profiles/hardware/default.json` for camera, force
+   calibration, velocity, maximum-force, and relief settings.
 4. Start MATLAB from the repository root and run:
 
    ```matlab
@@ -160,12 +162,16 @@ recording.h5
 
 Raw camera acquisition always uses the configured hardware FPS. The TIFF
 sampling period filters only post-processed output. See the
-[interface and data-contract guide](aorty/model/plc/interfaceReadme.md) for
+[interface and data-contract guide](aorty/hardware/plc/interfaceReadme.md) for
 the HDF5 schema, sample-loss handling, and fixed TIFF layout.
 
-## Offline test validation
+Keep local recording archives and experimental output outside the source
+checkout. The ignored `aorty/trash/` path remains only as a guard against
+accidentally tracking local data.
 
-`TestValidation` loads one `recording.h5` directly, calculates descriptive
+## Offline recording analysis
+
+`RecordingAnalysis` loads one `recording.h5` directly, calculates descriptive
 integrity and regulation metrics, and plots the raw X/Y force and position
 signals with phase, target, and tolerance overlays. It does not require
 `cam.bin` and does not assign pass/fail results.
@@ -174,12 +180,12 @@ signals with phase, target, and tolerance overlays. It does not require
 cd aorty
 addpath(genpath(pwd))
 
-validation = TestValidation("C:\tests\recording.h5");
-metrics = validation.analyze();
-fig = validation.plot();
+analysis = RecordingAnalysis("C:\tests\recording.h5");
+metrics = analysis.analyze();
+fig = analysis.plot();
 
 % Or choose a file and perform all three steps at once:
-[metrics, fig, validation] = TestValidation.open();
+[metrics, fig, analysis] = RecordingAnalysis.open();
 ```
 
 ## Verification sequence

@@ -8,7 +8,7 @@ end
 
 function testControllerBuildsOnlyVersionSixFields(testCase)
 root = testCase.TestData.root;
-source = fileread(fullfile(root, 'controller', 'support', ...
+source = fileread(fullfile(root, 'test_definition', ...
     'TestCommandBuilder.m'));
 verifyNotEmpty(testCase, strfind(source, ...
     'command.preCycleLoadValue = pre.load.(field)'));
@@ -27,15 +27,14 @@ end
 
 function testRemovedControlsAndNewUiElements(testCase)
 root = testCase.TestData.root;
-panelSource = fileread(fullfile(root, 'view', 'TestPanel.m'));
-tabsSource = fileread(fullfile(root, 'view', 'components', ...
+panelSource = fileread(fullfile(root, 'ui', 'TestPanel.m'));
+tabsSource = fileread(fullfile(root, 'ui', 'components', ...
     'TestDefinitionTabs.m'));
-factorySource = fileread(fullfile(root, 'view', 'components', ...
+factorySource = fileread(fullfile(root, 'ui', 'components', ...
     'TestControlFactory.m'));
-viewSource = fileread(fullfile(root, 'view', 'View.m'));
-machineSource = fileread(fullfile(root, 'view', ...
-    'components', 'MachinePanel.m'));
-dialogSource = fileread(fullfile(root, 'view', 'dialogs', ...
+viewSource = fileread(fullfile(root, 'ui', 'View.m'));
+machineSource = fileread(fullfile(root, 'ui', 'MachinePanel.m'));
+dialogSource = fileread(fullfile(root, 'ui', 'dialogs', ...
     'promptPostProcessOptions.m'));
 testUiSource = [panelSource, tabsSource, factorySource];
 
@@ -89,8 +88,10 @@ end
 function testTrackedConfigurationsUseCurrentContract(testCase)
 root = testCase.TestData.root;
 files = {
-    fullfile(root, '.config', 'appConfig', 'default.json')
-    fullfile(root, '.config', 'appConfig', 'new_test.json')
+    fullfile(root, 'configuration', 'profiles', ...
+        'application', 'default.json')
+    fullfile(root, 'configuration', 'profiles', ...
+        'application', 'new_test.json')
     fullfile(root, 'examples', 'general_test_example.json')};
 for index = 1:numel(files)
     text = fileread(files{index});
@@ -134,13 +135,13 @@ end
 
 function testCameraAcquisitionHasNoSoftwareSamplingGate(testCase)
 root = testCase.TestData.root;
-cameraSource = fileread(fullfile(root, 'model', 'Camera.m'));
-controllerSource = fileread(fullfile(root, 'controller', 'Control.m'));
-viewSource = fileread(fullfile(root, 'view', 'View.m'));
+cameraSource = fileread(fullfile(root, 'hardware', 'Camera.m'));
+controllerSource = fileread(fullfile(root, 'application', 'Control.m'));
+viewSource = fileread(fullfile(root, 'ui', 'View.m'));
 verifyEmpty(testCase, strfind(cameraSource, 'recordingPeriod'));
 verifyEmpty(testCase, strfind(cameraSource, 'lastRecordingTime'));
 verifyNotEmpty(testCase, strfind(cameraSource, ...
-    'camera.model.saveCameraFrame(frame, timeStamp)'));
+    'camera.recordingSession.saveCameraFrame(frame, timeStamp)'));
 verifyNotEmpty(testCase, strfind(viewSource, ...
     'settings.applyCameraConfig()'));
 verifyNotEmpty(testCase, strfind(viewSource, ...
@@ -160,12 +161,12 @@ end
 function testDialogsRestoreOwningWindowFocus(testCase)
 root = testCase.TestData.root;
 files = {
-    fullfile(root, 'view', 'SettingsWindow.m')
-    fullfile(root, 'view', 'TestPanel.m')
-    fullfile(root, 'view', 'View.m')
-    fullfile(root, 'view', 'components', 'TestDefinitionTabs.m')
-    fullfile(root, 'view', 'dialogs', 'promptPostProcessOptions.m')
-    fullfile(root, 'controller', 'Control.m')};
+    fullfile(root, 'ui', 'SettingsWindow.m')
+    fullfile(root, 'ui', 'TestPanel.m')
+    fullfile(root, 'ui', 'View.m')
+    fullfile(root, 'ui', 'components', 'TestDefinitionTabs.m')
+    fullfile(root, 'ui', 'dialogs', 'promptPostProcessOptions.m')
+    fullfile(root, 'application', 'Control.m')};
 
 for index = 1:numel(files)
     source = fileread(files{index});
@@ -173,7 +174,7 @@ for index = 1:numel(files)
         sprintf('Missing focus restoration in %s.', files{index}));
 end
 
-helper = fileread(fullfile(root, 'view', 'support', ...
+helper = fileread(fullfile(root, 'ui', 'support', ...
     'restoreFigureFocus.m'));
 verifyNotEmpty(testCase, strfind(helper, 'drawnow'));
 verifyNotEmpty(testCase, strfind(helper, 'figure(parentFig)'));
@@ -181,6 +182,6 @@ end
 
 function testHardwareSettingsFieldsAreScrollable(testCase)
 source = fileread(fullfile(testCase.TestData.root, ...
-    'view', 'SettingsWindow.m'));
+    'ui', 'SettingsWindow.m'));
 verifyNotEmpty(testCase, strfind(source, "grid.Scrollable = 'on';"));
 end

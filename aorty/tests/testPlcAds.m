@@ -15,7 +15,7 @@ verifyTrue(testCase, plc.connected);
 
 client = FakeAdsClient();
 client.InterfaceVersion = uint32(99);
-other = Plc(Model());
+other = Plc(RecordingSession());
 verifyError(testCase, @() other.connectClientForTesting(client), ...
     'PLC:InterfaceVersion');
 verifyFalse(testCase, other.connected);
@@ -76,7 +76,7 @@ end
 function testMalformedStatusPacketIsRejected(testCase)
 client = FakeAdsClient();
 client.StatusPacketLength = 855;
-plc = Plc(Model());
+plc = Plc(RecordingSession());
 verifyError(testCase, @() plc.connectClientForTesting(client), ...
     'PLC:InvalidStatusPacket');
 end
@@ -307,8 +307,8 @@ end
 
 function testBothAxisSettingsValidateBeforeWriting(testCase)
 [plc, client] = connectedPlc();
-model = Model();
-camera = Camera(model);
+recordingSession = RecordingSession();
+camera = Camera(recordingSession);
 settings = Settings(plc, camera);
 valid = struct('fTenzoCons', 1, 'fTenzoOffset', 0, ...
     'fKp', 0.1, 'fKi', 0.01, 'fIntegralLimit', 1, ...
@@ -327,7 +327,7 @@ end
 
 function testSelectedHardwareProfileWritesBothAxes(testCase)
 [plc, client] = connectedPlc();
-settings = Settings(plc, Camera(plc.model));
+settings = Settings(plc, Camera(plc.recordingSession));
 settings.loadHwConfig('default');
 client.clearWrites();
 
@@ -408,7 +408,7 @@ end
 function testSavedPostRequiresSavedCoordinate(testCase)
 client = FakeAdsClient();
 client.SavedPositionValid = false;
-plc = Plc(Model());
+plc = Plc(RecordingSession());
 plc.connectClientForTesting(client);
 value = command(1, 0);
 value.postTestMode = 1;
@@ -429,7 +429,7 @@ end
 
 function testOperationCompletionAndPeerHalt(testCase)
 [plc, client] = connectedPlc();
-controller = Control(Model(), plc);
+controller = Control(RecordingSession(), plc);
 controller.activeTestAxes = {'X', 'Y'};
 controller.operationStartCounters = ...
     struct('X', uint32(10), 'Y', uint32(20));
@@ -470,7 +470,7 @@ end
 
 function [plc, client] = connectedPlc()
 client = FakeAdsClient();
-plc = Plc(Model());
+plc = Plc(RecordingSession());
 plc.connectClientForTesting(client);
 end
 

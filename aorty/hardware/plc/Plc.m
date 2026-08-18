@@ -4,7 +4,7 @@ classdef Plc < handle
     % symbol handle and low-level ADS operation.
 
     properties
-        model Model
+        recordingSession RecordingSession
 
         % ADS connection settings and client
         amsNetID = '5.85.113.174.1.1'
@@ -29,8 +29,8 @@ classdef Plc < handle
     end
 
     methods
-        function plc = Plc(model)
-            plc.model = model;
+        function plc = Plc(recordingSession)
+            plc.recordingSession = recordingSession;
         end
 
         function value = get.droppedSamples(plc)

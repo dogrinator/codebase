@@ -73,7 +73,7 @@ classdef View < handle
 
         function connectCameraCallback(app, src)
             % Connection changes are locked while acquisition may own the camera.
-            if app.operationActive || app.controller.testRunning || app.controller.model.isRecording
+            if app.operationActive || app.controller.testRunning || app.controller.recordingSession.isRecording
                 if app.controller.camera.connected
                     src.Value = 'ON';
                 else

@@ -9,8 +9,8 @@ testCase.TestData.root = root;
 end
 
 function testPresetCommandBuilderMatchesCurrentContract(testCase)
-model = Model();
-settings = Settings(Plc(model), Camera(model));
+recordingSession = RecordingSession();
+settings = Settings(Plc(recordingSession), Camera(recordingSession));
 settings.loadHwConfig('default');
 settings.loadAppConfig('default');
 settings.hwConfig.plc.xAxis.fMaxForce = 10;
@@ -80,8 +80,8 @@ verifyEmpty(testCase, buffer.timestampX);
 end
 
 function testForceReferenceBuilderPreTest(testCase)
-model = Model();
-settings = Settings(Plc(model), Camera(model));
+recordingSession = RecordingSession();
+settings = Settings(Plc(recordingSession), Camera(recordingSession));
 settings.loadHwConfig('default');
 settings.loadAppConfig('default');
 config = settings.appConfig;
@@ -116,8 +116,8 @@ verifyEqual(testCase, numel(preview.Y), 2);
 end
 
 function testForceReferenceBuilderMixedModesAndGrouping(testCase)
-model = Model();
-settings = Settings(Plc(model), Camera(model));
+recordingSession = RecordingSession();
+settings = Settings(Plc(recordingSession), Camera(recordingSession));
 settings.loadHwConfig('default');
 settings.loadAppConfig('default');
 config = settings.appConfig;
@@ -154,11 +154,12 @@ function testStrictHardwareConfigDoesNotInsertDefaults(testCase)
 folder = tempname;
 mkdir(folder);
 cleanup = onCleanup(@() rmdir(folder, 's'));
-model = Model();
-settings = Settings(Plc(model), Camera(model));
+recordingSession = RecordingSession();
+settings = Settings(Plc(recordingSession), Camera(recordingSession));
 settings.hwPath = folder;
 config = jsondecode(fileread(fullfile( ...
-    testCase.TestData.root, '.config', 'hwConfig', 'default.json')));
+    testCase.TestData.root, 'configuration', 'profiles', ...
+    'hardware', 'default.json')));
 config.plc.xAxis = rmfield(config.plc.xAxis, ...
     'fForceReliefVelocity');
 writeJson(fullfile(folder, 'invalid.json'), config);

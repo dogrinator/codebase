@@ -55,30 +55,30 @@ function testModelRecordsEveryFrameWithLatestSystemStatus(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
 
-model = Model();
-model.selectedFolder = folder;
-model.cameraFrameWidth = 2;
-model.cameraFrameHeight = 2;
-model.isRecording = true;
-model.openFilesRec();
+recordingSession = RecordingSession();
+recordingSession.selectedFolder = folder;
+recordingSession.cameraFrameWidth = 2;
+recordingSession.cameraFrameHeight = 2;
+recordingSession.isRecording = true;
+recordingSession.openFilesRec();
 
 statuses = struct( ...
     'X', struct('systemStatus', int16(10)), ...
     'Y', struct('systemStatus', int16(30)));
-model.updateSystemStatus(statuses, {'X'});
-model.saveCameraFrame(uint8([1, 2; 3, 4]), ...
+recordingSession.updateSystemStatus(statuses, {'X'});
+recordingSession.saveCameraFrame(uint8([1, 2; 3, 4]), ...
     datetime(2026, 7, 28, 12, 0, 0));
-model.updateSystemStatus(statuses, {'Y'});
-model.saveCameraFrame(uint8([5, 6; 7, 8]), ...
+recordingSession.updateSystemStatus(statuses, {'Y'});
+recordingSession.saveCameraFrame(uint8([5, 6; 7, 8]), ...
     datetime(2026, 7, 28, 12, 0, 0) + milliseconds(50));
-model.updateSystemStatus(statuses, {'X', 'Y'});
-model.saveCameraFrame(uint8([9, 10; 11, 12]), ...
+recordingSession.updateSystemStatus(statuses, {'X', 'Y'});
+recordingSession.saveCameraFrame(uint8([9, 10; 11, 12]), ...
     datetime(2026, 7, 28, 12, 0, 0) + milliseconds(100));
 sampleTime = datetime('now');
-model.saveAxisSamples('X', sampleTime, 1, 2, 3);
-model.saveAxisSamples('Y', sampleTime, 4, 5, 6);
-model.isRecording = false;
-model.finalizeRecording('completed', 'Completed');
+recordingSession.saveAxisSamples('X', sampleTime, 1, 2, 3);
+recordingSession.saveAxisSamples('Y', sampleTime, 4, 5, 6);
+recordingSession.isRecording = false;
+recordingSession.finalizeRecording('completed', 'Completed');
 
 rows = PostProcessor.readRecording(folder).cameraRows;
 verifyEqual(testCase, rows.Index, [1; 2; 3]);
@@ -198,8 +198,11 @@ expectedOverlay = insertText(rawFrame, [20 20], ...
 verifyEqual(testCase, imread(firstFile), rgb2gray(expectedOverlay));
 
 secondHeader = readLegacyDescription(secondFile);
-verifyNotEmpty(testCase, regexp(secondHeader, ...
-    '\|Delta:00:00:00\.050\|Index:00002\|', 'once'));
+secondDelta = cameraRows.Timestamp(2) - baseTime;
+secondDelta.Format = 'hh:mm:ss.SSS';
+expectedSecondMarker = sprintf( ...
+    '|Delta:%s|Index:00002|', char(secondDelta));
+verifyNotEmpty(testCase, strfind(secondHeader, expectedSecondMarker));
 end
 
 function testLegacyTiffRejectsInvalidDimensionsAndDescription(testCase)
@@ -279,15 +282,15 @@ end
 function testNoCameraRecordingIsReportedAsSkipped(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
-model = Model();
-model.selectedFolder = folder;
-model.openFilesRec();
-model.isRecording = true;
+recordingSession = RecordingSession();
+recordingSession.selectedFolder = folder;
+recordingSession.openFilesRec();
+recordingSession.isRecording = true;
 sampleTime = datetime('now');
-model.saveAxisSamples('X', sampleTime, 1, 2, 3);
-model.saveAxisSamples('Y', sampleTime, 4, 5, 6);
-model.isRecording = false;
-model.finalizeRecording('completed', 'Completed');
+recordingSession.saveAxisSamples('X', sampleTime, 1, 2, 3);
+recordingSession.saveAxisSamples('Y', sampleTime, 4, 5, 6);
+recordingSession.isRecording = false;
+recordingSession.finalizeRecording('completed', 'Completed');
 output = fullfile(folder, 'processed_frames');
 lastwarn('');
 result = PostProcessor.processData(folder, struct( ...
@@ -400,20 +403,20 @@ end
 
 function folder = createSyntheticRecording()
 folder = makeTemporaryFolder();
-model = Model();
-model.selectedFolder = folder;
-model.cameraFrameWidth = 64;
-model.cameraFrameHeight = 64;
-model.openFilesRec();
-model.isRecording = true;
+recordingSession = RecordingSession();
+recordingSession.selectedFolder = folder;
+recordingSession.cameraFrameWidth = 64;
+recordingSession.cameraFrameHeight = 64;
+recordingSession.openFilesRec();
+recordingSession.isRecording = true;
 baseTime = datetime('now');
 sampleOffsets = 0:10:300;
-model.saveAxisSamples('X', ...
+recordingSession.saveAxisSamples('X', ...
     baseTime + milliseconds(sampleOffsets), ...
     repmat(10, size(sampleOffsets)), ...
     repmat(11, size(sampleOffsets)), ...
     repmat(1.25, size(sampleOffsets)));
-model.saveAxisSamples('Y', ...
+recordingSession.saveAxisSamples('Y', ...
     baseTime + milliseconds(sampleOffsets), ...
     repmat(20, size(sampleOffsets)), ...
     repmat(21, size(sampleOffsets)), ...
@@ -421,36 +424,36 @@ model.saveAxisSamples('Y', ...
 statuses = [10, 11, 20, 21, 30, 10];
 for index = 1:6
     frame = reshape(uint8(mod((1:4096) + index - 1, 256)), 64, 64);
-    model.currentSystemStatus = int16(statuses(index));
-    model.saveCameraFrame(frame, ...
+    recordingSession.currentSystemStatus = int16(statuses(index));
+    recordingSession.saveCameraFrame(frame, ...
         baseTime + milliseconds((index - 1) * 50));
 end
-model.isRecording = false;
-model.finalizeRecording('completed', 'Completed');
+recordingSession.isRecording = false;
+recordingSession.finalizeRecording('completed', 'Completed');
 end
 
 function folder = createTimelineRecording(cameraOffsets, statuses, xOffsets, yOffsets)
 folder = makeTemporaryFolder();
-model = Model();
-model.selectedFolder = folder;
-model.cameraFrameWidth = 64;
-model.cameraFrameHeight = 64;
-model.openFilesRec();
-model.isRecording = true;
+recordingSession = RecordingSession();
+recordingSession.selectedFolder = folder;
+recordingSession.cameraFrameWidth = 64;
+recordingSession.cameraFrameHeight = 64;
+recordingSession.openFilesRec();
+recordingSession.isRecording = true;
 baseTime = datetime('now');
 
-model.saveAxisSamples('X', baseTime + milliseconds(xOffsets), ...
+recordingSession.saveAxisSamples('X', baseTime + milliseconds(xOffsets), ...
     1000 + xOffsets, 2000 + xOffsets, 3000 + xOffsets);
-model.saveAxisSamples('Y', baseTime + milliseconds(yOffsets), ...
+recordingSession.saveAxisSamples('Y', baseTime + milliseconds(yOffsets), ...
     4000 + yOffsets, 5000 + yOffsets, 6000 + yOffsets);
 for index = 1:numel(cameraOffsets)
     frame = repmat(uint8(index), 64, 64);
-    model.currentSystemStatus = int16(statuses(index));
-    model.saveCameraFrame(frame, ...
+    recordingSession.currentSystemStatus = int16(statuses(index));
+    recordingSession.saveCameraFrame(frame, ...
         baseTime + milliseconds(cameraOffsets(index)));
 end
-model.isRecording = false;
-model.finalizeRecording('completed', 'Completed');
+recordingSession.isRecording = false;
+recordingSession.finalizeRecording('completed', 'Completed');
 end
 
 function description = readLegacyDescription(filename)

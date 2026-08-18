@@ -50,7 +50,7 @@ function testPowerOffWaitsForFreshPersistentCheckpoint(testCase)
 client = FakeAdsClient();
 client.AutoCheckpointOnPowerOff = true;
 client.setStatus('X', struct('homed', true));
-plc = Plc(Model());
+plc = Plc(RecordingSession());
 plc.connectClientForTesting(client);
 cleanup = onCleanup(@() plc.disconnectPLC());
 
@@ -63,7 +63,7 @@ end
 function testFailedFacadeInitializationStaysDisconnected(testCase)
 client = FakeAdsClient();
 client.FailCreateAt = 5;
-plc = Plc(Model());
+plc = Plc(RecordingSession());
 verifyError(testCase, @() plc.connectClientForTesting(client), ...
     'FakeAds:CreateHandle');
 verifyFalse(testCase, plc.connected);

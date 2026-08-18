@@ -1,4 +1,4 @@
-function tests = testTestValidation
+function tests = testRecordingAnalysis
 tests = functiontests(localfunctions);
 end
 
@@ -20,7 +20,7 @@ function testLoadsHdf5WithoutCameraBinary(testCase)
 [folder, filename] = createRecording();
 cleanup = onCleanup(@() removeFolder(folder));
 
-validator = TestValidation(filename);
+validator = RecordingAnalysis(filename);
 
 verifyEqual(testCase, validator.FilePath, fileattribName(filename));
 verifyFalse(testCase, isfile(fullfile(folder, 'cam.bin')));
@@ -37,7 +37,7 @@ end
 function testAnalysisReturnsKnownMetrics(testCase)
 [folder, filename] = createRecording();
 cleanup = onCleanup(@() removeFolder(folder));
-validator = TestValidation(filename);
+validator = RecordingAnalysis(filename);
 
 metrics = validator.analyze();
 
@@ -73,7 +73,7 @@ end
 function testPlotContainsRawTracesPhasesAndTargets(testCase)
 [folder, filename] = createRecording();
 cleanup = onCleanup(@() removeFolder(folder));
-validator = TestValidation(filename);
+validator = RecordingAnalysis(filename);
 
 fig = validator.plot();
 figureCleanup = onCleanup(@() close(fig));
@@ -95,7 +95,7 @@ function testSingleAxisRecordingPlotsOnlyActiveAxis(testCase)
 [folder, filename] = createRecording();
 cleanup = onCleanup(@() removeFolder(folder));
 h5writeatt(filename, '/settings/test', 'active_axes', 'X');
-validator = TestValidation(filename);
+validator = RecordingAnalysis(filename);
 
 fig = validator.plot();
 figureCleanup = onCleanup(@() close(fig));
@@ -111,7 +111,7 @@ end
 function testEmptyCameraRowsProduceMetricsWarning(testCase)
 [folder, filename] = createRecording(false);
 cleanup = onCleanup(@() removeFolder(folder));
-validator = TestValidation(filename);
+validator = RecordingAnalysis(filename);
 
 metrics = validator.analyze();
 fig = validator.plot();
@@ -132,7 +132,7 @@ values = h5read(filename, '/plc/X/samples');
 values(1, 4) = values(1, 3) - 0.01;
 h5write(filename, '/plc/X/samples', values);
 
-validator = TestValidation(filename);
+validator = RecordingAnalysis(filename);
 
 verifyGreaterThanOrEqual(testCase, ...
     diff(validator.Recording.X.ElapsedSeconds), 0);
@@ -150,7 +150,7 @@ h5writeatt(filename, '/metadata', 'status', 'aborted');
 h5writeatt(filename, '/metadata', 'x_sample_count', uint64(999));
 h5writeatt(filename, '/metadata', 'sample_loss_detected', uint8(1));
 h5writeatt(filename, '/metadata', 'x_dropped_sample_count', uint64(3));
-validator = TestValidation(filename);
+validator = RecordingAnalysis(filename);
 
 metrics = validator.analyze();
 
@@ -167,7 +167,7 @@ function testVariableCycleTargetsAreNotGuessed(testCase)
 [folder, filename] = createRecording();
 cleanup = onCleanup(@() removeFolder(folder));
 h5writeatt(filename, '/settings/test/X', 'loadValues', [1, 2]);
-validator = TestValidation(filename);
+validator = RecordingAnalysis(filename);
 
 metrics = validator.analyze();
 xLoad = metrics.Targets( ...
@@ -188,10 +188,10 @@ function testConvenienceOpenReturnsAllOutputs(testCase)
 [folder, filename] = createRecording();
 cleanup = onCleanup(@() removeFolder(folder));
 
-[metrics, fig, validator] = TestValidation.open(filename);
+[metrics, fig, validator] = RecordingAnalysis.open(filename);
 figureCleanup = onCleanup(@() close(fig));
 
-verifyClass(testCase, validator, 'TestValidation');
+verifyClass(testCase, validator, 'RecordingAnalysis');
 verifyClass(testCase, metrics.Integrity, 'table');
 verifyTrue(testCase, isgraphics(fig, 'figure'));
 clear figureCleanup cleanup;
@@ -201,8 +201,8 @@ function testInvalidSchemaMissingDataAndNonfiniteSamples(testCase)
 [folder1, filename1] = createRecording();
 cleanup1 = onCleanup(@() removeFolder(folder1));
 h5write(filename1, '/metadata/schema_version', uint32(2));
-verifyError(testCase, @() TestValidation(filename1), ...
-    'TestValidation:SchemaVersion');
+verifyError(testCase, @() RecordingAnalysis(filename1), ...
+    'RecordingAnalysis:SchemaVersion');
 
 folder2 = tempname;
 mkdir(folder2);
@@ -211,16 +211,16 @@ filename2 = fullfile(folder2, 'recording.h5');
 h5create(filename2, '/metadata/schema_version', [1, 1], ...
     'Datatype', 'uint32');
 h5write(filename2, '/metadata/schema_version', uint32(1));
-verifyError(testCase, @() TestValidation(filename2), ...
-    'TestValidation:InvalidRecording');
+verifyError(testCase, @() RecordingAnalysis(filename2), ...
+    'RecordingAnalysis:InvalidRecording');
 
 [folder3, filename3] = createRecording();
 cleanup3 = onCleanup(@() removeFolder(folder3));
 values = h5read(filename3, '/plc/Y/samples');
 values(2, 5) = NaN;
 h5write(filename3, '/plc/Y/samples', values);
-verifyError(testCase, @() TestValidation(filename3), ...
-    'TestValidation:InvalidRecording');
+verifyError(testCase, @() RecordingAnalysis(filename3), ...
+    'RecordingAnalysis:InvalidRecording');
 clear cleanup3 cleanup2 cleanup1;
 end
 

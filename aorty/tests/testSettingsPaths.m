@@ -15,12 +15,14 @@ end
 
 function testPathsDoNotDependOnCurrentFolder(testCase)
 cd(tempdir);
-model = Model();
-settings = Settings(Plc(model), Camera(model));
+recordingSession = RecordingSession();
+settings = Settings(Plc(recordingSession), Camera(recordingSession));
 verifyEqual(testCase, settings.appPath, ...
-    fullfile(testCase.TestData.root, '.config', 'appConfig'));
+    fullfile(testCase.TestData.root, 'configuration', ...
+    'profiles', 'application'));
 verifyEqual(testCase, settings.hwPath, ...
-    fullfile(testCase.TestData.root, '.config', 'hwConfig'));
+    fullfile(testCase.TestData.root, 'configuration', ...
+    'profiles', 'hardware'));
 verifyTrue(testCase, any(strcmp(settings.listAppConfigs(), 'default')));
 settings.loadHwConfig('default');
 verifyEqual(testCase, settings.activeHwConfigName, 'default');
@@ -36,13 +38,14 @@ function testLegacyApplicationPresetMigration(testCase)
 folder = tempname;
 mkdir(folder);
 cleanup = onCleanup(@() rmdir(folder, 's'));
-model = Model();
-settings = Settings(Plc(model), Camera(model));
+recordingSession = RecordingSession();
+settings = Settings(Plc(recordingSession), Camera(recordingSession));
 settings.loadHwConfig('default');
 settings.appPath = folder;
 
 current = jsondecode(fileread(fullfile( ...
-    testCase.TestData.root, '.config', 'appConfig', 'default.json')));
+    testCase.TestData.root, 'configuration', 'profiles', ...
+    'application', 'default.json')));
 legacy = rmfield(current, 'schemaVersion');
 legacyTolerance = current.pre.forceTolerance;
 for axis = {'x', 'y'}
@@ -84,11 +87,12 @@ function testOptionalCameraGainAndSafeConfigNames(testCase)
 folder = tempname;
 mkdir(folder);
 cleanup = onCleanup(@() rmdir(folder, 's'));
-model = Model();
-settings = Settings(Plc(model), Camera(model));
+recordingSession = RecordingSession();
+settings = Settings(Plc(recordingSession), Camera(recordingSession));
 settings.hwPath = folder;
 config = jsondecode(fileread(fullfile( ...
-    testCase.TestData.root, '.config', 'hwConfig', 'default.json')));
+    testCase.TestData.root, 'configuration', 'profiles', ...
+    'hardware', 'default.json')));
 config.camera = rmfield(config.camera, 'gainRaw');
 writeJson(fullfile(folder, 'without_gain.json'), config);
 settings.loadHwConfig('without_gain');
@@ -106,10 +110,10 @@ clear cleanup;
 end
 
 function testSelectedCameraProfileIsApplied(testCase)
-model = Model();
-camera = Camera(model);
+recordingSession = RecordingSession();
+camera = Camera(recordingSession);
 camera.cameraSrc = FakeCameraSource();
-settings = Settings(Plc(model), camera);
+settings = Settings(Plc(recordingSession), camera);
 settings.loadHwConfig('default');
 settings.applyCameraConfig();
 
