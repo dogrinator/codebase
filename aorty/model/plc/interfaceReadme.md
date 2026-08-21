@@ -391,14 +391,15 @@ unique `processed_frames_manual_<timestamp>` directory.
 Phase eligibility is evaluated before interval sampling:
 
 - Main only: statuses `20` and `21`.
-- Include pre/post: statuses `10`, `11`, `20`, `21`, and `30`.
-- Idle status `0` is never exported, but its frames remain in the raw recording.
+- Include pre-test: statuses `10`, `11`, `20`, and `21`.
+- Idle status `0` and post-test status `30` are never exported, but their
+  frames remain in the raw recording.
 - Frames outside the common X/Y PLC timestamp range are skipped with a warning;
   PLC edge values are never extrapolated onto those frames.
 - Sampling restarts at a status transition or after an ineligible gap.
 - Sampling period `0` exports every eligible frame.
 
-Every generated file is named `processed_frame_%04d.tiff` and preserves this
+Every generated file is named `processed_frame_%04d.tif` and preserves this
 external integration contract:
 
 | Property | Required value |

@@ -20,13 +20,13 @@ verifyEqual(testCase, mainRows, [3; 7]);
 
 completeRows = PostProcessor.selectFrameRows( ...
     cameraRows, 0.1, 'complete-test');
-verifyEqual(testCase, completeRows, [1; 3; 5; 7]);
+verifyEqual(testCase, completeRows, [1; 3; 7]);
 
 allMainRows = PostProcessor.selectFrameRows(cameraRows, 0, 'main-test');
 verifyEqual(testCase, allMainRows, [3; 4; 7; 8]);
 end
 
-function testIdleFramesAreExcludedFromAllRecordedScope(testCase)
+function testIdleAndPostTestFramesAreExcludedFromAllRecordedScope(testCase)
 base = datetime(2026, 7, 28, 12, 0, 0);
 cameraRows = table((1:5)', base + milliseconds((0:4)' * 10), ...
     [0; 10; 0; 20; 30], ...
@@ -35,7 +35,7 @@ cameraRows = table((1:5)', base + milliseconds((0:4)' * 10), ...
 rows = PostProcessor.selectFrameRows( ...
     cameraRows, 0, 'all-recorded');
 
-verifyEqual(testCase, rows, [2; 4; 5]);
+verifyEqual(testCase, rows, [2; 4]);
 end
 
 function testCoverageMaskIsAppliedBeforeIntervalSampling(testCase)
@@ -114,9 +114,9 @@ result = PostProcessor.processData(folder, struct( ...
 
 verifyEqual(testCase, result.outputFolder, output);
 verifyEqual(testCase, result.exportedFrameCount, 2);
-files = dir(fullfile(output, 'processed_frame_*.tiff'));
+files = dir(fullfile(output, 'processed_frame_*.tif'));
 verifyEqual(testCase, {files.name}', ...
-    {'processed_frame_0001.tiff'; 'processed_frame_0002.tiff'});
+    {'processed_frame_0001.tif'; 'processed_frame_0002.tif'});
 end
 
 function testTiffUsesLegacyBaslerHeader(testCase)
@@ -127,10 +127,10 @@ result = PostProcessor.processData(folder, struct( ...
     'samplingPeriod', 0, ...
     'phaseScope', 'complete-test', ...
     'outputFolder', output));
-verifyEqual(testCase, result.exportedFrameCount, 6);
+verifyEqual(testCase, result.exportedFrameCount, 5);
 
-firstFile = fullfile(output, 'processed_frame_0001.tiff');
-secondFile = fullfile(output, 'processed_frame_0002.tiff');
+firstFile = fullfile(output, 'processed_frame_0001.tif');
+secondFile = fullfile(output, 'processed_frame_0002.tif');
 verifyTrue(testCase, isfile(firstFile));
 verifyTrue(testCase, isfile(secondFile));
 
@@ -172,7 +172,7 @@ verifyEqual(testCase, types(tags == 273), uint16(4));
 verifyEqual(testCase, counts(tags == 273), uint32(1));
 verifyEqual(testCase, values(tags == 270), uint32(256));
 verifyEqual(testCase, values(tags == 273), uint32(1024));
-verifyEqual(testCase, values(tags == 279), uint32(64 * 64));
+verifyEqual(testCase, values(tags == 279), uint32(1280 * 1024));
 verifyEqual(testCase, fread(fid, 1, '*uint32'), uint32(0));
 fseek(fid, 256, 'bof');
 headerDescription = char(fread(fid, 768, '*uint8').');
@@ -183,16 +183,18 @@ verifyEqual(testCase, headerDescription(1:terminator - 1), ...
 clear fileCleanup
 
 fileInfo = dir(firstFile);
-verifyEqual(testCase, fileInfo.bytes, 1024 + 64 * 64);
+verifyEqual(testCase, fileInfo.bytes, 1024 + 1280 * 1024);
 metadata = imfinfo(firstFile);
-verifyEqual(testCase, metadata.Width, 64);
-verifyEqual(testCase, metadata.Height, 64);
+verifyEqual(testCase, metadata.Width, 1280);
+verifyEqual(testCase, metadata.Height, 1024);
 verifyEqual(testCase, metadata.BitDepth, 8);
 verifyEqual(testCase, metadata.ColorType, 'grayscale');
 verifyEqual(testCase, metadata.Compression, 'Uncompressed');
 
 rawFrame = reshape(uint8(mod(1:4096, 256)), 64, 64);
-expectedOverlay = insertText(rawFrame, [20 20], ...
+expectedFrame = zeros(1024, 1280, 'uint8');
+expectedFrame(481:544, 609:672) = rawFrame;
+expectedOverlay = insertText(expectedFrame, [20 20], ...
     'X: 10.00000 | Y: 20.00000', ...
     'FontSize', 18, 'TextColor', 'white', 'BoxOpacity', 0.5);
 verifyEqual(testCase, imread(firstFile), rgb2gray(expectedOverlay));
@@ -202,10 +204,27 @@ verifyNotEmpty(testCase, regexp(secondHeader, ...
     '\|Delta:00:00:00\.050\|Index:00002\|', 'once'));
 end
 
+function testLegacyResolutionPadsAndCenterCrops(testCase)
+smallFrame = reshape(uint8(1:15), 3, 5);
+padded = PostProcessor.getLegacyRes(smallFrame);
+
+verifySize(testCase, padded, [1024, 1280]);
+verifyClass(testCase, padded, 'uint8');
+verifyEqual(testCase, padded(511:513, 638:642), smallFrame);
+verifyEqual(testCase, nnz(padded), nnz(smallFrame));
+
+largeFrame = reshape( ...
+    uint8(mod(0:(1026 * 1282 - 1), 251)), 1026, 1282);
+cropped = PostProcessor.getLegacyRes(largeFrame);
+
+verifySize(testCase, cropped, [1024, 1280]);
+verifyEqual(testCase, cropped, largeFrame(2:1025, 2:1281));
+end
+
 function testLegacyTiffRejectsInvalidDimensionsAndDescription(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
-filename = fullfile(folder, 'invalid.tiff');
+filename = fullfile(folder, 'invalid.tif');
 
 verifyError(testCase, @() PostProcessor.writeLegacyTiff( ...
     filename, zeros(0, 1, 'uint8'), 'Description'), ...
@@ -269,7 +288,7 @@ folder = createSyntheticRecording();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
 output = fullfile(folder, 'processed_frames');
 mkdir(output);
-imwrite(uint8(0), fullfile(output, 'processed_frame_0001.tiff'));
+imwrite(uint8(0), fullfile(output, 'processed_frame_0001.tif'));
 
 verifyError(testCase, @() PostProcessor.processData(folder, struct( ...
     'samplingPeriod', 0, 'phaseScope', 'complete-test', ...
@@ -316,10 +335,10 @@ result = PostProcessor.processData(folder, struct( ...
 verifyEqual(testCase, warningId, ...
     'PostProcessor:SkippedOutOfRangeFrames');
 verifyEqual(testCase, result.exportedFrameCount, 3);
-files = dir(fullfile(output, 'processed_frame_*.tiff'));
+files = dir(fullfile(output, 'processed_frame_*.tif'));
 verifyNumElements(testCase, files, 3);
 description = readLegacyDescription(fullfile( ...
-    output, 'processed_frame_0001.tiff'));
+    output, 'processed_frame_0001.tif'));
 verifySubstring(testCase, description, 'Index:00006');
 verifySubstring(testCase, description, 'TenzoX:1500.00 [N]');
 clear cleanup;

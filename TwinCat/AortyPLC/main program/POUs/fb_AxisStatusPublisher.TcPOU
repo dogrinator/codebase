@@ -34,7 +34,7 @@ END_VAR
 ]]></Declaration>
     <Implementation>
       <ST><![CDATA[
-stSystemStatus.fActPosition := fActPosition;
+stSystemStatus.fActPosition := 50.0 - fActPosition;
 stSystemStatus.bPowered := bPowerStatus;
 stSystemStatus.bHoming := bHoming;
 stSystemStatus.bHomed := bHomed;

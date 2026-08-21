@@ -248,7 +248,7 @@ valid saved position.
 | --- | --- | --- |
 | `postProcessEnabled` | Boolean | Enables automatic TIFF post-processing after recording |
 | `samplingPeriod` | finite number ≥ 0 | Minimum interval between exported TIFF frames; `0` exports every eligible frame |
-| `includePrePost` | Boolean | Includes pre-test and post-test statuses as well as the main test |
+| `includePrePost` | Boolean | Includes pre-test statuses as well as the main test; post-test frames are never exported |
 
 `camera.postProcessEnabled` controls only automatic TIFF creation. Every
 recorded test requires a connected camera and captures raw frames at the

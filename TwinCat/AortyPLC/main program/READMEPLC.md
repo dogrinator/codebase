@@ -264,9 +264,9 @@ inactive peer.
 | `bError`, `nErrorCode`, `nAxisErrorID` | PLC and native NC errors |
 | `bPowered`, `bStopped`, `bHoming`, `bHomed` | Machine state |
 | `bSavedPositionValid` | Saved coordinate is available |
-| `fActPosition` | Absolute NC position |
+| `fActPosition` | Display position (`50 mm - absolute NC position`) |
 | `nBufferHead`, `nSampleCounter` | Circular-buffer position and sequence |
-| `fTenzoBuffer[1..50]`, `fPosBuffer[1..50]` | Force and absolute-position samples |
+| `fTenzoBuffer[1..50]`, `fPosBuffer[1..50]` | Force and display-position samples |
 | `fTenzoTarOffset`, `bTarWorking` | Tare state |
 
 `bHomed` must be true before the PLC accepts tare or motion commands. Completion

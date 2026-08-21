@@ -3,14 +3,14 @@
   <DUT Name="ST_SystemStatus" Id="{1f1ade43-23d7-4c7e-a80f-ab809b514cde}">
     <Declaration><![CDATA[TYPE ST_SystemStatus :
 	STRUCT
-		fPosBuffer   : ARRAY[1..50] OF LREAL; // Circular absolute-position samples
+		fPosBuffer   : ARRAY[1..50] OF LREAL; // Circular display-position samples
 		fTenzoBuffer : ARRAY[1..50] OF LREAL; // Circular force samples
 		nBufferHead  : INT := 50;             // Index of latest completely written sample
 		nSampleCounter    : UDINT := 0;       // Wrapping sample counter for drop detection
 		nOperationCounter : UDINT := 0;       // Incremented after each completed motion command
 		nInterfaceVersion : UDINT := 6;       // MATLAB/PLC ADS contract version
 		fTenzoTarOffset   : LREAL := 0.0;     // Calculated tar offset
-		fActPosition : LREAL := 0.0;          // Absolute NC axis position
+		fActPosition : LREAL := 0.0;          // Display position (50 mm - NC position)
 		
 		bWorking     : BOOL;                   // PLC occupied; do not send a new test
 		bTarWorking  : BOOL;                   // PLC is calculating tare

@@ -103,7 +103,7 @@ classdef PostProcessor
             % Create the output folder before opening any frame files.
             processedFramesFolder = options.outputFolder;
             existingFrames = dir(fullfile( ...
-                processedFramesFolder, 'processed_frame_*.tiff'));
+                processedFramesFolder, 'processed_frame_*.tif'));
             if ~isempty(existingFrames)
                 error('PostProcessor:OutputNotEmpty', ...
                     ['The TIFF output already contains generated frames. ' ...
@@ -129,6 +129,7 @@ classdef PostProcessor
 
                 % Restore the recorded image dimensions.
                 imgFrame = reshape(rawFrameData, frameHeight, frameWidth);
+                imgLegacyFrame = PostProcessor.getLegacyRes(imgFrame);
 
                 % Use the recorded timestamp for PLC sample alignment.
                 cameraTime = camTimestamps.Timestamp(i);
@@ -156,7 +157,7 @@ classdef PostProcessor
                     matchedX, matchedUntaredX, matchedY, matchedUntaredY, ...
                     matchedPositionX, matchedPositionY);
 
-                annotatedFrame = insertText(imgFrame, [20 20], txtOverlay, ...
+                annotatedFrame = insertText(imgLegacyFrame, [20 20], txtOverlay, ...
                     'FontSize', 18, ...
                     'TextColor', 'white', ...
                     'BoxOpacity', 0.5);
@@ -164,7 +165,7 @@ classdef PostProcessor
                 % Preserve the external TIFF layout expected by consumers.
                 outputFileName = fullfile(processedFramesFolder, ...
                     ['processed_frame_', num2str(outputIndex, '%04d'), ...
-                    '.tiff']);
+                    '.tif']);
                 PostProcessor.writeLegacyTiff( ...
                     outputFileName, annotatedFrame, newTxtDesc);
 
@@ -404,9 +405,9 @@ classdef PostProcessor
                     eligible = ismember(statuses, [20, 21]);
                 case 'complete-test'
                     eligible = ismember( ...
-                        statuses, [10, 11, 20, 21, 30]);
+                        statuses, [10, 11, 20, 21]);
                 otherwise
-                    eligible = statuses ~= 0;
+                    eligible = statuses ~= 0 & statuses ~= 30;
             end
             eligible = logical(eligible(:));
         end
@@ -456,6 +457,34 @@ classdef PostProcessor
         end
 
         %% Compatible TIFF output
+        function newFrame = getLegacyRes(originalFrame)
+            % Center-crop or pad Mono8 data to the legacy frame size.
+            targetHeight = 1024;
+            targetWidth = 1280;
+
+            [sourceHeight, sourceWidth] = size(originalFrame);
+
+            copyHeight = min(sourceHeight, targetHeight);
+            copyWidth = min(sourceWidth, targetWidth);
+
+            sourceStartRow = 1 + floor((sourceHeight - copyHeight) / 2);
+            sourceStartColumn = 1 + floor((sourceWidth - copyWidth) / 2);
+
+            targetStartRow = 1 + floor((targetHeight - copyHeight) / 2);
+            targetStartColumn = 1 + floor((targetWidth - copyWidth) / 2);
+
+            sourceRows = sourceStartRow:sourceStartRow + copyHeight - 1;
+            sourceColumns = ...
+                sourceStartColumn:sourceStartColumn + copyWidth - 1;
+            targetRows = targetStartRow:targetStartRow + copyHeight - 1;
+            targetColumns = ...
+                targetStartColumn:targetStartColumn + copyWidth - 1;
+
+            newFrame = zeros(targetHeight, targetWidth, 'uint8');
+            newFrame(targetRows, targetColumns) = ...
+                originalFrame(sourceRows, sourceColumns);
+        end
+
         function writeLegacyTiff(filename, frame, description)
             % Preserve the downstream Basler-compatible single-strip TIFF:
             % little endian, IFD at byte 8, metadata at byte 256, pixels at
@@ -559,4 +588,3 @@ classdef PostProcessor
         end
     end
 end
-

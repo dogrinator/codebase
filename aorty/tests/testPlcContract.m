@@ -77,6 +77,22 @@ for name = {'fPosBuffer', 'fTenzoBuffer'}
 end
 end
 
+function testPublishedPositionUsesDisplayCoordinateOnly(testCase)
+plcRoot = testCase.TestData.plcRoot;
+buffer = fileread(fullfile(plcRoot, 'POUs', ...
+    'fb_StatusBuffer.TcPOU'));
+publisher = fileread(fullfile(plcRoot, 'POUs', ...
+    'fb_AxisStatusPublisher.TcPOU'));
+movement = fileread(fullfile(plcRoot, 'POUs', ...
+    'fb_MovementController.TcPOU'));
+
+verifyNotEmpty(testCase, strfind(buffer, ...
+    'fPosBuffer[nNextHead] := 50.0 - fActPosition'));
+verifyNotEmpty(testCase, strfind(publisher, ...
+    'fActPosition := 50.0 - fActPosition'));
+verifyEmpty(testCase, strfind(movement, '50.0 - fActPosition'));
+end
+
 function testCriticalTypesVersionAndErrors(testCase)
 plcRoot = testCase.TestData.plcRoot;
 commandDut = fileread(fullfile(plcRoot, 'DUTs', ...

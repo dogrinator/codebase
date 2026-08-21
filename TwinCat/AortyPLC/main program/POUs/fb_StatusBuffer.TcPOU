@@ -74,7 +74,7 @@ END_IF
 
 // Buffering data
 stSystemStatus.fTenzoBuffer[nNextHead] := fCurrentCalculated + stSystemStatus.fTenzoTarOffset;
-stSystemStatus.fPosBuffer[nNextHead] := fActPosition;
+stSystemStatus.fPosBuffer[nNextHead] := 50.0 - fActPosition;
 
 // MATLAB status helpers
 stSystemStatus.nBufferHead := nNextHead;
