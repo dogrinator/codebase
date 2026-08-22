@@ -14,14 +14,21 @@ classdef PostProcessor
                 'outputFolder', options.outputFolder, ...
                 'exportedFrameCount', 0, ...
                 'status', 'completed', ...
-                'message', '');
+                'message', '', ...
+                'sourceRecordingStatus', '', ...
+                'recovered', false, ...
+                'recovery', struct(), ...
+                'skippedOutOfCoverageCount', 0);
 
             disp('--- Starting offline post-processing ---');
 
-            recording = PostProcessor.readRecording(folderPath);
+            recording = PostProcessor.readRecording(folderPath, options);
             dataX = recording.dataX;
             dataY = recording.dataY;
             camTimestamps = recording.cameraRows;
+            result.sourceRecordingStatus = recording.sourceStatus;
+            result.recovery = recording.recovery;
+            result.recovered = recording.recovery.detected;
 
             numFrames = height(camTimestamps);
             if numFrames == 0
@@ -49,6 +56,7 @@ classdef PostProcessor
 
             outsideCoverage = phaseEligible & ~coverageMask;
             skippedCount = sum(outsideCoverage);
+            result.skippedOutOfCoverageCount = skippedCount;
             if skippedCount > 0
                 earlyMask = outsideCoverage & ...
                     camTimestamps.Timestamp < coverageStart;
@@ -81,6 +89,14 @@ classdef PostProcessor
                     'Vision Toolbox. Install or license that toolbox ' ...
                     'before running post-processing.']);
             end
+
+            processedFramesFolder = options.outputFolder;
+            if isfolder(processedFramesFolder) || ...
+                    isfile(processedFramesFolder)
+                error('PostProcessor:OutputNotEmpty', ...
+                    ['The TIFF output path already exists. Choose a new ' ...
+                    'output folder.']);
+            end
             selectedMask = false(numFrames, 1);
             selectedMask(selectedRows) = true;
 
@@ -100,18 +116,27 @@ classdef PostProcessor
 
             bytesPerFrame = frameWidth * frameHeight; % For Mono8
 
-            % Create the output folder before opening any frame files.
-            processedFramesFolder = options.outputFolder;
-            existingFrames = dir(fullfile( ...
-                processedFramesFolder, 'processed_frame_*.tif'));
-            if ~isempty(existingFrames)
-                error('PostProcessor:OutputNotEmpty', ...
-                    ['The TIFF output already contains generated frames. ' ...
-                    'Choose a new output folder.']);
+            % Write into a private staging directory. The requested output
+            % becomes visible only after every selected frame succeeds.
+            outputParent = fileparts(processedFramesFolder);
+            if isempty(outputParent)
+                outputParent = pwd;
             end
-            if ~exist(processedFramesFolder, 'dir')
-                mkdir(processedFramesFolder);
+            if ~isfolder(outputParent)
+                [created, message] = mkdir(outputParent);
+                if ~created
+                    error('PostProcessor:OutputCreate', ...
+                        'Could not create %s: %s', outputParent, message);
+                end
             end
+            stagingFolder = tempname(outputParent);
+            [created, message] = mkdir(stagingFolder);
+            if ~created
+                error('PostProcessor:OutputCreate', ...
+                    'Could not create staging output: %s', message);
+            end
+            stagingCleanup = onCleanup(@() ...
+                PostProcessor.deleteFolderIfPresent(stagingFolder));
 
             %% Synchronize and process frames
             outputIndex = 0;
@@ -119,11 +144,24 @@ classdef PostProcessor
                 % Read one complete raw frame.
                 rawFrameData = fread(fid, bytesPerFrame, '*uint8');
                 if isempty(rawFrameData) || length(rawFrameData) < bytesPerFrame
-                    warning(['Reached end of cam.bin unexpectedly or frame ', num2str(i), ' is incomplete. Skipping remaining frames.']);
-                    break;
+                    error('PostProcessor:CameraBinaryChanged', ...
+                        ['cam.bin changed during processing or frame %d ' ...
+                        'became incomplete.'], i);
                 end
                 if ~selectedMask(i)
                     continue;
+                end
+                if ~isempty(options.progressCallback) || ...
+                        ~isempty(options.cancelCallback)
+                    % Let UI callback state (including CancelRequested)
+                    % advance without imposing a full draw on batch callers.
+                    drawnow limitrate;
+                end
+                if ~isempty(options.cancelCallback) && ...
+                        logical(options.cancelCallback())
+                    result.status = 'cancelled';
+                    result.message = 'Post-processing was cancelled.';
+                    return;
                 end
                 outputIndex = outputIndex + 1;
 
@@ -163,11 +201,16 @@ classdef PostProcessor
                     'BoxOpacity', 0.5);
 
                 % Preserve the external TIFF layout expected by consumers.
-                outputFileName = fullfile(processedFramesFolder, ...
+                outputFileName = fullfile(stagingFolder, ...
                     ['processed_frame_', num2str(outputIndex, '%04d'), ...
                     '.tif']);
                 PostProcessor.writeLegacyTiff( ...
                     outputFileName, annotatedFrame, newTxtDesc);
+
+                if ~isempty(options.progressCallback)
+                    options.progressCallback( ...
+                        outputIndex, numel(selectedRows));
+                end
 
                 if mod(outputIndex, 50) == 0
                     fprintf('Processed %d / %d frames...\n', ...
@@ -176,7 +219,27 @@ classdef PostProcessor
                 end
             end
 
+            % Recheck immediately before publication so an output created
+            % while processing is not treated as a destination directory.
+            if isfolder(processedFramesFolder) || ...
+                    isfile(processedFramesFolder)
+                error('PostProcessor:OutputNotEmpty', ...
+                    ['The TIFF output path was created while processing. ' ...
+                    'The staged output was not published.']);
+            end
+            [published, message] = movefile( ...
+                stagingFolder, processedFramesFolder);
+            if ~published
+                error('PostProcessor:OutputPublish', ...
+                    'Could not publish TIFF output: %s', message);
+            end
+            clear stagingCleanup;
             result.exportedFrameCount = outputIndex;
+            if result.recovered
+                result.status = 'recovered';
+                result.message = PostProcessor.appendMessage( ...
+                    result.message, recording.recovery.message);
+            end
             disp('--- Post-processing complete ---');
         end
 
@@ -203,6 +266,15 @@ classdef PostProcessor
                     isempty(options.outputFolder)
                 options.outputFolder = fullfile( ...
                     char(folderPath), 'processed_frames');
+            end
+            if ~isfield(options, 'timestampPolicy')
+                options.timestampPolicy = 'strict';
+            end
+            if ~isfield(options, 'progressCallback')
+                options.progressCallback = [];
+            end
+            if ~isfield(options, 'cancelCallback')
+                options.cancelCallback = [];
             end
 
             options.samplingPeriod = double(options.samplingPeriod);
@@ -231,10 +303,46 @@ classdef PostProcessor
                     'Output folder must be one path.');
             end
             options.outputFolder = char(options.outputFolder);
+            if ~(ischar(options.timestampPolicy) || ...
+                    (isstring(options.timestampPolicy) && ...
+                    isscalar(options.timestampPolicy)))
+                error('PostProcessor:InvalidTimestampPolicy', ...
+                    'Timestamp policy must be text.');
+            end
+            options.timestampPolicy = lower(char(options.timestampPolicy));
+            if ~ismember(options.timestampPolicy, ...
+                    {'strict', 'legacy-fixed-rate'})
+                error('PostProcessor:InvalidTimestampPolicy', ...
+                    'Unsupported timestamp policy: %s.', ...
+                    options.timestampPolicy);
+            end
+            callbacks = {'progressCallback', 'cancelCallback'};
+            for index = 1:numel(callbacks)
+                name = callbacks{index};
+                if ~isempty(options.(name)) && ...
+                        ~isa(options.(name), 'function_handle')
+                    error('PostProcessor:InvalidCallback', ...
+                        '%s must be a function handle.', name);
+                end
+            end
         end
 
-        function recording = readRecording(folderPath)
+        function recording = readRecording(folderPath, options)
             % Read and validate one recording for post-processing.
+            if nargin < 2 || isempty(options)
+                timestampPolicy = 'strict';
+            elseif isstruct(options) && isfield(options, 'timestampPolicy')
+                timestampPolicy = options.timestampPolicy;
+            else
+                timestampPolicy = options;
+            end
+            timestampPolicy = lower(char(timestampPolicy));
+            if ~ismember(timestampPolicy, ...
+                    {'strict', 'legacy-fixed-rate'})
+                error('PostProcessor:InvalidTimestampPolicy', ...
+                    'Unsupported timestamp policy: %s.', ...
+                    timestampPolicy);
+            end
             h5File = fullfile(folderPath, 'recording.h5');
             camBinFile = fullfile(folderPath, 'cam.bin');
             if ~isfile(h5File)
@@ -287,10 +395,10 @@ classdef PostProcessor
                     status);
             end
 
-            dataX = PostProcessor.sampleTable( ...
-                xData, startTime, 'X', plcInterval);
-            dataY = PostProcessor.sampleTable( ...
-                yData, startTime, 'Y', plcInterval);
+            [dataX, recoveredX] = PostProcessor.sampleTable( ...
+                xData, startTime, 'X', plcInterval, timestampPolicy);
+            [dataY, recoveredY] = PostProcessor.sampleTable( ...
+                yData, startTime, 'Y', plcInterval, timestampPolicy);
             if isempty(dataX) || isempty(dataY)
                 error('PostProcessor:MissingPlcSamples', ...
                     'The recording must contain usable X and Y PLC samples.');
@@ -340,7 +448,9 @@ classdef PostProcessor
                 trailingBytes = mod(binaryInfo.bytes, bytesPerFrame);
             end
             usableCount = min(metadataCount, completeBinaryFrames);
-            if metadataCount ~= completeBinaryFrames || trailingBytes ~= 0
+            recoveredCameraTail = ...
+                metadataCount ~= completeBinaryFrames || trailingBytes ~= 0;
+            if recoveredCameraTail
                 warning('PostProcessor:RecoveredCameraTail', ...
                     ['Using %d complete frame/timestamp pair(s); ' ...
                     'recording.h5 has %d camera row(s), cam.bin has %d ' ...
@@ -355,18 +465,57 @@ classdef PostProcessor
                 cameraData(3, :)', ...
                 'VariableNames', ...
                 {'Index', 'Timestamp', 'SystemStatus'});
+            recoveredSource = ~strcmpi(status, 'completed');
+            recoveryParts = strings(0, 1);
+            if recoveredSource
+                recoveryParts(end + 1) = sprintf( ...
+                    'Source recording status is "%s".', status);
+            end
+            if recoveredCameraTail
+                recoveryParts(end + 1) = sprintf( ...
+                    ['Camera tail recovered to %d complete pair(s) ' ...
+                    'from %d metadata row(s), %d complete binary ' ...
+                    'frame(s), and %d trailing byte(s).'], ...
+                    usableCount, metadataCount, completeBinaryFrames, ...
+                    trailingBytes);
+            end
+            if recoveredX || recoveredY
+                axisNames = {'X', 'Y'};
+                recoveredAxes = strjoin( ...
+                    axisNames([recoveredX, recoveredY]), ', ');
+                recoveryParts(end + 1) = sprintf( ...
+                    ['Legacy fixed-rate timestamp recovery was applied ' ...
+                    'to %s.'], recoveredAxes);
+            end
+            recovery = struct( ...
+                'detected', recoveredSource || recoveredCameraTail || ...
+                recoveredX || recoveredY, ...
+                'sourceInterrupted', recoveredSource, ...
+                'cameraTailRecovered', recoveredCameraTail, ...
+                'metadataFrameCount', metadataCount, ...
+                'completeBinaryFrameCount', completeBinaryFrames, ...
+                'usableFramePairCount', usableCount, ...
+                'trailingCameraBytes', trailingBytes, ...
+                'timestampRecovered', ...
+                struct('X', recoveredX, 'Y', recoveredY), ...
+                'message', char(strjoin(recoveryParts, ' ')));
             recording = struct( ...
                 'dataX', dataX, ...
                 'dataY', dataY, ...
                 'cameraRows', cameraRows, ...
                 'frameWidth', frameWidth, ...
-                'frameHeight', frameHeight);
+                'frameHeight', frameHeight, ...
+                'sourceStatus', status, ...
+                'recovery', recovery);
         end
 
         %% Sample selection and alignment
-        function data = sampleTable( ...
-                values, startTime, axisName, plcInterval)
+        function [data, recovered] = sampleTable( ...
+                values, startTime, axisName, plcInterval, timestampPolicy)
             % Convert one axis dataset to a timestamped sample table.
+            if nargin < 5 || isempty(timestampPolicy)
+                timestampPolicy = 'strict';
+            end
             if size(values, 1) ~= 4 || any(~isfinite(values), 'all')
                 error('PostProcessor:InvalidMeasurementData', ...
                     '%s-axis samples must contain four finite rows.', ...
@@ -377,7 +526,15 @@ classdef PostProcessor
                 error('PostProcessor:InvalidMeasurementData', ...
                     'The PLC sample interval must be positive and finite.');
             end
+            recovered = false;
             if ~isempty(values) && any(diff(values(1, :)) < 0)
+                if ~strcmpi(timestampPolicy, 'legacy-fixed-rate')
+                    error('PostProcessor:NonMonotonicTimestamps', ...
+                        ['%s-axis timestamps are non-monotonic. Re-run ' ...
+                        'with timestampPolicy="legacy-fixed-rate" only ' ...
+                        'for a known legacy callback-overlap recording.'], ...
+                        axisName);
+                end
                 % Older recordings reconstructed every ADS batch from the
                 % MATLAB callback time. Callback jitter can make adjacent
                 % batches overlap by a few milliseconds even though the PLC
@@ -389,6 +546,7 @@ classdef PostProcessor
                     'timestamps; rebuilt their fixed-rate PLC timeline ' ...
                     'for post-processing.'], ...
                     axisName);
+                recovered = true;
             end
             data = table( ...
                 startTime + seconds(values(1, :)'), ...
@@ -585,6 +743,29 @@ classdef PostProcessor
             end
             [~, index] = min(abs(data.Timestamp - timestamp));
             value = data(index, :);
+        end
+
+        function value = appendMessage(value, addition)
+            if isempty(addition)
+                return;
+            end
+            if isempty(value)
+                value = char(addition);
+            else
+                value = [char(value), ' ', char(addition)];
+            end
+        end
+
+        function deleteFolderIfPresent(folderPath)
+            if isfolder(folderPath)
+                try
+                    rmdir(folderPath, 's');
+                catch exception
+                    warning('PostProcessor:StagingCleanup', ...
+                        'Could not remove staging output %s: %s', ...
+                        folderPath, exception.message);
+                end
+            end
         end
     end
 end

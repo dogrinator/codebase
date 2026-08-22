@@ -44,7 +44,6 @@ classdef MachinePanel < handle
 
         % Live plot state, force references, and hover selection
         forceReferences = struct('X', [], 'Y', [])
-        positionLimitLines = struct('X', [], 'Y', [])
         operationActive = false
         plotTime = struct('X', 0, 'Y', 0)
         sampleCount = 500
@@ -188,11 +187,23 @@ classdef MachinePanel < handle
             panel.applyState();
         end
 
-        function updateErrorStatus(panel, hasError, message)
-            if hasError
-                panel.errorButton.Text = 'ERROR / RESET';
+        function updateErrorSummary(panel, plcError, plcMessage, appAlert)
+            if plcError && appAlert.active
+                panel.errorButton.Text = 'PLC ERROR + APP ALERT';
                 panel.errorButton.BackgroundColor = [0.95, 0.35, 0.25];
-                panel.errorButton.Tooltip = char(message);
+                panel.errorButton.Tooltip = sprintf( ...
+                    'PLC: %s\n%s: %s', char(plcMessage), ...
+                    char(appAlert.source), char(appAlert.message));
+            elseif plcError
+                panel.errorButton.Text = 'PLC ERROR / RESET';
+                panel.errorButton.BackgroundColor = [0.95, 0.35, 0.25];
+                panel.errorButton.Tooltip = char(plcMessage);
+            elseif appAlert.active
+                panel.errorButton.Text = 'APP ALERT / ACK';
+                panel.errorButton.BackgroundColor = [0.98, 0.72, 0.25];
+                panel.errorButton.Tooltip = sprintf( ...
+                    '%s: %s', char(appAlert.source), ...
+                    char(appAlert.message));
             else
                 panel.errorButton.Text = 'System OK';
                 panel.errorButton.BackgroundColor = [0.55, 0.85, 0.55];
@@ -203,6 +214,20 @@ classdef MachinePanel < handle
         function refreshAxisMode(panel)
             panel.applyState();
             panel.updateForceReferenceLines();
+        end
+
+        function cancelActiveJog(panel, notifyController)
+            if nargin < 2
+                notifyController = true;
+            end
+            if isempty(panel.activeJogAxis)
+                return;
+            end
+            axisName = panel.activeJogAxis;
+            panel.activeJogAxis = '';
+            if notifyController
+                panel.callbacks.jog(axisName, 0, false);
+            end
         end
 
         %% Machine state queries
@@ -263,10 +288,6 @@ classdef MachinePanel < handle
                 layout, 'X', [0.1, 0.45, 0.8]);
             [panel.fyAxes, panel.plotLines.Y] = panel.createPlot( ...
                 layout, 'Y', [0.85, 0.35, 0.18]);
-            panel.positionLimitLines.X = panel.createPositionLimitLines( ...
-                panel.fxAxes, 'X');
-            panel.positionLimitLines.Y = panel.createPositionLimitLines( ...
-                panel.fyAxes, 'Y');
             panel.liveActionButton = uibutton(layout, ...
                 'Text', 'Tare load cells', ...
                 'ButtonPushedFcn', @(~, ~) panel.callbacks.liveAction());
@@ -296,18 +317,6 @@ classdef MachinePanel < handle
                 'Color', color, 'LineWidth', 1.3, ...
                 'MaximumNumPoints', panel.sampleCount, ...
                 'Visible', 'off');
-        end
-
-        function lines = createPositionLimitLines(~, axesHandle, axisName)
-            limits = AppInfo.POSITION_LIMITS_MM.(axisName);
-            lines = gobjects(1, numel(limits));
-            for index = 1:numel(limits)
-                lines(index) = yline(axesHandle, limits(index), '--', ...
-                    '', ...
-                    'Color', [0.75, 0.16, 0.16], 'LineWidth', 1.25, ...
-                    'Visible', 'off', 'HitTest', 'off', ...
-                    'PickableParts', 'none', 'Tag', 'PositionLimit');
-            end
         end
 
         function createMachinePanel(panel, parent)
@@ -532,12 +541,7 @@ classdef MachinePanel < handle
         end
 
         function jogButtonReleased(panel)
-            if isempty(panel.activeJogAxis)
-                return;
-            end
-            axisName = panel.activeJogAxis;
-            panel.activeJogAxis = '';
-            panel.callbacks.jog(axisName, 0, false);
+            panel.cancelActiveJog();
         end
 
         %% Control-state coordination
@@ -546,29 +550,36 @@ classdef MachinePanel < handle
             mode = panel.axisModeGetter();
             selectedX = strcmp(mode, 'Both') || strcmp(mode, 'X only');
             selectedY = strcmp(mode, 'Both') || strcmp(mode, 'Y only');
-            ready = panel.connected && ~panel.operationActive;
-            restoreReady = ready;
-            if ready && ~isempty(panel.statuses)
+            idlePowered = panel.connected && ~panel.operationActive;
+            motionReady = idlePowered;
+            restoreReady = idlePowered;
+            if idlePowered && ~isempty(panel.statuses)
                 axes = TestCommandBuilder.axesForMode(mode);
                 for index = 1:numel(axes)
                     state = panel.statuses.(axes{index});
-                    ready = ready && state.powered && ...
+                    idlePowered = idlePowered && state.powered && ...
+                        ~state.working && ~state.error;
+                    motionReady = motionReady && state.powered && ...
+                        state.homed && ~state.homing && ...
                         ~state.working && ~state.error;
                     restoreReady = restoreReady && state.powered && ...
+                        state.homed && ~state.homing && ...
                         ~state.working && ~state.error && ...
                         state.savedPositionValid;
                 end
             else
+                idlePowered = false;
+                motionReady = false;
                 restoreReady = false;
             end
-            panel.setEnabled(panel.velX, selectedX && ready);
-            panel.setEnabled(panel.velY, selectedY && ready);
-            panel.setEnabled(panel.jogButtons.xMinus, selectedX && ready);
-            panel.setEnabled(panel.jogButtons.xPlus, selectedX && ready);
-            panel.setEnabled(panel.jogButtons.yMinus, selectedY && ready);
-            panel.setEnabled(panel.jogButtons.yPlus, selectedY && ready);
-            panel.setEnabled(panel.liveActionButton, ready);
-            panel.setEnabled(panel.savePositionButton, ready);
+            panel.setEnabled(panel.velX, selectedX && idlePowered);
+            panel.setEnabled(panel.velY, selectedY && idlePowered);
+            panel.setEnabled(panel.jogButtons.xMinus, selectedX && motionReady);
+            panel.setEnabled(panel.jogButtons.xPlus, selectedX && motionReady);
+            panel.setEnabled(panel.jogButtons.yMinus, selectedY && motionReady);
+            panel.setEnabled(panel.jogButtons.yPlus, selectedY && motionReady);
+            panel.setEnabled(panel.liveActionButton, idlePowered);
+            panel.setEnabled(panel.savePositionButton, motionReady);
             panel.setEnabled(panel.restorePositionButton, restoreReady);
             panel.setEnabled(panel.powerButton, ...
                 panel.connected && ~panel.operationActive);
@@ -663,23 +674,7 @@ classdef MachinePanel < handle
                 panel.updateDisplacementYLimits('X', panel.fxAxes);
                 panel.updateDisplacementYLimits('Y', panel.fyAxes);
             end
-            panel.updatePositionLimitLines(mode);
             panel.updateForceReferenceLines();
-        end
-
-        function updatePositionLimitLines(panel, mode)
-            visibility = 'off';
-            if strcmp(mode, 'Displacement')
-                visibility = 'on';
-            end
-            for axisItem = {'X', 'Y'}
-                lines = panel.positionLimitLines.(axisItem{1});
-                for index = 1:numel(lines)
-                    if isgraphics(lines(index))
-                        lines(index).Visible = visibility;
-                    end
-                end
-            end
         end
 
         function sampleCountChanged(panel, value)
@@ -1062,8 +1057,7 @@ classdef MachinePanel < handle
 
         function text = displacementTooltip(~)
             text = ['Displacement plots show the absolute NC axis ' ...
-                'position. Visual position limits come from AppInfo and are ' ...
-                'not enforced. Endpoint overlays are shown only for Force.'];
+                'position. Endpoint overlays are shown only for Force.'];
         end
     end
 end

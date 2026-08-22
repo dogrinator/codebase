@@ -1,4 +1,4 @@
-# TwinCAT PLC guide — interface version 6
+# TwinCAT PLC guide — interface version 7
 
 The Aorty PLC program controls the X and Y axes, publishes acquisition data,
 and owns the complete pre-test, main-test, post-test, synchronization, safety,
@@ -65,7 +65,7 @@ A stale TMC may expose an old ADS layout even when the source DUT is correct.
 | Mode-3 command arrays | Exactly 50 allocated entries |
 | Active pre/main cycles | 0–50 in PLC commands; General Cyclic tests use 1–50 |
 | Public status packet | 856 bytes |
-| Interface version | 6 |
+| Interface version | 7 |
 
 MATLAB owns experiment-value validation. The PLC retains structural bounds,
 supported-mode, busy/power, runtime safety, and motion-function-block checks.
@@ -130,6 +130,7 @@ and skip post-test motion.
 | Field | Meaning |
 | --- | --- |
 | `fMoveVelocity` | Signed Mode 1 jog velocity while `bExecute` is true |
+| `nJogLeaseCounter` | Monotonic ADS heartbeat; 750 ms without change stops jog with `2011` |
 | `fTargetForce`, `fForceDuration` | Mode 2 force target and accumulated in-tolerance time |
 | `nMode` | `1` jog, `2` force/time, `3` complete test |
 | `bExecute` | Selected-axis start request |
@@ -176,8 +177,14 @@ tolerances when both phases run on that axis.
 | `nCycleCount` | `0` Single; `1..50` Cyclic |
 | `nLoadMode`, `nUnloadMode` | `1` displacement, `2` force |
 | `fLoadValues[1..50]`, `fUnloadValues[1..50]` | Per-cycle endpoints |
-| `nStop1Mode`, `nStop2Mode` | `0` off, `1` displacement, `2` force |
+| `nStop1Mode` | `1` displacement, `2` force |
+| `nStop2Mode` | `0` off, `1` displacement, `2` force, `3` percentage-drop rupture |
 | `fStop1Value`, `fStop2Value` | Single primary and optional OR endpoint |
+
+Rupture mode records the absolute force at Single-test start. Peak/drop
+tracking arms only after force rises by at least the configured positive
+`fForceTolerance`, preventing startup preload or sub-tolerance noise from
+arming the percentage-drop stop.
 
 Load and unload modes are independent. The UI repeats constant endpoints;
 General JSON may provide different values for each cycle.
@@ -188,7 +195,7 @@ begins after motion completion (or immediate recognition of a zero-distance
 target), and the powered NC position loop holds position. The Single secondary
 OR criterion does not use the primary endpoint hold.
 
-Force-drop and arm-above-force fields are not part of interface version 6.
+Force-drop and arm-above-force fields are not part of interface version 7.
 
 ### Post-test modes
 
@@ -258,7 +265,7 @@ inactive peer.
 
 | Field | Meaning |
 | --- | --- |
-| `nInterfaceVersion` | ADS contract version, currently `6` |
+| `nInterfaceVersion` | ADS contract version, currently `7` |
 | `nSystemStatus` | Stable high-level state |
 | `bWorking` | Axis has an active operation |
 | `nOperationCounter` | Increments once after successful completion |
@@ -354,12 +361,19 @@ MATLAB writes every settings field for both axes:
 Relief distance and velocity must be finite and positive. The shipped defaults
 are `1.0 mm` and `1.0 mm/s`.
 
-When `ABS(force) > fMaxForce`, the PLC halts, determines the most reliable
+When `ABS(force) >= fMaxForce`, the PLC halts, determines the most reliable
 loading direction, performs one conservative opposite-direction relief move,
 and aborts without post-test. If direction is unknown, it performs no blind
 move and reports error `2102`.
 
 ## Validation and errors
+
+Normal position/force test phases intentionally have no automatic duration
+timeout: some approved experiments may run for a very long time. Commission
+the NC following-error/stall behavior, keep the operator STOP and independent
+machine safety available, and treat a duration watchdog as a future
+machine-requirements decision rather than inventing a generic limit here. The
+750 ms maintained-jog lease is separate and always remains active.
 
 | Code | Meaning |
 | ---: | --- |
@@ -372,6 +386,8 @@ move and reports error `2102`.
 | `2008` | Conflicting command while busy |
 | `2009` | Invalid restore numeric value |
 | `2010` | Biaxial commands unavailable or incompatible |
+| `2011` | Jog owner lease expired; controlled halt requested |
+| `2012` | Requested motion rate exceeds the configured velocity limit |
 | `2101` | Overforce relief completed; reset required |
 | `2102` | Overforce relief direction unknown |
 | `2201`, `2203` | Relative or velocity motion-function-block failure |
@@ -381,7 +397,7 @@ decoded by MATLAB's `PlcErrorCatalog`.
 
 ## General Test and recording boundaries
 
-General Test schema 1 maps validated JSON into `ST_MoveCommand`; the PLC does
+General Test schema 2 maps validated JSON into `ST_MoveCommand`; the PLC does
 not parse JSON. See the [General Test guide](../../../aorty/examples/generalTestReadme.md)
 for every field, strict validation rule, and example.
 
@@ -398,7 +414,7 @@ ready:
 
 1. Build TwinCAT, regenerate the TMC, and deploy the matching project.
 2. Run `verifyGeneratedTmc`.
-3. Connect the updated ADS client and verify interface version `6` on X and Y.
+3. Connect the updated ADS client and verify interface version `7` on X and Y.
 4. Apply settings and confirm maximum force and relief distance/velocity.
 5. Check powered, working, stopped, homing, homed, error, saved-position, and
    system-status indications.
@@ -414,7 +430,9 @@ ready:
     the retained reference and requires normal homing.
 12. Jog positive and negative at low speed; confirm position and force signs.
 13. Run standalone pre-test with preload, force unload, and unload-to-start.
-14. Run displacement and force Single tests with the optional OR endpoint.
+14. Run displacement and force Single tests with the optional OR endpoint, then
+    commission percentage-drop rupture using noise, preload, transient-dip, and
+    genuine-break cases at conservative force and speed.
 15. Run all Cyclic load/unload mode combinations, including mixed modes.
 16. Import and run
     [`general_test_example.json`](../../../aorty/examples/general_test_example.json).

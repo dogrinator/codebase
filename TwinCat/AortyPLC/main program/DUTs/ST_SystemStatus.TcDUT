@@ -8,7 +8,7 @@
 		nBufferHead  : INT := 50;             // Index of latest completely written sample
 		nSampleCounter    : UDINT := 0;       // Wrapping sample counter for drop detection
 		nOperationCounter : UDINT := 0;       // Incremented after each completed motion command
-		nInterfaceVersion : UDINT := 6;       // MATLAB/PLC ADS contract version
+		nInterfaceVersion : UDINT := 7;       // MATLAB/PLC ADS contract version
 		fTenzoTarOffset   : LREAL := 0.0;     // Calculated tar offset
 		fActPosition : LREAL := 0.0;          // Display position (50 mm - NC position)
 		

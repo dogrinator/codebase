@@ -50,7 +50,7 @@ verifyEqual(testCase, status.forceBuffer, forceBuffer);
 verifyEqual(testCase, status.bufferHead, int16(17));
 verifyEqual(testCase, status.sampleCounter, uint32(123456));
 verifyEqual(testCase, status.operationCounter, uint32(987));
-verifyEqual(testCase, status.interfaceVersion, uint32(6));
+verifyEqual(testCase, status.interfaceVersion, uint32(7));
 verifyEqual(testCase, status.tareOffset, -2.5);
 verifyEqual(testCase, status.position, 42.75);
 verifyTrue(testCase, status.working);
@@ -196,8 +196,14 @@ client.clearWrites();
 plc.jog('X', true, -2);
 verifyEqual(testCase, client.getSymbol( ...
     'MAIN.stMoveCommandX.fMoveVelocity'), -2);
+firstLease = client.getSymbol( ...
+    'MAIN.stMoveCommandX.nJogLeaseCounter');
+verifyGreaterThan(testCase, firstLease, uint32(0));
 verifyTrue(testCase, client.getSymbol( ...
     'MAIN.stMoveCommandX.bExecute'));
+plc.renewJogLeases();
+verifyGreaterThan(testCase, client.getSymbol( ...
+    'MAIN.stMoveCommandX.nJogLeaseCounter'), firstLease);
 
 client.clearWrites();
 plc.jog('X', false, 0);
@@ -214,6 +220,53 @@ symbols = writtenSymbols(client);
 verifyFalse(testCase, any(contains(symbols, 'fDistances')));
 verifyFalse(testCase, any(contains(symbols, 'fVelocities')));
 verifyFalse(testCase, any(contains(symbols, 'nTotalSteps')));
+end
+
+function testPreflightIsReadOnlyAndUsesLiveLimits(testCase)
+[plc, client] = connectedPlc();
+value = command(1, 0);
+client.clearWrites();
+[axes, statuses, configs] = plc.preflightTestSequence( ...
+    struct('X', value, 'Y', []));
+verifyEqual(testCase, axes, {'X'});
+verifyTrue(testCase, statuses.X.homed);
+verifyEqual(testCase, configs.X.fMaxVelocity, 10);
+verifyEmpty(testCase, client.Writes);
+
+value.testRate = 11;
+verifyError(testCase, @() plc.preflightTestSequence( ...
+    struct('X', value, 'Y', [])), 'PLC:VelocityLimit');
+verifyEmpty(testCase, client.Writes);
+end
+
+function testPreflightRejectsAxisThatIsNotStopped(testCase)
+[plc, client] = connectedPlc();
+client.setStatus('X', struct('stopped', false));
+client.clearWrites();
+verifyError(testCase, @() plc.preflightTestSequence( ...
+    struct('X', command(1, 0), 'Y', [])), 'PLC:AxisNotReady');
+verifyEmpty(testCase, client.Writes);
+end
+
+function testAmbiguousDeliveredTriggerHaltsCandidate(testCase)
+[probePlc, probeClient] = connectedPlc();
+probeClient.clearWrites();
+probePlc.sendTestSequence( ...
+    struct('X', command(1, 0), 'Y', []));
+triggerWrite = probeClient.WriteCount;
+probePlc.disconnectPLC();
+
+[plc, client] = connectedPlc();
+client.clearWrites();
+client.FailWriteAt = triggerWrite;
+client.FailWriteAfterDelivery = true;
+verifyError(testCase, @() plc.sendTestSequence( ...
+    struct('X', command(1, 0), 'Y', [])), 'FakeAds:Write');
+symbols = writtenSymbols(client);
+verifyTrue(testCase, any(strcmp(symbols, ...
+    'MAIN.stMoveCommandX.bExecute')));
+verifyTrue(testCase, any(strcmp(symbols, ...
+    'MAIN.stMoveCommandX.bHalt')));
 end
 
 function testAllFieldsPreparedBeforeSharedBiaxialStartAndArraysPadded(testCase)

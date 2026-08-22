@@ -74,16 +74,18 @@ TwinCat/AortyPLC/
 
 ## Requirements
 
-- MATLAB with UI support and .NET interoperability.
+- MATLAB with UI support and .NET interoperability. The offline suite was
+  verified with MATLAB R2024b; the minimum supported release is not yet
+  established.
 - The Beckhoff TwinCAT ADS assembly used by
   `aorty/model/plc/PlcAds.m`.
 - A TwinCAT/XAE installation for building and deploying the PLC project.
 - Image Acquisition Toolbox for recorded tests.
-- Computer Vision Toolbox only when annotated TIFF export is required
-  (`insertText`).
+- Computer Vision Toolbox when annotated TIFF export is required (`insertText`),
+  including the complete offline test suite.
 
 The checked-in machine configuration uses AMS Net ID
-`5.85.113.174.1.1`, ADS port `851`, and interface version `6`. These are
+`5.85.113.174.1.1`, ADS port `851`, and interface version `7`. These are
 deployment-specific values: review the hardware configuration before
 connecting to another machine.
 
@@ -108,7 +110,7 @@ connecting to another machine.
    currently selected hardware profile to that device.
 
 At PLC connection, MATLAB reads `nInterfaceVersion` from both axes. Connection
-is rejected if either axis does not report interface version `6`.
+is rejected if either axis does not report interface version `7`.
 
 ## Operator workflow
 
@@ -124,7 +126,7 @@ is rejected if either axis does not report interface version `6`.
 5. Start the test. When `testRoot` is configured in
    `aorty/.config/appInfo.json`, the application creates its output folder
    automatically. Otherwise it asks for an empty output folder.
-6. Start the test and monitor system status, force, displacement, and errors.
+6. Monitor system status, force, displacement, and errors.
 7. Inspect `recording.h5` and `cam.bin`; create TIFF output automatically or
    through **Post-process data** when required.
 
@@ -133,7 +135,7 @@ is rejected if either axis does not report interface version `6`.
 | Tab | Main behavior |
 | --- | --- |
 | **Pre-test** | Optional initial preload followed by repeated force pre-conditioning cycles |
-| **Single** | One displacement or force endpoint with an optional OR endpoint |
+| **Single** | One displacement or force endpoint with an optional OR endpoint or percentage-drop rupture stop |
 | **Cyclic** | Constant load/unload endpoints for 1–50 cycles, including mixed control modes |
 | **General** | A complete, versioned JSON definition with variable cyclic arrays |
 | **Post-test** | Stay, return to a saved/sequence coordinate, return to pre-test final, or release to zero force |
@@ -181,12 +183,25 @@ sampling period filters only post-processed output. See the
 [interface and data-contract guide](aorty/model/plc/interfaceReadme.md) for
 the HDF5 schema, sample-loss handling, and fixed TIFF layout.
 
+Automatic TIFF creation runs only after a completed recording. Manual
+post-processing may explicitly recover an aborted or interrupted recording;
+the result is labeled `recovered` rather than completed. Output is staged and
+published only after every selected frame succeeds, and an existing output
+folder is never replaced.
+
 ## Offline test validation
 
 `TestValidation` loads one `recording.h5` directly, calculates descriptive
 integrity and regulation metrics, and plots the raw X/Y force and position
 signals with phase, target, and tolerance overlays. It does not require
 `cam.bin` and does not assign pass/fail results.
+
+Non-monotonic PLC timestamps are rejected by default. For a recording known to
+come from the legacy callback-overlap implementation, pass
+`"legacy-fixed-rate"` as the second constructor/open argument to rebuild its
+fixed-rate timeline explicitly. Recording schema 1 does not identify individual
+Cyclic load/unload transitions, so per-endpoint timing and overshoot metrics are
+reported as unavailable rather than inferred.
 
 ```matlab
 cd aorty
@@ -228,7 +243,7 @@ addpath(genpath(pwd))
 verifyGeneratedTmc
 ```
 
-This verifies interface version `6`, required symbols, array lengths, and
+This verifies interface version `7`, required symbols, array lengths, and
 critical status-layout offsets. Never edit `main program.tmc` manually.
 
 ### 3. Hardware commissioning

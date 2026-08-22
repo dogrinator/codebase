@@ -38,8 +38,9 @@ flowchart LR
 - `AcquisitionBuffer` holds PLC samples between the read and display timers.
 - `Model` coordinates recording state and delegates file persistence to
   `RecordingStore`.
-- `PostProcessor` reads completed recordings and exports compatible TIFF
-  frames. `TestValidation` performs separate offline analysis of HDF5 data.
+- `PostProcessor` exports compatible TIFF frames automatically from completed
+  recordings and can explicitly recover interrupted recordings during manual
+  processing. `TestValidation` performs separate offline analysis of HDF5 data.
 
 ## Test execution flow
 

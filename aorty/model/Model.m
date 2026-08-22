@@ -22,6 +22,7 @@ classdef Model < handle
 
     properties (Access = private)
         recordingStore = []
+        finalizationPending = false
     end
 
     methods
@@ -36,20 +37,22 @@ classdef Model < handle
             model.recordingStore = RecordingStore( ...
                 model.selectedFolder, header);
             model.filesOpen = true;
+            model.finalizationPending = false;
             model.recordingStatus = 'recording';
             model.recordingReason = '';
         end
 
 
         function finalizeRecording(model, status, reason)
-            model.recordingStatus = lower(char(status));
-            model.recordingReason = char(reason);
             if ~model.filesOpen || isempty(model.recordingStore)
                 return;
             end
+            if ~model.finalizationPending
+                model.recordingStatus = lower(char(status));
+                model.recordingReason = char(reason);
+                model.finalizationPending = true;
+            end
             store = model.recordingStore;
-            model.filesOpen = false;
-            model.recordingStore = [];
             try
                 integrity = struct( ...
                     'droppedSamples', model.recordingDroppedSamples, ...
@@ -60,6 +63,9 @@ classdef Model < handle
                 try store.close(); catch, end
                 rethrow(exception);
             end
+            model.filesOpen = false;
+            model.recordingStore = [];
+            model.finalizationPending = false;
         end
 
         %% Acquisition writes

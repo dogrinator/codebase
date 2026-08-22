@@ -26,6 +26,8 @@ classdef Plc < handle
 
     properties (Access = private)
         ads % Ads client
+        jogLeaseCounters = struct('X', uint32(0), 'Y', uint32(0))
+        activeJog = struct('X', false, 'Y', false)
     end
 
     methods
@@ -82,6 +84,10 @@ classdef Plc < handle
                 try
                     plc.ads.writeCommand('X', 'execute', false);
                     plc.ads.writeCommand('Y', 'execute', false);
+                    plc.ads.writeCommand('X', 'halt');
+                    plc.ads.writeCommand('Y', 'halt');
+                    pause(0.05); % Let at least one PLC/status cycle observe stop.
+                    plc.stopAndWait({'X', 'Y'}, 5);
                     plc.setPower({'X', 'Y'}, false);
                 catch exception
                     warning('PLC:PowerOffBeforeDisconnect', ...
@@ -97,6 +103,7 @@ classdef Plc < handle
             plc.ads = [];
             plc.client = [];
             plc.isWorking = false;
+            plc.activeJog = struct('X', false, 'Y', false);
 
             % PlcAds releases symbols first; Plc owns and closes the client.
             if ~isempty(oldAds)
@@ -169,21 +176,21 @@ classdef Plc < handle
             if ~activeX && ~activeY
                 return;
             end
-            if (activeX && (statuses.X.working || statuses.X.error)) || ...
-                    (activeY && (statuses.Y.working || statuses.Y.error))
-                error('PLC:AxisUnavailable', ...
-                    'A selected axis is busy or in error.');
-            end
-
             % Validate both selected commands before writing either axis.
-            if activeX, plc.ensureAxisPowered('X'); end
-            if activeY, plc.ensureAxisPowered('Y'); end
             if activeX
-                PlcCommandValidator.basic(xPos, xVel);
+                plc.requireAxisReady('X', statuses.X);
+                configX = plc.ads.readAxisConfig('X');
+                PlcCommandValidator.basic(xPos, xVel, configX);
+            end
+            if activeY
+                plc.requireAxisReady('Y', statuses.Y);
+                configY = plc.ads.readAxisConfig('Y');
+                PlcCommandValidator.basic(yPos, yVel, configY);
+            end
+            if activeX
                 plc.ads.writeBasicCommand('X', mode, xPos, xVel);
             end
             if activeY
-                PlcCommandValidator.basic(yPos, yVel);
                 plc.ads.writeBasicCommand('Y', mode, yPos, yVel);
             end
             if activeX, plc.ads.pulseExecute('X'); end
@@ -193,6 +200,29 @@ classdef Plc < handle
 
         function axes = sendTestSequence(plc, commands)
             % Prepare for commands sending
+            axes = plc.preflightTestSequence(commands);
+            for index = 1:numel(axes)
+                plc.ads.writeAxisTestCommand( ...
+                    axes{index}, commands.(axes{index}));
+            end
+            % Biaxial tests use one PLC-owned start after both complete
+            % commands are prepared. Single-axis tests retain their
+            % individual Execute trigger.
+            try
+                if numel(axes) == 2
+                    plc.ads.pulseBiaxialStart();
+                else
+                    plc.ads.pulseExecute(axes{1});
+                end
+            catch exception
+                plc.recoverAmbiguousStart(axes);
+                rethrow(exception);
+            end
+        end
+
+        function [axes, statuses, configs] = preflightTestSequence(plc, commands)
+            % Read-only validation used both before recording setup and
+            % immediately before ADS command writes.
             plc.requireConnection();
             axes = {};
             for axisName = {'X', 'Y'}
@@ -205,34 +235,17 @@ classdef Plc < handle
                 error('PLC:NoAxes', ...
                     'No active axis command was provided.');
             end
-
-            % Raw axis data read for error/busy check + validation
             statuses = plc.pollStatus();
+            configs = struct();
             for index = 1:numel(axes)
                 axis = axes{index};
-                statusNow = statuses.(axis);
-                if statusNow.working || statusNow.error
-                    error('PLC:AxisUnavailable', ...
-                        '%s axis is busy or in error.', axis);
-                end
-                PlcCommandValidator.test(commands.(axis), statusNow);
+                plc.requireAxisReady(axis, statuses.(axis));
+                configs.(axis) = plc.ads.readAxisConfig(axis);
+                PlcCommandValidator.test( ...
+                    commands.(axis), statuses.(axis), configs.(axis));
             end
             if numel(axes) == 2
                 PlcCommandValidator.biaxial(commands.X, commands.Y);
-            end
-
-            plc.ensurePowered(axes);
-            for index = 1:numel(axes)
-                plc.ads.writeAxisTestCommand( ...
-                    axes{index}, commands.(axes{index}));
-            end
-            % Biaxial tests use one PLC-owned start after both complete
-            % commands are prepared. Single-axis tests retain their
-            % individual Execute trigger.
-            if numel(axes) == 2
-                plc.ads.pulseBiaxialStart();
-            else
-                plc.ads.pulseExecute(axes{1});
             end
         end
 
@@ -244,21 +257,77 @@ classdef Plc < handle
             end
             plc.requireConnection();
             if ~pressed
+                plc.activeJog.(axisName) = false;
                 plc.ads.writeCommand(axisName, 'execute', false);
                 return;
             end
             statusNow = plc.ads.readAxisStatus(axisName);
-            if statusNow.working || statusNow.error
-                error('PLC:AxisUnavailable', ...
-                    '%s axis is busy or in error.', axisName);
-            end
-            plc.ensureAxisPowered(axisName);
+            plc.requireAxisReady(axisName, statusNow);
+            config = plc.ads.readAxisConfig(axisName);
+            PlcCommandValidator.rate(velocity, config, 'Jog speed');
+            plc.jogLeaseCounters.(axisName) = ...
+                plc.jogLeaseCounters.(axisName) + uint32(1);
+            plc.ads.writeJogLeaseCounter( ...
+                axisName, plc.jogLeaseCounters.(axisName));
             plc.ads.writeJogCommand(axisName, velocity);
-            plc.ads.writeCommand(axisName, 'execute', true);
+            try
+                plc.ads.writeCommand(axisName, 'execute', true);
+                plc.activeJog.(axisName) = true;
+            catch exception
+                plc.activeJog.(axisName) = false;
+                try
+                    plc.ads.writeCommand(axisName, 'halt');
+                catch
+                end
+                rethrow(exception);
+            end
+        end
+
+        function renewJogLeases(plc)
+            % Call after each successful acquisition snapshot while a jog
+            % button is held. If acquisition stops, the PLC lease expires.
+            plc.requireConnection();
+            for axisName = {'X', 'Y'}
+                axis = axisName{1};
+                if plc.activeJog.(axis)
+                    plc.jogLeaseCounters.(axis) = ...
+                        plc.jogLeaseCounters.(axis) + uint32(1);
+                    plc.ads.writeJogLeaseCounter( ...
+                        axis, plc.jogLeaseCounters.(axis));
+                end
+            end
         end
 
         function stop(plc, axes)
             plc.writeCommandForAxes(axes, 'halt');
+        end
+
+        function stopAndWait(plc, axes, timeoutSeconds)
+            if nargin < 3
+                timeoutSeconds = 5;
+            end
+            plc.requireConnection();
+            axes = plc.normalizeAxes(axes);
+            statuses = plc.pollStatus();
+            if plc.axesStopped(axes, statuses)
+                return;
+            end
+            for index = 1:numel(axes)
+                axis = axes{index};
+                plc.activeJog.(axis) = false;
+                plc.ads.writeCommand(axis, 'halt');
+            end
+            deadline = tic;
+            while toc(deadline) < timeoutSeconds
+                pause(0.05);
+                drawnow limitrate;
+                statuses = plc.pollStatus();
+                if plc.axesStopped(axes, statuses)
+                    return;
+                end
+            end
+            error('PLC:StopTimeout', ...
+                'Selected axes did not confirm stopped state in time.');
         end
 
         function resetErrors(plc, axes)
@@ -305,13 +374,10 @@ classdef Plc < handle
         function savePosition(plc, axes)
             plc.requireConnection();
             axes = plc.normalizeAxes(axes);
+            statuses = plc.pollStatus();
             for index = 1:numel(axes)
                 axis = axes{index};
-                statusNow = plc.ads.readAxisStatus(axis);
-                if statusNow.working || statusNow.error
-                    error('PLC:AxisUnavailable', ...
-                        '%s axis is busy or in error.', axis);
-                end
+                plc.requireAxisReady(axis, statuses.(axis));
             end
             for index = 1:numel(axes)
                 plc.ads.writeCommand(axes{index}, 'savePosition');
@@ -325,10 +391,7 @@ classdef Plc < handle
             for index = 1:numel(axes)
                 axis = axes{index};
                 speed = speeds.(axis);
-                if statuses.(axis).working || statuses.(axis).error
-                    error('PLC:AxisUnavailable', ...
-                        '%s axis is busy or in error.', axis);
-                end
+                plc.requireAxisReady(axis, statuses.(axis));
                 if ~statuses.(axis).savedPositionValid
                     error('PLC:NoSavedPosition', ...
                         '%s axis has no saved position.', axis);
@@ -337,9 +400,11 @@ classdef Plc < handle
                     error('PLC:InvalidRestoreSpeed', ...
                         '%s restore speed must be positive.', axis);
                 end
+                config = plc.ads.readAxisConfig(axis);
+                PlcCommandValidator.rate( ...
+                    speed, config, 'Restore speed');
             end
 
-            plc.ensurePowered(axes);
             for index = 1:numel(axes)
                 axis = axes{index};
                 plc.ads.prepareRestore(axis, speeds.(axis));
@@ -389,7 +454,7 @@ classdef Plc < handle
                             'the controller; home again or repair persistent ' ...
                             'storage first.'], checkpoint.errorID);
                     end
-                    if checkpoint.saved && ...
+                    if checkpoint.saved && ~checkpoint.busy && ...
                             checkpoint.counter ~= checkpointBefore
                         return;
                     end
@@ -459,6 +524,52 @@ classdef Plc < handle
                 '%s axis did not power on within 5 seconds.', axisName);
         end
 
+        function requireAxisReady(~, axisName, statusNow)
+            ready = statusNow.powered && statusNow.homed && ...
+                ~statusNow.homing && statusNow.stopped && ...
+                ~statusNow.working && ~statusNow.error;
+            if ~ready
+                error('PLC:AxisNotReady', ...
+                    ['%s axis must be powered, homed, stopped, idle, ' ...
+                    'and error-free.'], axisName);
+            end
+        end
+
+        function recoverAmbiguousStart(plc, axes)
+            % A transport exception cannot reveal whether the trigger write
+            % reached TwinCAT. Halt every candidate and confirm fresh state.
+            for index = 1:numel(axes)
+                try
+                    plc.ads.writeCommand(axes{index}, 'halt');
+                catch
+                end
+            end
+            deadline = tic;
+            while toc(deadline) < 2
+                try
+                    statuses = plc.pollStatus();
+                    if plc.axesStopped(axes, statuses)
+                        return;
+                    end
+                catch
+                end
+                pause(0.05);
+                drawnow limitrate;
+            end
+            warning('PLC:AmbiguousStartRecovery', ...
+                ['A test trigger failed and stopped state could not be ' ...
+                'confirmed. Treat all candidate axes as potentially moving.']);
+        end
+
+        function stopped = axesStopped(~, axes, statuses)
+            stopped = true;
+            for index = 1:numel(axes)
+                statusNow = statuses.(axes{index});
+                stopped = stopped && statusNow.stopped && ...
+                    ~statusNow.working;
+            end
+        end
+
         function writeCommandForAxes(plc, axes, commandName)
             plc.requireConnection();
             axes = plc.normalizeAxes(axes);
@@ -496,6 +607,9 @@ classdef Plc < handle
             if ~isempty(plc.ads)
                 plc.ads.resetStreamingState();
             end
+            plc.jogLeaseCounters = ...
+                struct('X', uint32(0), 'Y', uint32(0));
+            plc.activeJog = struct('X', false, 'Y', false);
         end
 
     end

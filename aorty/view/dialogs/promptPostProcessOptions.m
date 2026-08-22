@@ -6,7 +6,7 @@ function settings = promptPostProcessOptions(parent)
 settings = [];
 parentPosition = parent.Position;
 width = 430;
-height = 190;
+height = 230;
 position = [ ...
     parentPosition(1) + (parentPosition(3) - width) / 2, ...
     parentPosition(2) + (parentPosition(4) - height) / 2, ...
@@ -16,8 +16,8 @@ dialog = uifigure( ...
     'Resize', 'off', 'WindowStyle', 'modal');
 dialog.CloseRequestFcn = @cancelDialog;
 
-grid = uigridlayout(dialog, [3, 2]);
-grid.RowHeight = {36, 36, 42};
+grid = uigridlayout(dialog, [4, 2]);
+grid.RowHeight = {36, 36, 36, 42};
 grid.ColumnWidth = {'1x', 130};
 grid.Padding = [14, 14, 14, 14];
 grid.RowSpacing = 8;
@@ -30,15 +30,21 @@ includeCheck = uicheckbox(grid, ...
     'Text', 'Include pre-test', 'Value', false);
 includeCheck.Layout.Row = 2;
 includeCheck.Layout.Column = [1, 2];
+legacyTimestampCheck = uicheckbox(grid, ...
+    'Text', 'Recover known legacy timestamp overlap', 'Value', false, ...
+    'Tooltip', ['Use only for an older recording known to contain ' ...
+    'callback-overlap timestamps.']);
+legacyTimestampCheck.Layout.Row = 3;
+legacyTimestampCheck.Layout.Column = [1, 2];
 cancelButton = uibutton(grid, 'Text', 'Cancel', ...
     'ButtonPushedFcn', @cancelDialog);
-cancelButton.Layout.Row = 3;
+cancelButton.Layout.Row = 4;
 cancelButton.Layout.Column = 1;
 processButton = uibutton(grid, 'Text', 'Process', ...
     'FontWeight', 'bold', ...
     'BackgroundColor', [0.72, 0.88, 0.72], ...
     'ButtonPushedFcn', @acceptDialog);
-processButton.Layout.Row = 3;
+processButton.Layout.Row = 4;
 processButton.Layout.Column = 2;
 
 % Block only this dialog; callbacks assign the result before resuming.
@@ -50,9 +56,14 @@ restoreFigureFocus(parent);
 
     function acceptDialog(~, ~)
         % Copy UI values before the figure is deleted by the outer scope.
+        timestampPolicy = 'strict';
+        if legacyTimestampCheck.Value
+            timestampPolicy = 'legacy-fixed-rate';
+        end
         settings = struct( ...
             'samplingPeriod', periodField.Value, ...
-            'includePrePost', includeCheck.Value);
+            'includePrePost', includeCheck.Value, ...
+            'timestampPolicy', timestampPolicy);
         uiresume(dialog);
     end
 

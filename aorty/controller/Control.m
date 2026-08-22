@@ -66,6 +66,9 @@ classdef Control < handle
             end
             try
                 [fx, fy, ufx, ufy, px, py, statuses] = controler.plc.fifoProcess();
+                % Renew maintained-jog leases only after a complete, fresh
+                % PLC snapshot proves that communication is still healthy.
+                controler.plc.renewJogLeases();
                 readTime = datetime('now');
                 xTimes = controler.sampleTimes(readTime, numel(fx), 'X');
                 yTimes = controler.sampleTimes(readTime, numel(fy), 'Y');
@@ -218,7 +221,14 @@ classdef Control < handle
                 ['general-', lower(char(definition.testType))]);
         end
 
-        function result = runManualPostProcessing(controler, folderPath, samplingPeriod, includePrePost)
+        function result = runManualPostProcessing(controler, folderPath, ...
+                samplingPeriod, includePrePost, timestampPolicy, ...
+                progressCallback, cancelCallback)
+            if nargin < 5 || isempty(timestampPolicy)
+                timestampPolicy = 'strict';
+            end
+            if nargin < 6, progressCallback = []; end
+            if nargin < 7, cancelCallback = []; end
             if controler.testRunning || controler.model.isRecording || controler.model.filesOpen
                 error('Control:RecordingActive', ...
                     ['Post-processing cannot start while a test ' ...
@@ -227,6 +237,9 @@ classdef Control < handle
             options = struct( ...
                 'samplingPeriod', double(samplingPeriod), ...
                 'phaseScope', controler.phaseScope(includePrePost), ...
+                'timestampPolicy', char(timestampPolicy), ...
+                'progressCallback', progressCallback, ...
+                'cancelCallback', cancelCallback, ...
                 'outputFolder', ...
                 controler.manualOutputFolder(folderPath));
             result = PostProcessor.processData(folderPath, options);
@@ -289,7 +302,9 @@ classdef Control < handle
                     ['Connect the camera before starting a recorded ' ...
                     'test.']);
             end
-            statuses = controler.plc.pollStatus();
+            % Reject machine-state and hardware-profile problems before the
+            % operator chooses a folder or any recording files are created.
+            statuses = controler.plc.preflightTestSequence(commands);
             axes = controler.commandAxes(commands);
             controler.samples.clear();
             controler.activePostProcessSettings = ...
@@ -311,6 +326,7 @@ classdef Control < handle
             controler.model.recordingRestartDetected = false;
             controler.activeTestAxes = axes;
             controler.setOperationActive(true);
+            triggerAttempted = false;
             try
                 if recordEnabled
                     header = controler.buildRecordingHeader( ...
@@ -341,8 +357,23 @@ classdef Control < handle
                 controler.operationStartRestarts = ...
                     controler.plc.restartCounts;
                 controler.testRunning = true;
+                triggerAttempted = true;
                 controler.plc.sendTestSequence(commands);
             catch exception
+                % ADS can fail after delivering a start pulse. Once a
+                % trigger was attempted, its outcome is unknown until a
+                % fresh status proves otherwise, so always request a halt.
+                if triggerAttempted
+                    try
+                        controler.plc.stop(axes);
+                        controler.plc.pollStatus();
+                    catch haltException
+                        warning('Control:UnknownCommandOutcome', ...
+                            ['The start outcome is unknown and the halt ' ...
+                            'could not be confirmed: %s'], ...
+                            haltException.message);
+                    end
+                end
                 controler.testRunning = false;
                 controler.activeTestAxes = {};
                 if recordEnabled
@@ -581,11 +612,11 @@ classdef Control < handle
 
         function updateStatusUI(controler, statuses)
             if isempty(controler.app) || ~isvalid(controler.app) || ...
-                    ~ismethod(controler.app, 'updateErrorStatus')
+                    ~ismethod(controler.app, 'updatePlcErrorStatus')
                 return;
             end
             messages = PlcErrorCatalog.messagesForStatuses(statuses);
-            controler.app.updateErrorStatus(~isempty(messages), ...
+            controler.app.updatePlcErrorStatus(~isempty(messages), ...
                 strjoin(messages, newline));
         end
 
@@ -627,7 +658,8 @@ classdef Control < handle
             end
             postSettings = controler.activePostProcessSettings;
             controler.activePostProcessSettings.enabled = false;
-            if postSettings.enabled && isempty(flushError)
+            if postSettings.enabled && isempty(flushError) && ...
+                    strcmp(recordingStatus, 'completed')
                 options = struct( ...
                     'samplingPeriod', postSettings.samplingPeriod, ...
                     'phaseScope', ...
@@ -636,14 +668,19 @@ classdef Control < handle
                     controler.model.selectedFolder, ...
                     'processed_frames'));
                 try
-                    PostProcessor.processData( ...
+                    result = PostProcessor.processData( ...
                         controler.model.selectedFolder, options);
+                    if isfield(result, 'status') && ...
+                            strcmpi(result.status, 'recovered')
+                        warning('Control:PostProcessRecovered', ...
+                            ['Post-processing recovered incomplete input; ' ...
+                            'review the output provenance before use.']);
+                    end
                 catch exception
                     warning('Control:PostProcess', '%s', exception.message);
                     if ~isempty(controler.app) && isvalid(controler.app)
-                        controler.app.updateErrorStatus(true, ...
-                            sprintf('Post-processing failed: %s', ...
-                            exception.message));
+                        controler.app.reportApplicationAlert( ...
+                            'Post-processing', exception.message);
                     end
                 end
             end
@@ -652,9 +689,8 @@ classdef Control < handle
             if ~isempty(flushError)
                 warning('Control:RecordingWrite', '%s', flushError.message);
                 if ~isempty(controler.app) && isvalid(controler.app)
-                    controler.app.updateErrorStatus(true, ...
-                        sprintf('Recording write error: %s', ...
-                        flushError.message));
+                    controler.app.reportApplicationAlert( ...
+                        'Recording', flushError.message);
                 end
             end
         end
@@ -731,8 +767,8 @@ classdef Control < handle
                 controler.safeAbort([titleText, ': ', exception.message]);
             end
             if ~isempty(controler.app) && isvalid(controler.app)
-                controler.app.updateErrorStatus(true, ...
-                    sprintf('%s: %s', titleText, exception.message));
+                controler.app.reportApplicationAlert( ...
+                    titleText, exception.message);
             end
         end
 

@@ -7,9 +7,12 @@ VAR_INPUT
 	fActPosition  : LREAL; // Absolute NC position
 	bPowerState   : BOOL;  // Actual power on state
 	bHaltDone     : BOOL;  // Motor stopped
+	bAxisStopped  : BOOL;  // Fresh safety/NC standstill state
 	bSafetyError  : BOOL;
 	bProtectiveStop : BOOL;
 	bExternalBusy : BOOL;
+	bReferenceValid : BOOL; // Current home/reference belongs to this coordinate system
+	bInvalidateSavedPosition : BOOL; // Home request invalidates saved absolute coordinates
 	bSyncEnabled  : BOOL;  // TRUE only for a PLC-owned biaxial test
 	bSyncRelease  : BOOL;  // Shared barrier release from MAIN
 	bSyncAbort    : BOOL;  // Stop this axis when the synchronized peer aborts
@@ -70,6 +73,9 @@ VAR
 	rtSavePosition      : R_TRIG;
 	rtRestorePosition   : R_TRIG;
 	rtSyncAbort         : R_TRIG;
+	fbJogLease          : TON;
+	nLastJogLeaseCounter : UDINT;
+	bJogLeaseRenewed    : BOOL;
 
 	// Generic endpoint engine for test-sequence mode 3
 	nCurrentCycle           : INT;
@@ -98,7 +104,9 @@ VAR
 	fStop2TargetPosition  : LREAL;
 	fStop2StartError      : LREAL;
 	fStop2CurrentError    : LREAL;
+	fSingleStartForce     : LREAL;
 	fSinglePeakForce      : LREAL;
+	bSingleRuptureArmed   : BOOL;
 	
 END_VAR
 
@@ -160,6 +168,7 @@ VAR CONSTANT
 	STATE_FORCE_WAIT_STOP : INT := 313;
 	STATE_FORCE_HOLD : INT := 314;
 	STATE_FORCE_EXIT_WAIT_STOP : INT := 315;
+	STATE_FORCE_READY_WAIT_STOP : INT := 316;
 	STATE_ABORT_STOPPING : INT := 900;
 	STATE_RELIEF_WAIT_STOP : INT := 910;
 	STATE_RELIEF_START : INT := 911;
@@ -174,6 +183,8 @@ VAR CONSTANT
 	ERROR_INVALID_CONFIGURATION : UDINT := 2007;
 	ERROR_COMMAND_CONFLICT : UDINT := 2008;
 	ERROR_INVALID_RUNTIME_VALUE : UDINT := 2009;
+	ERROR_JOG_LEASE_EXPIRED : UDINT := 2011;
+	ERROR_VELOCITY_LIMIT : UDINT := 2012;
 	ERROR_RELIEF_COMPLETED : UDINT := 2101;
 	ERROR_RELIEF_DIRECTION_UNKNOWN : UDINT := 2102;
 	ERROR_RELATIVE_MOVE : UDINT := 2201;
@@ -194,9 +205,37 @@ END_VAR
 rtSavePosition(CLK := stMoveCommand.bSavePosition);
 rtRestorePosition(CLK := stMoveCommand.bRestorePosition);
 rtSyncAbort(CLK := bSyncEnabled AND bSyncAbort);
-IF rtSavePosition.Q AND nSeqState = STATE_IDLE AND NOT bExternalBusy THEN
+
+// Saved positions are absolute NC coordinates. A new home/reference changes
+// their meaning, so discard them as soon as homing starts or reference is lost.
+IF bInvalidateSavedPosition OR NOT bReferenceValid THEN
+	bSavedPositionValid := FALSE;
+END_IF
+
+IF rtSavePosition.Q AND nSeqState = STATE_IDLE AND NOT bExternalBusy AND
+	bReferenceValid AND bAxisStopped THEN
 	fSavedPosition := fActPosition;
 	bSavedPositionValid := TRUE;
+END_IF
+
+// A maintained jog must be renewed by the ADS owner. The monotonically
+// increasing counter makes a stale TRUE bExecute harmless after owner loss.
+bJogLeaseRenewed := nSeqState = STATE_MODE_RUN AND
+	stMoveCommand.nMode = 1 AND
+	stMoveCommand.nJogLeaseCounter <> nLastJogLeaseCounter;
+IF bJogLeaseRenewed THEN
+	nLastJogLeaseCounter := stMoveCommand.nJogLeaseCounter;
+END_IF
+fbJogLease(
+	IN := nSeqState = STATE_MODE_RUN AND stMoveCommand.nMode = 1 AND
+		NOT bJogLeaseRenewed,
+	PT := T#750MS);
+IF fbJogLease.Q AND NOT bError AND NOT bSafetyError THEN
+	stMoveCommand.bExecute := FALSE;
+	SetError(
+		nCode := ERROR_JOG_LEASE_EXPIRED,
+		nNativeErrorID := 0,
+		bRequestHalt := TRUE);
 END_IF
 
 // =========================================================
@@ -364,7 +403,7 @@ IF rtRestorePosition.Q AND nSeqState = STATE_IDLE AND
 			nCode := ERROR_POWER_UNAVAILABLE,
 			nNativeErrorID := 0,
 			bRequestHalt := TRUE);
-	ELSIF NOT bSavedPositionValid THEN
+	ELSIF NOT bReferenceValid OR NOT bSavedPositionValid THEN
 		stMoveCommand.bExecute := FALSE;
 		SetError(
 			nCode := ERROR_SAVED_POSITION_UNAVAILABLE,
@@ -377,6 +416,12 @@ IF rtRestorePosition.Q AND nSeqState = STATE_IDLE AND
 		stMoveCommand.bExecute := FALSE;
 		SetError(
 			nCode := ERROR_INVALID_RUNTIME_VALUE,
+			nNativeErrorID := 0,
+			bRequestHalt := TRUE);
+	ELSIF ABS(stMoveCommand.fRestoreVelocity) > ABS(stSettings.fMaxVelocity) THEN
+		stMoveCommand.bExecute := FALSE;
+		SetError(
+			nCode := ERROR_VELOCITY_LIMIT,
 			nNativeErrorID := 0,
 			bRequestHalt := TRUE);
 	ELSE
@@ -414,7 +459,7 @@ IF NOT bError AND NOT bSafetyError AND
 		nSeqState <= STATE_POSITION_BARRIER THEN
 		positionEndpoint();
 	ELSIF nSeqState >= STATE_FORCE_PREPARE AND
-		nSeqState <= STATE_FORCE_EXIT_WAIT_STOP THEN
+		nSeqState <= STATE_FORCE_READY_WAIT_STOP THEN
 		forceEndpoint();
 	ELSIF nSeqState = STATE_RESTORE_COMPLETE THEN
 		testSequence();
@@ -440,13 +485,13 @@ END_IF
 fbMC_MoveRelative1(
 	Axis := Axis,
 	Distance := fTargetDist1,
-	Velocity := fTargetVel1,
+	Velocity := MIN(ABS(fTargetVel1), ABS(stSettings.fMaxVelocity)),
 	BufferMode := MC_Aborting);
 
 fbMC_MoveVelocity(
 	Axis := Axis,
 	Execute := bExecuteVelMove,
-	Velocity := ABS(fCmdVelocity),
+	Velocity := MIN(ABS(fCmdVelocity), ABS(stSettings.fMaxVelocity)),
 	Direction := mcDirection,
 	BufferMode := MC_Aborting);
 
@@ -673,9 +718,20 @@ CASE nSeqState OF
 					IF fForceHoldElapsed >= fEndpointHoldTime THEN
 						IF bSyncEnabled AND
 							nEndpointSyncPoint <> SYNC_NONE THEN
-							bForceEndpointReady := TRUE;
-							nSyncPoint := nEndpointSyncPoint;
-							nSyncCycle := nEndpointSyncCycle;
+							// Publish barrier readiness only at confirmed
+							// standstill. Otherwise both axes could be released
+							// while one is still executing a correction.
+							bExecuteVelMove := FALSE;
+							IF nVelocityState = 4 THEN
+								bForceEndpointReady := TRUE;
+								nSyncPoint := nEndpointSyncPoint;
+								nSyncCycle := nEndpointSyncCycle;
+							ELSE
+								stateHalt := TRUE;
+								nVelocityState := 3;
+								nSeqState :=
+									STATE_FORCE_READY_WAIT_STOP;
+							END_IF
 						ELSE
 							bExecuteVelMove := FALSE;
 							IF nVelocityState = 4 THEN
@@ -703,6 +759,20 @@ CASE nSeqState OF
 			nVelocityState := 4;
 			nSeqState := nAfterEndpointState;
 		END_IF
+
+	STATE_FORCE_READY_WAIT_STOP:
+		bExecuteVelMove := FALSE;
+		IF bHaltDone THEN
+			stateHalt := FALSE;
+			nVelocityState := 4;
+			fForceError := fEndpointTargetForce - fForce;
+			IF ABS(fForceError) <= fEndpointTolerance THEN
+				bForceEndpointReady := TRUE;
+				nSyncPoint := nEndpointSyncPoint;
+				nSyncCycle := nEndpointSyncCycle;
+			END_IF
+			nSeqState := STATE_FORCE_HOLD;
+		END_IF
 END_CASE
 ]]></ST>
       </Implementation>
@@ -717,17 +787,37 @@ END_CASE
 CASE nSeqState OF
 	STATE_IDLE:
 		IF stMoveCommand.bExecute THEN
-			nSystemStatus := STATUS_BASIC_MOVE;
-			fCmdVelocity := ABS(stMoveCommand.fMoveVelocity);
-			IF stMoveCommand.fMoveVelocity > 0.0 THEN
-				mcDirection := MC_Positive_Direction;
-				nLastMotionDirection := 1;
+			IF NOT ((stMoveCommand.fMoveVelocity =
+				stMoveCommand.fMoveVelocity) AND
+				ABS(stMoveCommand.fMoveVelocity) > 0.0 AND
+				ABS(stMoveCommand.fMoveVelocity) < 1.0E300) THEN
+				stMoveCommand.bExecute := FALSE;
+				SetError(
+					nCode := ERROR_INVALID_RUNTIME_VALUE,
+					nNativeErrorID := 0,
+					bRequestHalt := TRUE);
+			ELSIF ABS(stMoveCommand.fMoveVelocity) >
+				ABS(stSettings.fMaxVelocity) THEN
+				stMoveCommand.bExecute := FALSE;
+				SetError(
+					nCode := ERROR_VELOCITY_LIMIT,
+					nNativeErrorID := 0,
+					bRequestHalt := TRUE);
 			ELSE
-				mcDirection := MC_Negative_Direction;
-				nLastMotionDirection := -1;
+				nSystemStatus := STATUS_BASIC_MOVE;
+				fCmdVelocity := ABS(stMoveCommand.fMoveVelocity);
+				IF stMoveCommand.fMoveVelocity > 0.0 THEN
+					mcDirection := MC_Positive_Direction;
+					nLastMotionDirection := 1;
+				ELSE
+					mcDirection := MC_Negative_Direction;
+					nLastMotionDirection := -1;
+				END_IF
+				nLastJogLeaseCounter :=
+					stMoveCommand.nJogLeaseCounter;
+				bExecuteVelMove := TRUE;
+				nSeqState := STATE_MODE_RUN;
 			END_IF
-			bExecuteVelMove := TRUE;
-			nSeqState := STATE_MODE_RUN;
 		END_IF
 
 	STATE_MODE_RUN:
@@ -1030,8 +1120,14 @@ IF bSinglePrimaryActive AND stMoveCommand.nStop2Mode > 0 THEN
 			bSingleStopReached := TRUE;
 		END_IF
 	ELSIF stMoveCommand.nStop2Mode = 3 THEN
-		fSinglePeakForce := MAX(fSinglePeakForce, ABS(fForce));
-		IF fSinglePeakForce > 0.0 AND ABS(fForce) <= fSinglePeakForce *
+		IF NOT bSingleRuptureArmed AND
+			ABS(fForce) >= fSingleStartForce + stSettings.fForceTolerance THEN
+			bSingleRuptureArmed := TRUE;
+		END_IF
+		IF bSingleRuptureArmed THEN
+			fSinglePeakForce := MAX(fSinglePeakForce, ABS(fForce));
+		END_IF
+		IF bSingleRuptureArmed AND ABS(fForce) <= fSinglePeakForce *
 			(1.0 - stMoveCommand.fStop2Value / 100.0) THEN
 			bSingleStopReached := TRUE;
 		END_IF
@@ -1060,7 +1156,27 @@ CASE nSeqState OF
 
 		IF stMoveCommand.bExecute THEN
 			stMoveCommand.bExecute := FALSE;
-			IF stMoveCommand.nCycleCount < 0 OR
+			IF (stMoveCommand.bIncludePreTest AND
+				(stMoveCommand.bPreloadEnabled OR
+				 stMoveCommand.nPreCycleCount > 0) AND
+				(NOT ((stMoveCommand.fPreTestRate =
+					stMoveCommand.fPreTestRate) AND
+					ABS(stMoveCommand.fPreTestRate) > 0.0 AND
+					ABS(stMoveCommand.fPreTestRate) < 1.0E300) OR
+				 ABS(stMoveCommand.fPreTestRate) >
+					ABS(stSettings.fMaxVelocity))) OR
+				(NOT stMoveCommand.bPreTestOnly AND
+				 (NOT ((stMoveCommand.fTestRate =
+					stMoveCommand.fTestRate) AND
+					ABS(stMoveCommand.fTestRate) > 0.0 AND
+					ABS(stMoveCommand.fTestRate) < 1.0E300) OR
+				  ABS(stMoveCommand.fTestRate) >
+					ABS(stSettings.fMaxVelocity))) THEN
+				SetError(
+					nCode := ERROR_VELOCITY_LIMIT,
+					nNativeErrorID := 0,
+					bRequestHalt := TRUE);
+			ELSIF stMoveCommand.nCycleCount < 0 OR
 				stMoveCommand.nCycleCount > 50 OR
 				stMoveCommand.nPreCycleCount < 0 OR
 				stMoveCommand.nPreCycleCount > 50 OR
@@ -1085,7 +1201,9 @@ CASE nSeqState OF
 					stMoveCommand.fCyclicForceTolerance >= -100.0) OR
 				NOT ((stMoveCommand.fCyclicForceHoldTime = stMoveCommand.fCyclicForceHoldTime) AND
 					ABS(stMoveCommand.fCyclicForceHoldTime) < 1.0E300 AND
-					stMoveCommand.fCyclicForceHoldTime >= 0.0) THEN
+					stMoveCommand.fCyclicForceHoldTime >= 0.0) OR
+				(stMoveCommand.nStop2Mode = 3 AND
+					stSettings.fForceTolerance <= 0.0) THEN
 				bError := TRUE;
 				nErrorCode := ERROR_INVALID_CONFIGURATION;
 				stateHalt := TRUE;
@@ -1349,7 +1467,9 @@ CASE nSeqState OF
 		nSystemStatus := STATUS_SINGLE_TEST;
 		bSingleStopReached := FALSE;
 		bSinglePrimaryActive := TRUE;
-		fSinglePeakForce := ABS(fForce);
+		fSingleStartForce := ABS(fForce);
+		fSinglePeakForce := fSingleStartForce;
+		bSingleRuptureArmed := FALSE;
 
 		IF stMoveCommand.nStop2Mode = 1 THEN
 			fStop2TargetPosition := fPreTestFinalPos + stMoveCommand.fStop2Value;
@@ -1423,7 +1543,7 @@ CASE nSeqState OF
 				nSeqState := STATE_POSTTEST_WAIT_STOP;
 
 			1: // Return to the separately saved coordinate.
-				IF bSavedPositionValid THEN
+				IF bReferenceValid AND bSavedPositionValid THEN
 					PreparePositionEndpoint(
 						fTargetPosition := fSavedPosition,
 						fRate := stMoveCommand.fTestRate,

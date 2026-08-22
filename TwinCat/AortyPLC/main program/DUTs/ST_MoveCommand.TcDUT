@@ -5,6 +5,7 @@
 	STRUCT
 		// Mode 1: maintained jog
 		fMoveVelocity : LREAL; // Signed jog velocity while bExecute is TRUE
+		nJogLeaseCounter : UDINT; // Must change periodically while a jog is held
 
 		// Mode 2: one PI-regulated force hold
 		fTargetForce   : LREAL;

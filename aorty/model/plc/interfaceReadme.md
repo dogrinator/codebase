@@ -5,7 +5,7 @@ MATLAB application and the TwinCAT PLC. It also documents the acquisition,
 recording, post-processing, and offline communication-test contracts that
 depend on PLC status data.
 
-The deployed ADS contract is interface version `6`.
+The deployed ADS contract is interface version `7`.
 
 ## Component responsibilities
 
@@ -49,7 +49,7 @@ The checked-in deployment defaults in `Plc.m` are:
 | --- | --- |
 | AMS Net ID | `5.85.113.174.1.1` |
 | ADS port | `851` |
-| Expected interface | `6` |
+| Expected interface | `7` |
 | MATLAB PLC read period | `0.25 s` |
 | PLC task period | `10 ms` |
 
@@ -63,7 +63,7 @@ Connection initialization performs this order:
 2. Create all X and Y status, command, and settings handles.
 3. Create the shared `MAIN.bStartBiaxialTest` handle.
 4. Read one complete status packet for each axis.
-5. Reject either axis if `nInterfaceVersion` is not `6`.
+5. Reject either axis if `nInterfaceVersion` is not `7`.
 6. Allocate the 50-element command buffers and reset stream counters.
 
 Every handle is registered immediately. If initialization fails partway
@@ -91,7 +91,7 @@ direct `ReadAny`/`WriteAny` calls.
 
 | Mode | Meaning | Primary fields | Start |
 | ---: | --- | --- | --- |
-| `1` | Maintained jog | signed `fMoveVelocity` | selected-axis `bExecute` while pressed |
+| `1` | Maintained jog | signed `fMoveVelocity`, renewed `nJogLeaseCounter` | selected-axis `bExecute` while pressed |
 | `2` | Constant force for accumulated duration | `fTargetForce`, `fForceDuration` | Selected-axis `bExecute` |
 | `3` | Pre-test + Single/Cyclic + post-test sequence | Remaining test fields | Axis `bExecute` or shared biaxial start |
 
@@ -99,6 +99,7 @@ direct `ReadAny`/`WriteAny` calls.
 
 | Fields | Behavior |
 | --- | --- |
+| `fMoveVelocity`, `nJogLeaseCounter` | Signed jog velocity and monotonic lease heartbeat; 750 ms without renewal halts jog with error `2011` |
 | `bPower` | Maintained motor-enable request |
 | `bHalt`, `bReset`, `bHome`, `bStartTar` | Service requests |
 | `bSavePosition` | Captures a PLC-owned return coordinate while idle |
@@ -114,6 +115,11 @@ persistent incremental-axis coordinate without motion when axis power becomes
 available; if no valid coordinate exists, the operator must run normal homing.
 The Save/Restore service above remains a separate return-position feature.
 
+Test, jog, save, and restore require a freshly polled powered, homed,
+non-homing, stopped, idle, error-free status. MATLAB checks active rates and
+force targets against live per-axis settings before writing. Test preflight is
+read-only and repeats immediately before the start transaction.
+
 ### Test-sequence fields
 
 | Group | Fields |
@@ -127,10 +133,16 @@ The Save/Restore service above remains a separate return-position feature.
 | Main endpoint rules | `fSingleForceTolerance`, `fSingleForceHoldTime`, `fCyclicForceTolerance`, `fCyclicForceHoldTime` |
 | Completion action | `nPostTestMode` |
 
-Mode values are `0` off, `1` displacement, and `2` force where an endpoint
-mode supports off. The main `nCycleCount` is `0` for Single and `1..50` for
-Cyclic. The command arrays always contain exactly 50 `LREAL` values; MATLAB
-pads unused elements with zero.
+Endpoint mode values are `0` off, `1` displacement, and `2` force where off is
+supported. Single criterion 2 additionally supports `3`, percentage-drop
+rupture. The main `nCycleCount` is `0` for Single and `1..50` for Cyclic. The
+command arrays always contain exactly 50 `LREAL` values; MATLAB pads unused
+elements with zero.
+
+Rupture tracking records the absolute force at Single-test start and arms only
+after the observed force rises by at least the applied hardware
+`fForceTolerance`. The configured percentage drop is evaluated from the peak
+only after arming; therefore `fForceTolerance` must be positive.
 
 Application preset schema version 2 stores Pre-test, Single-test, and
 Cyclic-test tolerances as percentages. MATLAB writes these percentages as
@@ -380,13 +392,24 @@ test axis is active.
 
 Legacy CSV recordings are rejected. If an interrupted but readable recording
 has extra timestamp rows or trailing/incomplete binary bytes, post-processing
-warns and uses every complete frame/timestamp pair. A recording with no camera
-frames produces no TIFF directory.
+warns and uses every complete frame/timestamp pair. Such output is reported as
+`recovered`, never completed. Automatic processing runs only for a recording
+finalized as completed; recovery of aborted input is an explicit manual action.
+A recording with no camera frames produces no TIFF directory.
+
+Final metadata writes are idempotent and retryable after the append handles are
+closed. A retry preserves the first finalization request's status, reason,
+counts, integrity values, and end time. The recording schema remains version 1.
 
 ## TIFF post-processing contract
 
 Automatic processing writes `processed_frames`. Manual processing writes a
 unique `processed_frames_manual_<timestamp>` directory.
+
+Frames are first written to a private sibling staging directory. The requested
+output directory is published only after all selected frames succeed. Existing
+output paths are never replaced; a cancelled or failed invocation removes only
+its own staging directory.
 
 Phase eligibility is evaluated before interval sampling:
 
@@ -398,6 +421,18 @@ Phase eligibility is evaluated before interval sampling:
   PLC edge values are never extrapolated onto those frames.
 - Sampling restarts at a status transition or after an ineligible gap.
 - Sampling period `0` exports every eligible frame.
+
+`PostProcessor.processData` returns `status` as `completed`, `recovered`, or
+`skipped`, plus the source recording status, recovery details, and the count of
+eligible frames skipped outside common PLC coverage. The optional
+`progressCallback(completed,total)` and `cancelCallback()` options support UI or
+batch orchestration.
+
+PLC timestamps must be monotonic by default. For a known legacy recording whose
+adjacent ADS batches overlap because they were anchored to callback time, set
+`timestampPolicy` to `legacy-fixed-rate`. This explicit recovery rebuilds the
+whole axis at the recorded PLC interval and marks the output recovered; it does
+not modify `recording.h5`.
 
 Every generated file is named `processed_frame_%04d.tif` and preserves this
 external integration contract:
@@ -428,8 +463,11 @@ camera.
 | `testRecordingLifecycle.m` | HDF5 structure, lifecycle, settings/commands, counters, loss/restart metadata, and recording abort behavior |
 | `testPostProcessor.m` | Status filtering, sampling restart, interrupted data, TIFF binary layout, and legacy rejection |
 | `testGeneralTestDefinition.m` | Strict JSON schema, boundary values, tolerance rules, and command mapping |
-| `testUiPlcContract.m` | UI/controller use of the current version-6 fields and removal of legacy controls |
+| `testUiPlcContract.m` | UI/controller use of the current version-7 fields and removal of legacy controls |
 | `testRefactoringComponents.m` | Preset/General command builders, acquisition buffering, plot references, and strict hardware settings |
+| `testApplicationLifecycle.m` | Single-instance startup, owned timers, live UI behavior, plots, and settings-window lifecycle |
+| `testSettingsPaths.m` | Path independence, remembered profiles, preset migration, safe names, and camera profile application |
+| `testTestValidation.m` | HDF5-only analysis, integrity warnings, plots, explicit legacy timestamp recovery, and metric availability |
 
 Run all offline checks:
 

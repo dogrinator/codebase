@@ -8,14 +8,20 @@ classdef TestValidation < handle
 
     methods
         %% Loading, analysis, and plotting
-        function validator = TestValidation(filePath)
+        function validator = TestValidation(filePath, timestampPolicy)
             if nargin < 1
                 error('TestValidation:MissingRecording', ...
                     ['Provide a recording.h5 path or call ' ...
                     'TestValidation.open() to choose one.']);
             end
+            if nargin < 2 || isempty(timestampPolicy)
+                timestampPolicy = 'strict';
+            end
+            timestampPolicy = TestValidation.timestampPolicy( ...
+                timestampPolicy);
             validator.FilePath = TestValidation.normalizePath(filePath);
-            validator.Recording = TestValidation.readRecording(validator.FilePath);
+            validator.Recording = TestValidation.readRecording( ...
+                validator.FilePath, timestampPolicy);
         end
 
         function metrics = analyze(validator)
@@ -139,11 +145,14 @@ classdef TestValidation < handle
 
     methods (Static)
         %% Interactive entry point
-        function [metrics, fig, validator] = open(filePath)
+        function [metrics, fig, validator] = open(filePath, timestampPolicy)
             % Select or open one recording, then analyse and plot it.
             metrics = [];
             fig = gobjects(0);
             validator = [];
+            if nargin < 2 || isempty(timestampPolicy)
+                timestampPolicy = 'strict';
+            end
             if nargin < 1 || isempty(filePath)
                 [name, folder] = uigetfile( ...
                     {'*.h5;*.hdf5', ...
@@ -154,7 +163,7 @@ classdef TestValidation < handle
                 end
                 filePath = fullfile(folder, name);
             end
-            validator = TestValidation(filePath);
+            validator = TestValidation(filePath, timestampPolicy);
             metrics = validator.analyze();
             fig = validator.plot();
         end
@@ -261,7 +270,9 @@ classdef TestValidation < handle
                 definition = definitions(index, :);
                 axisName = char(definition.Axis);
                 samples = recording.(axisName);
+                cyclicUnsegmented = definition.Status == 21;
                 available = ~definition.Ambiguous && ...
+                    ~cyclicUnsegmented && ...
                     ~isempty(recording.Camera) && ~isempty(samples);
                 firstReach = NaN;
                 overshoot = NaN;
@@ -277,6 +288,13 @@ classdef TestValidation < handle
                     warnings(end + 1, 1) = sprintf( ...
                         ['%s-axis %s uses variable per-cycle targets; ' ...
                         'timing and overshoot metrics are unavailable.'], ...
+                        axisName, char(definition.Role)); %#ok<AGROW>
+                elseif cyclicUnsegmented
+                    warnings(end + 1, 1) = sprintf( ...
+                        ['%s-axis %s timing and overshoot metrics are ' ...
+                        'unavailable because recording schema 1 does not ' ...
+                        'identify cyclic load/unload endpoint ' ...
+                        'transitions.'], ...
                         axisName, char(definition.Role)); %#ok<AGROW>
                 elseif available
                     statuses = TestValidation.sampleStatuses( ...
@@ -411,7 +429,7 @@ classdef TestValidation < handle
             path = attributes.Name;
         end
 
-        function recording = readRecording(filePath)
+        function recording = readRecording(filePath, timestampPolicy)
             warnings = strings(0, 1);
             try
                 schema = double(h5read( ...
@@ -454,9 +472,9 @@ classdef TestValidation < handle
             yValues = TestValidation.readRequiredDataset( ...
                 filePath, '/plc/Y/samples');
             [xSamples, recoveredX] = TestValidation.sampleTable( ...
-                xValues, 'X', plcInterval);
+                xValues, 'X', plcInterval, timestampPolicy);
             [ySamples, recoveredY] = TestValidation.sampleTable( ...
-                yValues, 'Y', plcInterval);
+                yValues, 'Y', plcInterval, timestampPolicy);
             if recoveredX
                 warnings(end + 1, 1) = ...
                     "X-axis timestamps were non-monotonic and were " + ...
@@ -537,7 +555,8 @@ classdef TestValidation < handle
         end
 
         %% Recorded sample and phase interpretation
-        function [samples, recovered] = sampleTable(values, axisName, interval)
+        function [samples, recovered] = sampleTable( ...
+                values, axisName, interval, timestampPolicy)
             if size(values, 1) ~= 4 || any(~isfinite(values), 'all')
                 error('TestValidation:InvalidRecording', ...
                     '%s-axis samples must contain four finite rows.', ...
@@ -545,6 +564,13 @@ classdef TestValidation < handle
             end
             recovered = false;
             if ~isempty(values) && any(diff(values(1, :)) < 0)
+                if ~strcmp(timestampPolicy, 'legacy-fixed-rate')
+                    error('TestValidation:NonMonotonicTimestamps', ...
+                        ['%s-axis timestamps are non-monotonic. Reopen ' ...
+                        'with timestampPolicy="legacy-fixed-rate" only ' ...
+                        'for a known legacy callback-overlap recording.'], ...
+                        axisName);
+                end
                 values(1, :) = values(1, 1) + ...
                     (0:size(values, 2) - 1) * interval;
                 recovered = true;
@@ -921,6 +947,19 @@ classdef TestValidation < handle
                 value = double(values.(name));
             else
                 value = default;
+            end
+        end
+
+        function value = timestampPolicy(value)
+            if ~(ischar(value) || ...
+                    (isstring(value) && isscalar(value)))
+                error('TestValidation:InvalidTimestampPolicy', ...
+                    'Timestamp policy must be one text value.');
+            end
+            value = lower(char(value));
+            if ~ismember(value, {'strict', 'legacy-fixed-rate'})
+                error('TestValidation:InvalidTimestampPolicy', ...
+                    'Unsupported timestamp policy: %s.', value);
             end
         end
 

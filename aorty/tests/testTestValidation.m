@@ -66,7 +66,8 @@ verifyEqual(testCase, preload.DirectionalOvershoot, ...
     0.05, 'AbsTol', 1e-12);
 verifyGreaterThanOrEqual(testCase, ...
     preload.LongestContinuousInToleranceSeconds, 1.0);
-verifyEmpty(testCase, metrics.Warnings);
+verifyTrue(testCase, any(contains(metrics.Warnings, ...
+    'recording schema 1 does not identify cyclic')));
 clear cleanup;
 end
 
@@ -125,14 +126,16 @@ verifyEqual(testCase, numel(findall(fig, 'Type', 'axes')), 2);
 clear figureCleanup cleanup;
 end
 
-function testLegacyTimestampsAreRecovered(testCase)
+function testLegacyTimestampsRequireExplicitRecovery(testCase)
 [folder, filename] = createRecording();
 cleanup = onCleanup(@() removeFolder(folder));
 values = h5read(filename, '/plc/X/samples');
 values(1, 4) = values(1, 3) - 0.01;
 h5write(filename, '/plc/X/samples', values);
 
-validator = TestValidation(filename);
+verifyError(testCase, @() TestValidation(filename), ...
+    'TestValidation:NonMonotonicTimestamps');
+validator = TestValidation(filename, 'legacy-fixed-rate');
 
 verifyGreaterThanOrEqual(testCase, ...
     diff(validator.Recording.X.ElapsedSeconds), 0);
@@ -140,6 +143,23 @@ verifyEqual(testCase, validator.Recording.X.ElapsedSeconds', ...
     0:0.1:4, 'AbsTol', 1e-12);
 verifyTrue(testCase, any(contains( ...
     validator.Recording.Warnings, 'X-axis timestamps')));
+clear cleanup;
+end
+
+function testConstantCyclicEndpointTimingIsUnavailable(testCase)
+[folder, filename] = createRecording();
+cleanup = onCleanup(@() removeFolder(folder));
+validator = TestValidation(filename);
+
+metrics = validator.analyze();
+cyclic = metrics.Targets(metrics.Targets.Status == 21, :);
+
+verifyNotEmpty(testCase, cyclic);
+verifyFalse(testCase, any(cyclic.MetricsAvailable));
+verifyTrue(testCase, all(isnan( ...
+    cyclic.TimeToFirstToleranceSeconds)));
+verifyTrue(testCase, any(contains(metrics.Warnings, ...
+    'recording schema 1 does not identify cyclic')));
 clear cleanup;
 end
 

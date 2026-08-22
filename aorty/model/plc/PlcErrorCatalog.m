@@ -27,6 +27,8 @@ classdef PlcErrorCatalog
                 case 2008, detail = 'Command conflicts with another operation';
                 case 2009, detail = 'Invalid numeric command or configuration';
                 case 2010, detail = 'Biaxial commands are unavailable or incompatible';
+                case 2011, detail = 'Jog command lease expired; motion was halted';
+                case 2012, detail = 'Requested velocity exceeds the configured axis limit';
                 case 2101, detail = 'Maximum force reached; relief movement completed';
                 case 2102, detail = 'Maximum force reached; relief direction unknown';
                 case 2201, detail = 'Relative movement block 1 error';

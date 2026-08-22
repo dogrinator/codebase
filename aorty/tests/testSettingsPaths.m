@@ -156,6 +156,56 @@ verifyEqual(testCase, camera.cameraSrc.AcquisitionFrameRateAbs, ...
 verifyEqual(testCase, camera.cameraSrc.AcquisitionFrameRateEnable, 'True');
 end
 
+function testInvalidHardwareCandidateDoesNotMutateSharedConfig(testCase)
+folder = tempname;
+mkdir(folder);
+cleanup = onCleanup(@() rmdir(folder, 's'));
+settings = Settings(Plc(Model()), Camera(Model()));
+settings.hwPath = folder;
+original = jsondecode(fileread(fullfile( ...
+    testCase.TestData.root, '.config', 'hwConfig', 'default.json')));
+settings.hwConfig = original;
+settings.activeHwConfigName = 'default';
+candidate = original;
+candidate.plc.xAxis.fTenzoCons = 0;
+
+verifyError(testCase, ...
+    @() settings.saveHwConfig('invalid', candidate), ...
+    'PLC:InvalidConfiguration');
+verifyEqual(testCase, settings.hwConfig, original);
+verifyEqual(testCase, settings.activeHwConfigName, 'default');
+verifyFalse(testCase, isfile(fullfile(folder, 'invalid.json')));
+clear cleanup;
+end
+
+function testReadingPresetCandidateDoesNotCommitSelection(testCase)
+settings = Settings(Plc(Model()), Camera(Model()));
+settings.loadHwConfig('default');
+settings.loadAppConfig('default');
+original = settings.appConfig;
+originalName = settings.activeAppConfigName;
+
+candidate = settings.readAppConfigCandidate('new_test');
+
+verifyNotEqual(testCase, candidate, original);
+verifyEqual(testCase, settings.appConfig, original);
+verifyEqual(testCase, settings.activeAppConfigName, originalName);
+end
+
+function testReadingHardwareCandidateDoesNotCommitSelection(testCase)
+settings = Settings(Plc(Model()), Camera(Model()));
+settings.loadHwConfig('default');
+original = settings.hwConfig;
+originalName = settings.activeHwConfigName;
+
+candidate = settings.readHwConfigCandidate('default');
+candidate.camera.exposureTimeAbs = candidate.camera.exposureTimeAbs + 1;
+
+verifyNotEqual(testCase, candidate, original);
+verifyEqual(testCase, settings.hwConfig, original);
+verifyEqual(testCase, settings.activeHwConfigName, originalName);
+end
+
 function writeJson(filename, value)
 fid = fopen(filename, 'w');
 assert(fid ~= -1);

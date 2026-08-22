@@ -114,6 +114,8 @@ result = PostProcessor.processData(folder, struct( ...
 
 verifyEqual(testCase, result.outputFolder, output);
 verifyEqual(testCase, result.exportedFrameCount, 2);
+verifyEqual(testCase, result.status, 'completed');
+verifyFalse(testCase, result.recovered);
 files = dir(fullfile(output, 'processed_frame_*.tif'));
 verifyEqual(testCase, {files.name}', ...
     {'processed_frame_0001.tif'; 'processed_frame_0002.tif'});
@@ -259,6 +261,32 @@ verifyWarning(testCase, @() PostProcessor.processData(folder, struct( ...
 clear cleanup;
 end
 
+function testRecoveredResultReportsInterruptedSourceAndCameraTail(testCase)
+folder = createSyntheticRecording();
+cleanup = onCleanup(@() removeTemporaryFolder(folder));
+filename = fullfile(folder, 'recording.h5');
+h5writeatt(filename, '/metadata', 'status', 'aborted');
+cameraFilename = fullfile(folder, 'cam.bin');
+fid = fopen(cameraFilename, 'ab');
+assert(fid ~= -1);
+fwrite(fid, uint8(1), 'uint8');
+fclose(fid);
+output = fullfile(folder, 'processed_frames_recovered');
+
+result = PostProcessor.processData(folder, struct( ...
+    'samplingPeriod', 0, 'phaseScope', 'complete-test', ...
+    'outputFolder', output));
+
+verifyEqual(testCase, result.status, 'recovered');
+verifyTrue(testCase, result.recovered);
+verifyEqual(testCase, result.sourceRecordingStatus, 'aborted');
+verifyTrue(testCase, result.recovery.sourceInterrupted);
+verifyTrue(testCase, result.recovery.cameraTailRecovered);
+verifyEqual(testCase, result.recovery.trailingCameraBytes, 1);
+verifySubstring(testCase, result.message, 'Source recording status');
+clear cleanup;
+end
+
 function testElapsedTimestampsCrossMidnight(testCase)
 folder = createSyntheticRecording();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
@@ -293,6 +321,20 @@ imwrite(uint8(0), fullfile(output, 'processed_frame_0001.tif'));
 verifyError(testCase, @() PostProcessor.processData(folder, struct( ...
     'samplingPeriod', 0, 'phaseScope', 'complete-test', ...
     'outputFolder', output)), 'PostProcessor:OutputNotEmpty');
+end
+
+function testCancellationDoesNotPublishPartialOutput(testCase)
+folder = createSyntheticRecording();
+cleanup = onCleanup(@() removeTemporaryFolder(folder));
+output = fullfile(folder, 'processed_frames_cancelled');
+
+result = PostProcessor.processData(folder, struct( ...
+    'samplingPeriod', 0, 'phaseScope', 'complete-test', ...
+    'outputFolder', output, 'cancelCallback', @() true));
+verifyEqual(testCase, result.status, 'cancelled');
+verifyEqual(testCase, result.exportedFrameCount, 0);
+verifyFalse(testCase, isfolder(output));
+clear cleanup;
 end
 
 function testNoCameraRecordingIsReportedAsSkipped(testCase)
@@ -407,10 +449,16 @@ values = [ ...
     12, 22, 32, 42];
 
 verifyWarning(testCase, ...
-    @() PostProcessor.sampleTable(values, base, 'X', 0.01), ...
+    @() PostProcessor.sampleTable(values, base, 'X', 0.01, ...
+    'legacy-fixed-rate'), ...
     'PostProcessor:RecoveredTimestampOrder');
-data = PostProcessor.sampleTable(values, base, 'X', 0.01);
+verifyError(testCase, ...
+    @() PostProcessor.sampleTable(values, base, 'X', 0.01), ...
+    'PostProcessor:NonMonotonicTimestamps');
+[data, recovered] = PostProcessor.sampleTable( ...
+    values, base, 'X', 0.01, 'legacy-fixed-rate');
 
+verifyTrue(testCase, recovered);
 verifyGreaterThanOrEqual(testCase, seconds(diff(data.Timestamp)), 0);
 verifyEqual(testCase, seconds(data.Timestamp - base)', ...
     [0, 0.01, 0.02, 0.03], 'AbsTol', 1e-12);

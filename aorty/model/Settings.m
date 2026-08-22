@@ -34,29 +34,58 @@ classdef Settings < handle
         end
 
         function loadHwConfig(settings, filename)
+            config = settings.readHwConfigCandidate(filename);
+            settings.commitHardwareConfig(config, filename);
+        end
+
+        function config = readHwConfigCandidate(settings, filename)
             config = Settings.readJson(settings.hwPath, filename);
             Settings.validateHardwareConfig(config);
+        end
+
+        function writeHwConfigCandidate(settings, filename, config)
+            Settings.validateHardwareConfig(config);
+            Settings.writeJson(settings.hwPath, filename, config);
+        end
+
+        function saveHwConfig(settings, filename, config)
+            if nargin < 3
+                config = settings.hwConfig;
+            end
+            Settings.validateHardwareConfig(config);
+            Settings.writeJson(settings.hwPath, filename, config);
             settings.hwConfig = config;
             settings.activeHwConfigName = char(filename);
         end
 
-        function saveHwConfig(settings, filename)
-            Settings.validateHardwareConfig(settings.hwConfig);
-            Settings.writeJson(settings.hwPath, filename, settings.hwConfig);
-            settings.activeHwConfigName = char(filename);
+        function validateHardwareConfigCandidate(~, config)
+            Settings.validateHardwareConfig(config);
         end
 
-        function applyCameraConfig(settings)
+        function commitHardwareConfig(settings, config, filename)
+            Settings.validateHardwareConfig(config);
+            settings.hwConfig = config;
+            if nargin >= 3 && ~isempty(filename)
+                settings.activeHwConfigName = char(filename);
+            end
+        end
+
+        function applyCameraConfig(settings, config)
+            if nargin < 2
+                config = settings.hwConfig;
+            end
+            Settings.validateHardwareConfig(config);
             if ~isempty(settings.camera.cameraSrc) && ...
                     isvalid(settings.camera.cameraSrc) && ...
-                    ~isempty(settings.hwConfig)
-                settings.camera.cameraSrc.ExposureTimeAbs = settings.hwConfig.camera.exposureTimeAbs;
-                if isfield(settings.hwConfig.camera, 'gainRaw') && ...
+                    ~isempty(config)
+                settings.camera.cameraSrc.ExposureTimeAbs = config.camera.exposureTimeAbs;
+                if isfield(config.camera, 'gainRaw') && ...
                         isprop(settings.camera.cameraSrc, 'GainRaw')
                     settings.camera.cameraSrc.GainRaw = ...
-                        settings.hwConfig.camera.gainRaw;
+                        config.camera.gainRaw;
                 end
-                settings.camera.cameraSrc.AcquisitionFrameRateAbs = settings.hwConfig.camera.acquisitionFrameRateAbs;
+                settings.camera.cameraSrc.AcquisitionFrameRateAbs = ...
+                    config.camera.acquisitionFrameRateAbs;
                 settings.camera.cameraSrc.AcquisitionFrameRateEnable = 'True';
                 disp('Camera settings applied.');
             else
@@ -64,17 +93,19 @@ classdef Settings < handle
             end
         end
 
-        function applyPlcConfig(settings)
-            if settings.plc.connected && ~isempty(settings.hwConfig)
+        function applyPlcConfig(settings, config)
+            if nargin < 2
+                config = settings.hwConfig;
+            end
+            Settings.validateHardwareConfig(config);
+            if settings.plc.connected && ~isempty(config)
                 statuses = settings.plc.pollStatus();
                 if statuses.X.working || statuses.Y.working
                     error('PLC:AxisUnavailable', ...
                         'Hardware settings can only be applied while both axes are idle.');
                 end
-                PlcCommandValidator.axisConfig(settings.hwConfig.plc.xAxis);
-                PlcCommandValidator.axisConfig(settings.hwConfig.plc.yAxis);
-                settings.plc.writeAxisConfig(settings.hwConfig.plc.xAxis, 'X')
-                settings.plc.writeAxisConfig(settings.hwConfig.plc.yAxis, "Y")
+                settings.plc.writeAxisConfig(config.plc.xAxis, 'X')
+                settings.plc.writeAxisConfig(config.plc.yAxis, "Y")
                 disp('PLC settings applied.');
             else
                 disp('PLC disconnected or configuration not loaded.');
@@ -87,15 +118,26 @@ classdef Settings < handle
         end
 
         function loadAppConfig(settings, filename)
+            config = settings.readAppConfigCandidate(filename);
+            settings.commitAppConfig(filename, config);
+        end
+
+        function config = readAppConfigCandidate(settings, filename)
             config = Settings.readJson(settings.appPath, filename);
-            settings.appConfig = settings.normalizeAppConfig(config);
+            config = settings.normalizeAppConfig(config);
+        end
+
+        function commitAppConfig(settings, filename, config)
+            settings.appConfig = config;
             settings.activeAppConfigName = char(filename);
         end
 
-        function saveAppConfig(settings, filename)
-            Settings.writeJson( ...
-                settings.appPath, filename, settings.appConfig);
-            settings.activeAppConfigName = char(filename);
+        function saveAppConfig(settings, filename, config)
+            if nargin < 3
+                config = settings.appConfig;
+            end
+            Settings.writeJson(settings.appPath, filename, config);
+            settings.commitAppConfig(filename, config);
         end
 
         %% Last successfully applied templates

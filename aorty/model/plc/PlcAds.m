@@ -4,7 +4,7 @@ classdef PlcAds < handle
     % transport buffers, packet decoding, and streaming state.
 
     properties (Constant)
-        EXPECTED_INTERFACE_VERSION = uint32(6)
+        EXPECTED_INTERFACE_VERSION = uint32(7)
         COMMAND_ARRAY_LENGTH = 50
         STATUS_BUFFER_LENGTH = 50
         STATUS_PACKET_SIZE = 856
@@ -215,6 +215,11 @@ classdef PlcAds < handle
             ads.writeLreal(command.moveVelocity, velocity);
         end
 
+        function writeJogLeaseCounter(ads, axisName, counter)
+            ads.writeUdint( ...
+                ads.handles.(axisName).command.jogLeaseCounter, counter);
+        end
+
         function writeAxisTestCommand(ads, axisName, values)
             command = ads.handles.(axisName).command;
             ads.writeArray(axisName, 'load', ...
@@ -331,6 +336,8 @@ classdef PlcAds < handle
             handles.status = ads.makeHandle(statusRoot);
             handles.command = struct( ...
                 'moveVelocity', ads.makeHandle([commandRoot, 'fMoveVelocity']), ...
+                'jogLeaseCounter', ...
+                    ads.makeHandle([commandRoot, 'nJogLeaseCounter']), ...
                 'targetForce', ads.makeHandle([commandRoot, 'fTargetForce']), ...
                 'forceDuration', ads.makeHandle([commandRoot, 'fForceDuration']), ...
                 'mode', ads.makeHandle([commandRoot, 'nMode']), ...
@@ -470,6 +477,10 @@ classdef PlcAds < handle
 
         function writeLreal(ads, handle, value)
             ads.client.WriteAny(handle, double(value));
+        end
+
+        function writeUdint(ads, handle, value)
+            ads.client.WriteAny(handle, uint32(value));
         end
 
         function value = readLreal(ads, handle)

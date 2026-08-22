@@ -141,13 +141,14 @@ verifyEqual(testCase, preview.X.tolerance, ...
     config.single.forceTolerance.x / 100, ...
     settings.hwConfig.plc.xAxis.fForceTolerance));
 verifyEqual(testCase, preview.X.tolerancePercent, 2.5);
+groupingEntry = preview.X;
 
 config.single.rupture.enabled = true;
 preview = PlotReferenceBuilder.build( ...
     'Single test', config, 'X only', settings.hwConfig);
 verifyEmpty(testCase, preview.X);
 
-entries = [preview.X, preview.X];
+entries = [groupingEntry, groupingEntry];
 entries(2).label = 'Second name';
 grouped = PlotReferenceBuilder.group(entries);
 verifyEqual(testCase, numel(grouped), 1);

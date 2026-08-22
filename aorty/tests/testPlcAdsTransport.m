@@ -28,6 +28,15 @@ verifyEqual(testCase, numel(client.DeletedHandles), 6);
 verifyEqual(testCase, numel(unique(client.DeletedHandles)), 6);
 end
 
+function testFakeWriteFailureCanOccurBeforeDelivery(testCase)
+client = FakeAdsClient();
+handle = client.CreateVariableHandle('TEST.value');
+client.FailWriteAt = 1;
+verifyError(testCase, @() client.WriteAny(handle, true), ...
+    'FakeAds:Write');
+verifyEmpty(testCase, client.Writes);
+end
+
 function testPersistentCheckpointDiagnostics(testCase)
 client = FakeAdsClient();
 ads = PlcAds(client);

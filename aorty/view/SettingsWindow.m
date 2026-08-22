@@ -7,7 +7,7 @@ classdef SettingsWindow < handle
         settings Settings
         parentFig
         fig
-        settingsChanged
+        callbacks
     end
 
     properties (Access = private)
@@ -19,17 +19,22 @@ classdef SettingsWindow < handle
         applyButton
         editControls = gobjects(0)
         machineIdle = true
+        candidateConfig = []
+        candidateConfigName = ''
     end
 
     methods
         %% Window lifecycle and machine-idle interlock
-        function window = SettingsWindow(settings, parentFig, settingsChanged)
+        function window = SettingsWindow(settings, parentFig, callbacks)
             window.settings = settings;
             window.parentFig = parentFig;
             if nargin < 3
-                settingsChanged = [];
+                callbacks = struct();
             end
-            window.settingsChanged = settingsChanged;
+            if isa(callbacks, 'function_handle')
+                callbacks = struct('changed', callbacks);
+            end
+            window.callbacks = callbacks;
         end
 
         function show(window)
@@ -63,6 +68,8 @@ classdef SettingsWindow < handle
             if ~isempty(selected) && ismember(selected, window.configDrop.Items)
                 window.configDrop.Value = selected;
             end
+            window.candidateConfig = window.settings.hwConfig;
+            window.candidateConfigName = char(window.configDrop.Value);
             saveButton = uibutton(top, 'Text', 'Save', ...
                 'ButtonPushedFcn', @(~, ~) window.saveConfig(false));
             saveAsButton = uibutton(top, 'Text', 'Save as', ...
@@ -106,6 +113,8 @@ classdef SettingsWindow < handle
             window.plcYUI = struct();
             window.applyButton = [];
             window.editControls = gobjects(0);
+            window.candidateConfig = [];
+            window.candidateConfigName = '';
             restoreFigureFocus(window.parentFig);
         end
 
@@ -191,7 +200,7 @@ classdef SettingsWindow < handle
         end
 
         function refreshUI(window)
-            cfg = window.settings.hwConfig;
+            cfg = window.candidateConfig;
             window.pushFields(window.camUI, cfg.camera);
             window.pushFields(window.plcXUI, cfg.plc.xAxis);
             window.pushFields(window.plcYUI, cfg.plc.yAxis);
@@ -218,9 +227,10 @@ classdef SettingsWindow < handle
         %% Configuration persistence and application
         function loadConfig(window)
             try
-                window.settings.loadHwConfig(window.configDrop.Value);
+                window.candidateConfig = ...
+                    window.settings.readHwConfigCandidate(window.configDrop.Value);
+                window.candidateConfigName = char(window.configDrop.Value);
                 window.refreshUI();
-                window.notifySettingsChanged();
             catch exception
                 uialert(window.fig, exception.message, 'Cannot load configuration');
             end
@@ -244,8 +254,11 @@ classdef SettingsWindow < handle
                 filename = strtrim(answer{1});
             end
             try
-                window.gatherConfig();
-                window.settings.saveHwConfig(filename);
+                config = window.configCandidate();
+                window.settings.validateHardwareConfigCandidate(config);
+                window.settings.writeHwConfigCandidate(filename, config);
+                window.candidateConfig = config;
+                window.candidateConfigName = char(filename);
                 window.configDrop.Items = window.nonEmptyItems( ...
                     window.settings.listHwConfigs());
                 window.configDrop.Value = filename;
@@ -255,13 +268,14 @@ classdef SettingsWindow < handle
             end
         end
 
-        function gatherConfig(window)
-            % Pull every visible value into Settings as one atomic snapshot.
-            cfg = window.settings.hwConfig;
-            cfg.camera = window.pullFields(window.camUI, cfg.camera);
-            cfg.plc.xAxis = window.pullFields(window.plcXUI, cfg.plc.xAxis);
-            cfg.plc.yAxis = window.pullFields(window.plcYUI, cfg.plc.yAxis);
-            window.settings.hwConfig = cfg;
+        function config = configCandidate(window)
+            % Build a complete candidate without mutating shared settings.
+            config = window.candidateConfig;
+            config.camera = window.pullFields(window.camUI, config.camera);
+            config.plc.xAxis = window.pullFields( ...
+                window.plcXUI, config.plc.xAxis);
+            config.plc.yAxis = window.pullFields( ...
+                window.plcYUI, config.plc.yAxis);
         end
 
         function applySettings(window)
@@ -272,10 +286,19 @@ classdef SettingsWindow < handle
                 return;
             end
             try
-                window.gatherConfig();
-                window.settings.applyCameraConfig();
-                window.settings.applyPlcConfig();
-                window.settings.rememberHwConfig();
+                config = window.configCandidate();
+                window.settings.validateHardwareConfigCandidate(config);
+                if isfield(window.callbacks, 'applyCandidate') && ...
+                        ~isempty(window.callbacks.applyCandidate)
+                    window.callbacks.applyCandidate( ...
+                        config, window.candidateConfigName);
+                else
+                    window.settings.applyCameraConfig(config);
+                    window.settings.applyPlcConfig(config);
+                    window.settings.commitHardwareConfig( ...
+                        config, window.candidateConfigName);
+                    window.settings.rememberHwConfig();
+                end
                 window.notifySettingsChanged();
             catch exception
                 uialert(window.fig, exception.message, 'Cannot apply configuration');
@@ -353,8 +376,9 @@ classdef SettingsWindow < handle
         end
 
         function notifySettingsChanged(window)
-            if ~isempty(window.settingsChanged)
-                window.settingsChanged();
+            if isfield(window.callbacks, 'changed') && ...
+                    ~isempty(window.callbacks.changed)
+                window.callbacks.changed();
             end
         end
     end

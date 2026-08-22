@@ -11,9 +11,13 @@ arguments
     action (1,1) string {mustBeMember(action, ["start", "restart"])} = "start"
 end
 
-% Add all subdirectories to workspace
+% Add production code only. Tests provide their own path setup so fake
+% hardware classes can never shadow application classes in normal use.
 projectRoot = fileparts(mfilename("fullpath"));
-addpath(genpath(projectRoot));
+productionFolders = {"controller", "model", "validation", "view"};
+for folder = productionFolders
+    addpath(genpath(fullfile(projectRoot, folder)));
+end
 
 % App key that is checked in reopening
 applicationKey = "AortyApplicationView";

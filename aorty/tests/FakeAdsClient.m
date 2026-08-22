@@ -1,16 +1,19 @@
 classdef FakeAdsClient < handle
     properties
-        InterfaceVersion = uint32(6)
+        InterfaceVersion = uint32(7)
         SavedPositionValid = true
         Powered = true
         StatusPacketLength = 856
         StatusReadCounts = struct('X', 0, 'Y', 0)
         CreateCount = 0
         FailCreateAt = inf
+        FailWriteAt = inf
+        FailWriteAfterDelivery = false
+        WriteCount = 0
         DeletedHandles = zeros(1, 0, 'int32')
         Writes = {}
         DeleteErrorMessage = ''
-        AutoCheckpointOnPowerOff = false
+        AutoCheckpointOnPowerOff = true
     end
 
     properties (Access = private)
@@ -29,6 +32,19 @@ classdef FakeAdsClient < handle
             client.Statuses = struct( ...
                 'X', client.defaultStatus(), ...
                 'Y', client.defaultStatus());
+            for axisName = {'X', 'Y'}
+                root = ['MAIN.stSettings', axisName{1}, '.'];
+                client.Values([root, 'fTenzoCons']) = 1;
+                client.Values([root, 'fTenzoOffset']) = 0;
+                client.Values([root, 'fKp']) = 0.1;
+                client.Values([root, 'fKi']) = 0.01;
+                client.Values([root, 'fIntegralLimit']) = 10;
+                client.Values([root, 'fForceTolerance']) = 0.1;
+                client.Values([root, 'fMaxVelocity']) = 10;
+                client.Values([root, 'fMaxForce']) = 100;
+                client.Values([root, 'fForceReliefDistance']) = 1;
+                client.Values([root, 'fForceReliefVelocity']) = 1;
+            end
         end
 
         function handle = CreateVariableHandle(client, symbol)
@@ -76,11 +92,17 @@ classdef FakeAdsClient < handle
         end
 
         function WriteAny(client, handle, value)
+            client.WriteCount = client.WriteCount + 1;
             symbol = client.Symbols(int32(handle));
             if isnumeric(value) || islogical(value)
                 stored = value;
             else
                 stored = double(value);
+            end
+            if client.WriteCount == client.FailWriteAt && ...
+                    ~client.FailWriteAfterDelivery
+                error('FakeAds:Write', ...
+                    'Injected write failure before delivery.');
             end
             client.Values(symbol) = stored;
             client.Writes{end + 1} = struct( ...
@@ -100,6 +122,11 @@ classdef FakeAdsClient < handle
                 client.Values('MAIN.bPersistentPositionSaveError') = false;
                 client.Values('MAIN.nPersistentPositionSaveErrorID') = ...
                     uint32(0);
+            end
+            if client.WriteCount == client.FailWriteAt && ...
+                    client.FailWriteAfterDelivery
+                error('FakeAds:Write', ...
+                    'Injected write failure after delivery.');
             end
         end
 
@@ -123,6 +150,7 @@ classdef FakeAdsClient < handle
 
         function clearWrites(client)
             client.Writes = {};
+            client.WriteCount = 0;
         end
 
         function resetStatusReadCounts(client)
@@ -151,7 +179,7 @@ classdef FakeAdsClient < handle
                 'bufferHead', int16(50), ...
                 'sampleCounter', uint32(0), ...
                 'operationCounter', uint32(0), ...
-                'interfaceVersion', uint32(6), ...
+                'interfaceVersion', uint32(7), ...
                 'tareOffset', 0, ...
                 'position', 0, ...
                 'working', false, ...
@@ -161,7 +189,7 @@ classdef FakeAdsClient < handle
                 'axisErrorID', uint32(0), ...
                 'powered', true, ...
                 'homing', false, ...
-                'homed', false, ...
+                'homed', true, ...
                 'stopped', true, ...
                 'savedPositionValid', true, ...
                 'systemStatus', int16(0));

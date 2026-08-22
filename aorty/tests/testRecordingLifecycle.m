@@ -344,6 +344,26 @@ verifyEqual(testCase, char(h5readatt(filename, '/metadata', ...
 clear cleanup;
 end
 
+function testFinalizationIsIdempotent(testCase)
+folder = makeTemporaryFolder();
+cleanup = onCleanup(@() removeTemporaryFolder(folder));
+model = Model();
+model.selectedFolder = folder;
+model.openFilesRec();
+
+model.finalizeRecording('aborted', 'Original reason');
+model.finalizeRecording('completed', 'Replacement reason');
+
+filename = fullfile(folder, 'recording.h5');
+verifyEqual(testCase, strtrim(char(h5readatt( ...
+    filename, '/metadata', 'status'))), 'aborted');
+verifyEqual(testCase, strtrim(char(h5readatt( ...
+    filename, '/metadata', 'reason'))), 'Original reason');
+verifyFalse(testCase, model.filesOpen);
+verifyEqual(testCase, model.recordingStatus, 'aborted');
+clear cleanup;
+end
+
 function testStaleSamplesAreClearedBeforeOperation(testCase)
 [controler, ~, command] = connectedController(testCase.TestData.root);
 base = datetime('now');

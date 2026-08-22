@@ -17,7 +17,10 @@ classdef View < handle
         % UI state mirrored from the controller and PLC
         hasError = false
         errorMessage = ''
+        applicationAlert = struct( ...
+            'active', false, 'source', '', 'message', '', 'time', NaT)
         operationActive = false
+        shutdownInProgress = false
     end
 
     methods
@@ -25,36 +28,37 @@ classdef View < handle
         function app = View(controller)
             app.controller = controller;
             app.createMainWindow();
-            app.settingsWindow = SettingsWindow(controller.settings, app.fig, @() app.previewChanged());
+            settingsCallbacks = struct( ...
+                'changed', @() app.previewChanged(), ...
+                'applyCandidate', @(config, filename) ...
+                app.applyHardwareCandidate(config, filename));
+            app.settingsWindow = SettingsWindow( ...
+                controller.settings, app.fig, settingsCallbacks);
             app.loadStartupDefaults();
-            app.updateErrorStatus(false, '');
+            app.updatePlcErrorStatus(false, '');
             app.updateMachineStatus([], false);
             app.fig.CloseRequestFcn = @(~, ~) app.shutdown();
         end
 
         function shutdown(app)
-            % Tear down timers before releasing hardware or UI objects.
+            if app.shutdownInProgress
+                return;
+            end
+            app.shutdownInProgress = true;
+            failures = {};
             app.fig.CloseRequestFcn = '';
-            try
-                app.stopAndDeleteTimer(app.controller.plcReadTimer);
-                app.stopAndDeleteTimer(app.controller.displayTimer);
-            catch
-            end
-            try
-                % Abort is best-effort because shutdown may follow a controller error.
-                app.controller.safeAbort('Application shutdown');
-            catch
-            end
-            try
-                app.controller.camera.closeCam();
-            catch
-                % Camera cleanup must not prevent PLC power-off.
-            end
-            try
-                app.controller.plc.disconnectPLC();
-            catch
-                % Hardware objects may already have been released.
-            end
+            failures = app.tryCleanup(failures, 'PLC read timer', ...
+                @() app.stopAndDeleteTimer(app.controller.plcReadTimer));
+            failures = app.tryCleanup(failures, 'display timer', ...
+                @() app.stopAndDeleteTimer(app.controller.displayTimer));
+            failures = app.tryCleanup(failures, 'active jog', ...
+                @() app.machinePanel.cancelActiveJog());
+            failures = app.tryCleanup(failures, 'active operation', ...
+                @() app.controller.safeAbort('Application shutdown'));
+            failures = app.tryCleanup(failures, 'camera', ...
+                @() app.controller.camera.closeCam());
+            failures = app.tryCleanup(failures, 'PLC', ...
+                @() app.controller.plc.disconnectPLC());
             if ~isempty(app.settingsWindow) && isvalid(app.settingsWindow)
                 app.settingsWindow.close();
             end
@@ -67,6 +71,11 @@ classdef View < handle
                 if isempty(registered) || ~isvalid(registered) || isequal(registered, app)
                     rmappdata(groot, applicationKey);
                 end
+            end
+            if ~isempty(failures)
+                warning('View:ShutdownCleanup', ...
+                    'Shutdown cleanup issue(s):\n%s', ...
+                    strjoin(failures, newline));
             end
             delete(app);
         end
@@ -99,6 +108,9 @@ classdef View < handle
         end
 
         function connectPlcCallback(app, src)
+            if src.Value ~= "ON"
+                app.machinePanel.cancelActiveJog();
+            end
             app.controller.plc.connectPLC(app, src);
             if src.Value ~= "ON" || ~app.controller.plc.connected
                 return;
@@ -116,14 +128,67 @@ classdef View < handle
             end
         end
 
-        function updateErrorStatus(app, hasError, message)
+        function updatePlcErrorStatus(app, hasError, message)
             app.hasError = logical(hasError);
             if nargin < 3 || isempty(message)
                 message = '';
             end
             app.errorMessage = char(message);
-            app.machinePanel.updateErrorStatus( ...
-                app.hasError, app.errorMessage);
+            app.refreshErrorPresentation();
+        end
+
+        function updateErrorStatus(app, hasError, message)
+            % Compatibility facade until Control uses the source-specific APIs.
+            if hasError && app.isApplicationErrorMessage(message)
+                messageText = char(message);
+                separator = strfind(messageText, ':');
+                if isempty(separator)
+                    source = 'Application';
+                else
+                    source = strtrim(messageText(1:separator(1) - 1));
+                end
+                app.reportApplicationAlert(source, messageText);
+            else
+                app.updatePlcErrorStatus(hasError, message);
+            end
+        end
+
+        function reportApplicationAlert(app, source, message)
+            app.applicationAlert = struct( ...
+                'active', true, 'source', char(source), ...
+                'message', char(message), 'time', datetime('now'));
+            app.refreshErrorPresentation();
+        end
+
+        function acknowledgeApplicationAlert(app)
+            app.applicationAlert = struct( ...
+                'active', false, 'source', '', 'message', '', 'time', NaT);
+            app.refreshErrorPresentation();
+        end
+
+        function applyHardwareCandidate(app, config, filename)
+            settings = app.controller.settings;
+            settings.validateHardwareConfigCandidate(config);
+            try
+                settings.applyCameraConfig(config);
+                settings.applyPlcConfig(config);
+                settings.commitHardwareConfig(config, filename);
+                settings.rememberHwConfig();
+            catch exception
+                % A partial hardware write cannot be rolled back reliably.
+                % Disconnect both devices so motion cannot continue with a
+                % mixed live profile; reconnect reapplies one complete profile.
+                try app.controller.camera.closeCam(); catch, end
+                try app.controller.plc.disconnectPLC(); catch, end
+                app.camSwitch.Value = 'OFF';
+                app.plcSwitch.Value = 'OFF';
+                app.updateMachineStatus([], false);
+                app.reportApplicationAlert('Hardware settings', ...
+                    ['Configuration application may be partial. Both ' ...
+                    'devices were disconnected; reconnect to apply one ' ...
+                    'complete profile. ', exception.message]);
+                rethrow(exception);
+            end
         end
 
         function openSettingsWindow(app)
@@ -163,6 +228,7 @@ classdef View < handle
         function updateMachineStatus(app, statuses, connected)
             % A disconnect invalidates buffered samples from the previous session.
             if ~connected
+                app.machinePanel.cancelActiveJog(false);
                 app.controller.samples.clear();
             end
             app.machinePanel.updateMachineStatus(statuses, connected);
@@ -223,7 +289,7 @@ classdef View < handle
                 'restore', @() app.onRestorePosition(), ...
                 'error', @() app.onErrorButtonClicked(), ...
                 'power', @() app.onPowerClicked(), ...
-                'stop', @(button) app.controller.panicStop(button), ...
+                'stop', @(button) app.onStop(button), ...
                 'jog', @(axis, direction, pressed) ...
                 app.onJogAxis(axis, direction, pressed));
             app.machinePanel = MachinePanel( ...
@@ -375,16 +441,33 @@ classdef View < handle
             progress = uiprogressdlg(app.fig, ...
                 'Title', 'Post-processing', ...
                 'Message', 'Creating TIFF files...', ...
-                'Indeterminate', 'on');
+                'Indeterminate', 'off', 'Value', 0, ...
+                'Cancelable', 'on');
             try
                 result = app.controller.runManualPostProcessing( ...
                     folder, settings.samplingPeriod, ...
-                    settings.includePrePost);
+                    settings.includePrePost, settings.timestampPolicy, ...
+                    @(completed, total) app.updatePostProcessProgress( ...
+                    progress, completed, total), ...
+                    @() isvalid(progress) && progress.CancelRequested);
                 if isvalid(progress), close(progress); end
                 if isfield(result, 'status') && ...
                         strcmpi(result.status, 'skipped')
                     uialert(app.fig, result.message, ...
                         'Post-processing skipped', 'Icon', 'info');
+                    return;
+                end
+                if strcmpi(result.status, 'cancelled')
+                    uialert(app.fig, result.message, ...
+                        'Post-processing cancelled', 'Icon', 'info');
+                    return;
+                end
+                if strcmpi(result.status, 'recovered')
+                    uialert(app.fig, sprintf( ...
+                        ['Exported %d recovered TIFF file(s) to:\n%s\n\n' ...
+                        '%s'], result.exportedFrameCount, ...
+                        result.outputFolder, result.message), ...
+                        'Recovered recording processed', 'Icon', 'warning');
                     return;
                 end
                 uialert(app.fig, sprintf( ...
@@ -393,9 +476,20 @@ classdef View < handle
                     'Post-processing complete', 'Icon', 'success');
             catch exception
                 if isvalid(progress), close(progress); end
+                app.reportApplicationAlert( ...
+                    'Post-processing', exception.message);
                 uialert(app.fig, exception.message, ...
                     'Post-processing failed', 'Icon', 'error');
             end
+        end
+
+        function updatePostProcessProgress(~, progress, completed, total)
+            if ~isvalid(progress)
+                return;
+            end
+            progress.Value = min(1, completed / max(1, total));
+            progress.Message = sprintf( ...
+                'Creating TIFF files... %d / %d', completed, total);
         end
 
         function onRunPreTest(app)
@@ -434,22 +528,45 @@ classdef View < handle
         end
 
         function onErrorButtonClicked(app)
-            if ~app.hasError
+            if ~app.hasError && ~app.applicationAlert.active
                 return;
             end
-            message = app.errorMessage;
-            if isempty(message)
-                message = 'The PLC reported an unspecified error.';
+            if app.hasError && app.applicationAlert.active
+                message = sprintf('PLC:\n%s\n\nApplication (%s):\n%s', ...
+                    app.errorMessage, app.applicationAlert.source, ...
+                    app.applicationAlert.message);
+                choice = uiconfirm(app.fig, message, ...
+                    'PLC and application alerts', ...
+                    'Options', {'Reset PLC', 'Acknowledge app alert', 'Cancel'}, ...
+                    'DefaultOption', 3, 'CancelOption', 3, 'Icon', 'error');
+            elseif app.hasError
+                message = app.errorMessage;
+                if isempty(message)
+                    message = 'The PLC reported an unspecified error.';
+                end
+                choice = uiconfirm(app.fig, message, 'PLC error', ...
+                    'Options', {'Reset PLC', 'Cancel'}, ...
+                    'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'error');
+            else
+                message = sprintf('%s: %s', ...
+                    app.applicationAlert.source, ...
+                    app.applicationAlert.message);
+                choice = uiconfirm(app.fig, message, 'Application alert', ...
+                    'Options', {'Acknowledge', 'Cancel'}, ...
+                    'DefaultOption', 2, 'CancelOption', 2, 'Icon', 'warning');
             end
-            choice = uiconfirm(app.fig, message, 'PLC error', ...
-                'Options', {'Reset', 'Cancel'}, ...
-                'DefaultOption', 2, 'CancelOption', 2, ...
-                'Icon', 'error');
-            if strcmp(choice, 'Reset')
+            if strcmp(choice, 'Reset PLC')
                 app.runUiAction( ...
                     @() app.controller.resetErrors(), ...
                     'Cannot reset PLC error');
+            elseif ismember(choice, {'Acknowledge', 'Acknowledge app alert'})
+                app.acknowledgeApplicationAlert();
             end
+        end
+
+        function onStop(app, button)
+            app.machinePanel.cancelActiveJog();
+            app.controller.panicStop(button);
         end
 
         function onPowerClicked(app)
@@ -541,6 +658,28 @@ classdef View < handle
             if ~isempty(timerObject) && isvalid(timerObject)
                 stop(timerObject);
                 delete(timerObject);
+            end
+        end
+
+        function refreshErrorPresentation(app)
+            app.machinePanel.updateErrorSummary( ...
+                app.hasError, app.errorMessage, app.applicationAlert);
+        end
+
+        function value = isApplicationErrorMessage(~, message)
+            message = char(message);
+            prefixes = {'ADS read error:', 'Camera error:', ...
+                'Display update error:', 'Recording write error:', ...
+                'Post-processing failed:'};
+            value = any(startsWith(message, prefixes));
+        end
+
+        function failures = tryCleanup(~, failures, label, action)
+            try
+                action();
+            catch exception
+                failures{end + 1} = sprintf( ...
+                    '%s: %s', label, exception.message); %#ok<AGROW>
             end
         end
     end

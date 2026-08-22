@@ -102,8 +102,9 @@ classdef TestPanel < handle
         end
 
         function loadPresetByName(panel, filename)
-            panel.settings.loadAppConfig(filename);
-            panel.applyPreset(panel.settings.appConfig);
+            config = panel.settings.readAppConfigCandidate(filename);
+            panel.applyPreset(config);
+            panel.settings.commitAppConfig(filename, config);
             panel.settings.rememberAppConfig();
             if ismember(filename, panel.presetDrop.Items)
                 panel.presetDrop.Value = filename;
@@ -188,12 +189,12 @@ classdef TestPanel < handle
                 filename = strtrim(answer{1});
             end
             try
-                panel.settings.appConfig = panel.getConfiguration();
-                panel.validatePresetRoot(panel.settings.appConfig);
+                config = panel.getConfiguration();
+                panel.validatePresetRoot(config);
                 TestCommandBuilder.fromPreset( ...
-                    panel.settings.appConfig, 'pre', ...
+                    config, 'pre', ...
                     panel.settings.hwConfig);
-                panel.settings.saveAppConfig(filename);
+                panel.settings.saveAppConfig(filename, config);
                 panel.presetDrop.Items = panel.nonEmptyItems( ...
                     panel.settings.listAppConfigs());
                 panel.presetDrop.Value = filename;
@@ -250,7 +251,9 @@ classdef TestPanel < handle
             end
             for index = 1:numel(axes)
                 state = statuses.(axes{index});
-                allowed = allowed && ~state.working && ~state.error;
+                allowed = allowed && state.powered && ...
+                    state.homed && ~state.homing && ...
+                    ~state.working && ~state.error;
             end
         end
 

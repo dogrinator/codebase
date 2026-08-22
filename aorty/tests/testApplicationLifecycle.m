@@ -9,14 +9,17 @@ cleanup = onCleanup(@() closeApplication(applicationKey));
 
 run(fullfile(root, 'main.m'));
 firstView = getappdata(groot, applicationKey);
-firstTimers = numel(timerfindall);
+firstTimers = [firstView.controller.plcReadTimer, ...
+    firstView.controller.displayTimer];
 
 run(fullfile(root, 'main.m'));
 secondView = getappdata(groot, applicationKey);
-secondTimers = numel(timerfindall);
+secondTimers = [secondView.controller.plcReadTimer, ...
+    secondView.controller.displayTimer];
 
 verifyTrue(testCase, isequal(firstView, secondView));
-verifyEqual(testCase, secondTimers, firstTimers);
+verifyTrue(testCase, all(arrayfun(@(index) ...
+    isequal(secondTimers(index), firstTimers(index)), 1:2)));
 verifyEqual(testCase, firstView.controller.plcReadTimer.Period, 0.25);
 verifyEqual(testCase, ...
     firstView.controller.settings.activeHwConfigName, 'default');
@@ -24,11 +27,12 @@ verifyEqual(testCase, ...
     firstView.controller.settings.activeAppConfigName, 'default');
 verifyEqual(testCase, ...
     firstView.getTestConfiguration().schemaVersion, 2);
-verifyEqual(testCase, AppInfo.POSITION_LIMITS_MM.X, [0, 50]);
-verifyEqual(testCase, AppInfo.POSITION_LIMITS_MM.Y, [0, 50]);
-applicationTimers = timerfindall;
-if ~isempty(applicationTimers)
-    stop(applicationTimers);
+applicationTimers = [firstView.controller.plcReadTimer, ...
+    firstView.controller.displayTimer];
+for timerObject = applicationTimers
+    if isvalid(timerObject)
+        stop(timerObject);
+    end
 end
 
 status = struct('powered', true, 'working', false, ...
@@ -37,6 +41,20 @@ status = struct('powered', true, 'working', false, ...
     'errorCode', uint32(0), 'systemStatus', int16(0));
 firstView.updateMachineStatus(struct('X', status, 'Y', status), true);
 verifyEqual(testCase, firstView.systemStatusLabel.Text, '0 - Idle');
+singleRun = findall(firstView.testPanel.tabs, ...
+    'Text', 'RUN SINGLE TEST');
+verifyEqual(testCase, string(singleRun.Enable), "on");
+unreferenced = status;
+unreferenced.homed = false;
+firstView.updateMachineStatus( ...
+    struct('X', unreferenced, 'Y', unreferenced), true);
+verifyEqual(testCase, string(singleRun.Enable), "off");
+unpowered = status;
+unpowered.powered = false;
+firstView.updateMachineStatus( ...
+    struct('X', unpowered, 'Y', unpowered), true);
+verifyEqual(testCase, string(singleRun.Enable), "off");
+firstView.updateMachineStatus(struct('X', status, 'Y', status), true);
 singleStatus = status;
 singleStatus.systemStatus = int16(20);
 firstView.updateMachineStatus( ...
@@ -57,13 +75,6 @@ firstView.testPanel.applyPreset(currentPreset);
 verifyEqual(testCase, ...
     firstView.getTestConfiguration().system.axisMode, 'Both');
 verifyEqual(testCase, firstView.machinePanel.sampleCountField.Value, 500);
-positionLimitLines = findPositionLimitLines(firstView.fig);
-verifyEqual(testCase, numel(positionLimitLines), 4);
-verifyEqual(testCase, sort([positionLimitLines.Value]), [0, 0, 50, 50]);
-verifyTrue(testCase, all(strcmp({positionLimitLines.Visible}, 'off')));
-for index = 1:numel(positionLimitLines)
-    verifyNotEmpty(testCase, positionLimitLines(index).Label);
-end
 referenceLines = findForceReferenceLines(firstView.fig);
 verifyNotEmpty(testCase, referenceLines);
 for index = 1:numel(referenceLines)
@@ -89,24 +100,10 @@ firstView.machinePanel.modeDrop.Value = 'Displacement';
 firstView.machinePanel.modeDrop.ValueChangedFcn( ...
     firstView.machinePanel.modeDrop, []);
 verifyEmpty(testCase, findForceReferenceLines(firstView.fig));
-positionLimitLines = findPositionLimitLines(firstView.fig);
-verifyEqual(testCase, numel(positionLimitLines), 4);
-verifyTrue(testCase, all(strcmp({positionLimitLines.Visible}, 'on')));
 firstView.machinePanel.modeDrop.Value = 'Force';
 firstView.machinePanel.modeDrop.ValueChangedFcn( ...
     firstView.machinePanel.modeDrop, []);
 verifyNotEmpty(testCase, findForceReferenceLines(firstView.fig));
-positionLimitLines = findPositionLimitLines(firstView.fig);
-verifyEqual(testCase, numel(positionLimitLines), 4);
-verifyTrue(testCase, all(strcmp({positionLimitLines.Visible}, 'off')));
-firstView.machinePanel.modeDrop.Value = 'Displacement';
-firstView.machinePanel.modeDrop.ValueChangedFcn( ...
-    firstView.machinePanel.modeDrop, []);
-verifyEqual(testCase, numel(findPositionLimitLines(firstView.fig)), 4);
-firstView.machinePanel.modeDrop.Value = 'Force';
-firstView.machinePanel.modeDrop.ValueChangedFcn( ...
-    firstView.machinePanel.modeDrop, []);
-verifyEqual(testCase, numel(findPositionLimitLines(firstView.fig)), 4);
 batch = struct( ...
     'Force', struct('X', 1:200, 'Y', 201:400), ...
     'Displacement', struct('X', 401:600, 'Y', 601:800));
@@ -130,6 +127,13 @@ end
 firstView.openSettingsWindow();
 verifyTrue(testCase, firstView.settingsWindow.isOpen());
 firstView.settingsWindow.close();
+firstView.reportApplicationAlert('Recording', 'Disk write failed.');
+firstView.updateErrorStatus(false, '');
+verifyTrue(testCase, firstView.applicationAlert.active);
+verifyEqual(testCase, firstView.machinePanel.errorButton.Text, ...
+    'APP ALERT / ACK');
+firstView.acknowledgeApplicationAlert();
+verifyFalse(testCase, firstView.applicationAlert.active);
 legacyPreset = currentPreset;
 legacyPreset.pre = rmfield(legacyPreset.pre, 'holdTime');
 verifyError(testCase, ...
@@ -173,13 +177,8 @@ verifyTrue(testCase, enabledAfterUnlock);
 clear cleanup;
 end
 
-function lines = findPositionLimitLines(fig)
-lines = findall(fig, 'Type', 'ConstantLine', 'Tag', 'PositionLimit');
-end
-
 function lines = findForceReferenceLines(fig)
 lines = findall(fig, 'Type', 'ConstantLine');
-lines = lines(~strcmp({lines.Tag}, 'PositionLimit'));
 end
 
 function closeApplication(applicationKey)

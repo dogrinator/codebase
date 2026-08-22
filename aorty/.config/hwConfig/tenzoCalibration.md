@@ -88,8 +88,8 @@ connection before restoring power.
 
 ## 3. Verify the terminals in TwinCAT 3
 
-1. Open `TwinCat/AortyPLC/aortyPLC.sln` (or the contained TwinCAT project) in
-   the TwinCAT-compatible Visual Studio/XAE environment.
+1. Open `TwinCat/AortyPLC/aortyPLC.tsproj` in the TwinCAT-compatible Visual
+   Studio/XAE environment.
 2. Select the target controller and place TwinCAT in **Config mode** if an I/O
    scan or configuration change is necessary.
 3. Under **I/O > Devices > Device 1 (EtherCAT)**, verify the physical order:
@@ -292,4 +292,3 @@ self-calibration is triggered.
 | Correct at one point only | Bad offset/slope, wrong units, double scaling, non-linearity or binding |
 | Value jumps during calibration | Wait for steady state; do not calibrate during motion or vibration |
 | Calibration works until replacement | Put required non-sensor CoE settings in the TwinCAT StartUp list and preserve calibration records |
-
