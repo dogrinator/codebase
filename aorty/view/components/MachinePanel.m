@@ -35,6 +35,9 @@ classdef MachinePanel < handle
         posY
         velX
         velY
+        actualForceFields = struct()
+        maximumForceFields = struct()
+        maximumForce = struct('X', -Inf, 'Y', -Inf)
         jogButtons = struct()
         liveActionButton
         savePositionButton
@@ -88,6 +91,7 @@ classdef MachinePanel < handle
                     isfinite(samplePeriod) && samplePeriod > 0
                 panel.samplePeriod = double(samplePeriod);
             end
+            panel.updateForceReadouts(batch);
             panel.appendAxisPlot('X', batch, panel.samplePeriod);
             panel.appendAxisPlot('Y', batch, panel.samplePeriod);
         end
@@ -112,6 +116,7 @@ classdef MachinePanel < handle
                 panel.clearPlotData();
             end
             if ~panel.connected || isempty(statuses)
+                panel.clearForceReadouts();
                 panel.machineStatusLabel.Text = 'PLC disconnected';
                 panel.machineStatusLabel.FontColor = [0.55, 0.2, 0.2];
                 panel.applyState();
@@ -312,7 +317,7 @@ classdef MachinePanel < handle
             layout.RowHeight = {'1.25x', 175, 124};
             layout.Padding = [6, 6, 6, 6];
             panel.createCameraPanel(layout);
-            panel.createManualControls(layout);
+            panel.createManualAndForceControls(layout);
             panel.createMachineActions(layout);
         end
 
@@ -355,13 +360,15 @@ classdef MachinePanel < handle
             xControls.RowSpacing = 2;
             xControls.BackgroundColor = overlayColor;
             panel.jogButtons.xMinus = panel.addJogButton( ...
-                xControls, 1, 1, [char(8592), ' X'], 'X', -1);
+                xControls, 1, 1, ...
+                [char(8592), ' X ', char(8594)], 'X', -1);
             panel.jogButtons.xPlus = panel.addJogButton( ...
-                xControls, 2, 1, ['X ', char(8594)], 'X', 1);
+                xControls, 2, 1, ...
+                [char(8594), ' X ', char(8592)], 'X', 1);
             panel.yJogOverlay = uipanel(panel.cameraContent, ...
                 'BorderType', 'none', 'BackgroundColor', overlayColor);
             panel.yJogOverlay.Units = 'pixels';
-            panel.yJogOverlay.Position = [8, 6, 156, 44];
+            panel.yJogOverlay.Position = [8, 6, 156, 64];
             panel.yJogOverlay.AutoResizeChildren = 'off';
             yControls = uigridlayout(panel.yJogOverlay, [1, 2]);
             yControls.ColumnWidth = {'1x', '1x'};
@@ -369,9 +376,20 @@ classdef MachinePanel < handle
             yControls.ColumnSpacing = 2;
             yControls.BackgroundColor = overlayColor;
             panel.jogButtons.yMinus = panel.addJogButton( ...
-                yControls, 1, 1, [char(8595), ' Y'], 'Y', -1);
+                yControls, 1, 1, ...
+                sprintf('%s\nY\n%s', char(8595), char(8593)), 'Y', -1);
             panel.jogButtons.yPlus = panel.addJogButton( ...
-                yControls, 1, 2, ['Y ', char(8593)], 'Y', 1);
+                yControls, 1, 2, ...
+                sprintf('%s\nY\n%s', char(8593), char(8595)), 'Y', 1);
+        end
+
+        function createManualAndForceControls(panel, parent)
+            layout = uigridlayout(parent, [1, 2]);
+            layout.ColumnWidth = {'1x', '1x'};
+            layout.Padding = 0;
+            layout.ColumnSpacing = 6;
+            panel.createManualControls(layout);
+            panel.createForceReadouts(layout);
         end
 
         function createManualControls(panel, parent)
@@ -394,6 +412,51 @@ classdef MachinePanel < handle
                 'HorizontalAlignment', 'center');
             panel.posY = uieditfield(grid, 'numeric', 'Value', 10);
             panel.velY = panel.speedField(grid);
+        end
+
+        function createForceReadouts(panel, parent)
+            container = uipanel(parent, 'Title', 'Load cells');
+            grid = uigridlayout(container, [4, 3]);
+            grid.RowHeight = {28, 32, 32, 32};
+            grid.ColumnWidth = {38, '1x', '1x'};
+            grid.Padding = [6, 2, 6, 2];
+            grid.RowSpacing = 6;
+            axisHeader = uilabel(grid, 'Text', 'Axis', 'FontWeight', 'bold', ...
+                'HorizontalAlignment', 'center');
+            axisHeader.Layout.Row = 1;
+            axisHeader.Layout.Column = 1;
+            actualHeader = uilabel(grid, 'Text', 'Actual [N]', ...
+                'FontWeight', 'bold', ...
+                'HorizontalAlignment', 'center');
+            actualHeader.Layout.Row = 1;
+            actualHeader.Layout.Column = 2;
+            maximumHeader = uilabel(grid, 'Text', 'Maximum [N]', ...
+                'FontWeight', 'bold', ...
+                'HorizontalAlignment', 'center');
+            maximumHeader.Layout.Row = 1;
+            maximumHeader.Layout.Column = 3;
+            axisNames = {'X', 'Y'};
+            for index = 1:numel(axisNames)
+                axisName = axisNames{index};
+                row = index + 1;
+                axisLabel = uilabel(grid, 'Text', axisName, ...
+                    'FontWeight', 'bold', ...
+                    'HorizontalAlignment', 'center');
+                axisLabel.Layout.Row = row;
+                axisLabel.Layout.Column = 1;
+                panel.actualForceFields.(axisName) = uieditfield( ...
+                    grid, 'numeric', 'Value', 0, 'Editable', 'off');
+                panel.actualForceFields.(axisName).Layout.Row = row;
+                panel.actualForceFields.(axisName).Layout.Column = 2;
+                panel.maximumForceFields.(axisName) = uieditfield( ...
+                    grid, 'numeric', 'Value', 0, 'Editable', 'off');
+                panel.maximumForceFields.(axisName).Layout.Row = row;
+                panel.maximumForceFields.(axisName).Layout.Column = 3;
+            end
+            resetButton = uibutton(grid, 'Text', 'Reset maximum', ...
+                'ButtonPushedFcn', @(~, ~) panel.resetMaximumForce());
+            resetButton.Layout.Row = 4;
+            resetButton.Layout.Column = [1, 3];
         end
 
         function control = speedField(~, parent)
@@ -498,6 +561,35 @@ classdef MachinePanel < handle
         end
 
         %% Live plot data
+        function updateForceReadouts(panel, batch)
+            for axisItem = {'X', 'Y'}
+                axisName = axisItem{1};
+                values = batch.Force.(axisName);
+                if isempty(values)
+                    continue;
+                end
+                panel.actualForceFields.(axisName).Value = values(end);
+                panel.maximumForce.(axisName) = max( ...
+                    panel.maximumForce.(axisName), max(values));
+                panel.maximumForceFields.(axisName).Value = ...
+                    panel.maximumForce.(axisName);
+            end
+        end
+
+        function resetMaximumForce(panel)
+            panel.maximumForce = struct('X', -Inf, 'Y', -Inf);
+            for axisItem = {'X', 'Y'}
+                panel.maximumForceFields.(axisItem{1}).Value = 0;
+            end
+        end
+
+        function clearForceReadouts(panel)
+            panel.resetMaximumForce();
+            for axisItem = {'X', 'Y'}
+                panel.actualForceFields.(axisItem{1}).Value = 0;
+            end
+        end
+
         function appendAxisPlot(panel, axisName, batch, samplePeriod)
             forceValues = batch.Force.(axisName);
             displacementValues = batch.Displacement.(axisName);
@@ -895,7 +987,7 @@ classdef MachinePanel < handle
             margin = max(0, min(6, floor((min(width, height) - 1) / 2)));
             spacing = min(4, margin);
             yWidth = min(156, max(1, width - 2 * margin));
-            yHeight = min(44, max(1, height - 2 * margin));
+            yHeight = min(64, max(1, height - 2 * margin));
             yX = max(margin, floor((width - yWidth) / 2));
             panel.yJogOverlay.Position = [yX, margin, yWidth, yHeight];
             xWidth = min(76, max(1, width - 2 * margin));
