@@ -130,6 +130,32 @@ verifyEqual(testCase, h5readatt( ...
 clear cleanup;
 end
 
+function testConfiguredRootCreatesNamedRecordingFolder(testCase)
+root = makeTemporaryFolder();
+cleanup = onCleanup(@() removeTemporaryFolder(root));
+[controler, ~, command] = connectedController(testCase.TestData.root);
+controler.settings.loadHwConfig('default');
+controler.settings.loadAppConfig('default');
+controler.settings.appInfoPath = fullfile(root, 'appInfo.json');
+writeJson(controler.settings.appInfoPath, struct( ...
+    'hwConfig', 'default', 'appConfig', 'default', ...
+    'testRoot', root));
+
+controler.startTestForTesting( ...
+    struct('X', command, 'Y', []), postSettings(), true, 'single');
+folder = controler.model.selectedFolder;
+verifyTrue(testCase, isfolder(folder));
+[dateFolder, testFolder] = fileparts(folder);
+[actualRoot, dateName] = fileparts(dateFolder);
+verifyEqual(testCase, actualRoot, root);
+verifyNotEmpty(testCase, regexp(dateName, ...
+    '^\d{4}-\d{2}-\d{2}$', 'once'));
+verifyNotEmpty(testCase, regexp(testFolder, ...
+    '^\d{2}-\d{2}-\d{2}_pre-single_x_default$', 'once'));
+controler.safeAbort('Test cleanup');
+clear cleanup;
+end
+
 function testUncheckedPreTestSkipsFolderAndFilesOnCompletion(testCase)
 oldFolder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(oldFolder));
@@ -442,4 +468,11 @@ function removeTemporaryFolder(folder)
 if isfolder(folder)
     rmdir(folder, 's');
 end
+end
+
+function writeJson(filename, value)
+fid = fopen(filename, 'w');
+assert(fid ~= -1);
+cleanup = onCleanup(@() fclose(fid));
+fprintf(fid, '%s', jsonencode(value));
 end

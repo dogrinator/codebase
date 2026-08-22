@@ -193,13 +193,15 @@ classdef Control < handle
         function runSingleTest(controler, app)
             config = app.getTestConfiguration();
             commands = TestCommandBuilder.fromPreset(config, 'single', controler.settings.hwConfig);
-            controler.startTest(app, commands, config.single.postProcess, true, 'single');
+            controler.startTest(app, commands, config.single.postProcess, ...
+                true, 'single');
         end
 
         function runCyclicTest(controler, app)
             config = app.getTestConfiguration();
             commands = TestCommandBuilder.fromPreset(config, 'cyclic', controler.settings.hwConfig);
-            controler.startTest(app, commands, config.cyclic.postProcess, true, 'cyclic');
+            controler.startTest(app, commands, config.cyclic.postProcess, ...
+                true, 'cyclic');
         end
 
         function runGeneralTest(controler, app)
@@ -287,25 +289,15 @@ classdef Control < handle
                     ['Connect the camera before starting a recorded ' ...
                     'test.']);
             end
-            folder = [];
-            if recordEnabled
-                if isempty(controler.recordingFolderSelector)
-                    folder = uigetdir('', 'Choose test output folder');
-                    if ~isempty(app)
-                        restoreFigureFocus(app.fig);
-                    end
-                else
-                    folder = controler.recordingFolderSelector();
-                end
-                if isequal(folder, 0), return; end
-            end
-
             statuses = controler.plc.pollStatus();
             axes = controler.commandAxes(commands);
             controler.samples.clear();
             controler.activePostProcessSettings = ...
                 controler.validatePostProcessSettings(postSettings);
             if recordEnabled
+                folder = controler.recordingOutputFolder( ...
+                    app, testKind, axes, commands);
+                if isequal(folder, 0), return; end
                 controler.prepareRecording(folder);
                 controler.model.recordingStatus = 'starting';
                 controler.model.recordingReason = '';
@@ -454,6 +446,63 @@ classdef Control < handle
             else
                 controler.model.cameraFrameWidth = 0;
                 controler.model.cameraFrameHeight = 0;
+            end
+        end
+
+        function folder = recordingOutputFolder( ...
+                controler, app, testKind, axes, commands)
+            if ~isempty(controler.recordingFolderSelector)
+                folder = controler.recordingFolderSelector();
+                return;
+            end
+
+            root = controler.settings.testRoot();
+            if isempty(root)
+                folder = uigetdir('', 'Choose test output folder');
+                if ~isempty(app)
+                    restoreFigureFocus(app.fig);
+                end
+                return;
+            end
+            if ~isfolder(root)
+                error('Control:TestRootMissing', ...
+                    'Configured test root does not exist: %s', root);
+            end
+
+            nowTime = datetime('now');
+            dateFolder = fullfile(root, ...
+                char(string(nowTime, 'yyyy-MM-dd')));
+            if ~isfolder(dateFolder)
+                [created, message] = mkdir(dateFolder);
+                if ~created
+                    error('Control:RecordingFolderCreateFailed', ...
+                        'Could not create %s: %s', dateFolder, message);
+                end
+            end
+
+            axesName = lower(strjoin(axes, ''));
+            folderKind = char(testKind);
+            if ismember(folderKind, {'single', 'cyclic'}) && ...
+                    any(cellfun(@(axis) ...
+                    logical(commands.(axis).includePreTest), axes))
+                folderKind = ['pre-', folderKind];
+            end
+            preset = controler.settings.activeAppConfigName;
+            if isempty(preset), preset = 'test'; end
+            parts = {char(string(nowTime, 'HH-mm-ss')), folderKind, ...
+                axesName, preset};
+            name = regexprep(strjoin(parts, '_'), '[^A-Za-z0-9_.-]+', '-');
+            folder = fullfile(dateFolder, name);
+            suffix = 2;
+            while isfolder(folder)
+                folder = fullfile(dateFolder, ...
+                    sprintf('%s_%d', name, suffix));
+                suffix = suffix + 1;
+            end
+            [created, message] = mkdir(folder);
+            if ~created
+                error('Control:RecordingFolderCreateFailed', ...
+                    'Could not create %s: %s', folder, message);
             end
         end
 

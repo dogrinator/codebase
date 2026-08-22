@@ -501,18 +501,33 @@ classdef View < handle
         end
 
         function loadStartupDefaults(app)
+            names = struct('hwConfig', 'default', 'appConfig', 'default', ...
+                'testRoot', '');
             try
-                app.controller.settings.loadHwConfig('default');
-            catch exception
-                uialert(app.fig, exception.message, ...
-                    'Cannot load default hardware settings');
-                return;
+                names = app.controller.settings.startupConfigNames();
+            catch
+                % An unreadable session file must not prevent startup.
             end
             try
-                app.testPanel.loadPresetByName('default');
-            catch exception
-                uialert(app.fig, exception.message, ...
-                    'Cannot load default test preset');
+                app.controller.settings.loadHwConfig(names.hwConfig);
+            catch
+                try
+                    app.controller.settings.loadHwConfig('default');
+                catch exception
+                    uialert(app.fig, exception.message, ...
+                        'Cannot load hardware settings');
+                    return;
+                end
+            end
+            try
+                app.testPanel.loadPresetByName(names.appConfig);
+            catch
+                try
+                    app.testPanel.loadPresetByName('default');
+                catch exception
+                    uialert(app.fig, exception.message, ...
+                        'Cannot load test preset');
+                end
             end
         end
 

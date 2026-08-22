@@ -7,6 +7,7 @@ classdef Settings < handle
         % Configuration directories
         hwPath
         appPath
+        appInfoPath
 
         % Loaded configuration data
         hwConfig  = [];
@@ -23,6 +24,8 @@ classdef Settings < handle
             applicationRoot = fileparts(fileparts(mfilename('fullpath')));
             settings.hwPath = fullfile(applicationRoot, '.config', 'hwConfig');
             settings.appPath = fullfile(applicationRoot, '.config', 'appConfig');
+            settings.appInfoPath = fullfile(applicationRoot, '.config', ...
+                'appInfo.json');
         end
 
         %% Hardware configuration
@@ -94,9 +97,64 @@ classdef Settings < handle
                 settings.appPath, filename, settings.appConfig);
             settings.activeAppConfigName = char(filename);
         end
+
+        %% Last successfully applied templates
+        function names = startupConfigNames(settings)
+            names = settings.readAppInfo();
+        end
+
+        function root = testRoot(settings)
+            names = settings.appInfoOrDefaults();
+            root = names.testRoot;
+        end
+
+        function rememberHwConfig(settings)
+            names = settings.appInfoOrDefaults();
+            names.hwConfig = settings.activeHwConfigName;
+            settings.writeAppInfo(names);
+        end
+
+        function rememberAppConfig(settings)
+            names = settings.appInfoOrDefaults();
+            names.appConfig = settings.activeAppConfigName;
+            settings.writeAppInfo(names);
+        end
     end
 
     methods (Access = private)
+        function names = appInfoOrDefaults(settings)
+            try
+                names = settings.readAppInfo();
+            catch
+                names = struct( ...
+                    'hwConfig', 'default', 'appConfig', 'default', ...
+                    'testRoot', '');
+            end
+        end
+
+        function names = readAppInfo(settings)
+            names = struct('hwConfig', 'default', 'appConfig', 'default', ...
+                'testRoot', '');
+            if ~isfile(settings.appInfoPath)
+                return;
+            end
+            stored = jsondecode(fileread(settings.appInfoPath));
+            if isfield(stored, 'hwConfig')
+                names.hwConfig = char(stored.hwConfig);
+            end
+            if isfield(stored, 'appConfig')
+                names.appConfig = char(stored.appConfig);
+            end
+            if isfield(stored, 'testRoot')
+                names.testRoot = char(stored.testRoot);
+            end
+        end
+
+        function writeAppInfo(settings, names)
+            [folder, filename] = fileparts(settings.appInfoPath);
+            Settings.writeJson(folder, filename, names);
+        end
+
         function config = normalizeAppConfig(settings, config)
             if isfield(config, 'schemaVersion')
                 if ~isnumeric(config.schemaVersion) || ...

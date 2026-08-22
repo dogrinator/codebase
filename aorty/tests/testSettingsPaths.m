@@ -21,6 +21,8 @@ verifyEqual(testCase, settings.appPath, ...
     fullfile(testCase.TestData.root, '.config', 'appConfig'));
 verifyEqual(testCase, settings.hwPath, ...
     fullfile(testCase.TestData.root, '.config', 'hwConfig'));
+verifyEqual(testCase, settings.appInfoPath, ...
+    fullfile(testCase.TestData.root, '.config', 'appInfo.json'));
 verifyTrue(testCase, any(strcmp(settings.listAppConfigs(), 'default')));
 settings.loadHwConfig('default');
 verifyEqual(testCase, settings.activeHwConfigName, 'default');
@@ -30,6 +32,38 @@ for axis = {'xAxis', 'yAxis'}
     verifyEqual(testCase, value.fForceReliefVelocity, 1.0);
     verifyFalse(testCase, isfield(value, 'fMaxPosition'));
 end
+end
+
+function testRememberedConfigNamesPersistIndependently(testCase)
+folder = tempname;
+mkdir(folder);
+cleanup = onCleanup(@() rmdir(folder, 's'));
+model = Model();
+settings = Settings(Plc(model), Camera(model));
+settings.appInfoPath = fullfile(folder, 'appInfo.json');
+
+verifyEqual(testCase, settings.startupConfigNames(), ...
+    struct('hwConfig', 'default', 'appConfig', 'default', 'testRoot', ''));
+
+settings.activeHwConfigName = 'new_hardware';
+settings.rememberHwConfig();
+verifyEqual(testCase, settings.startupConfigNames(), ...
+    struct('hwConfig', 'new_hardware', 'appConfig', 'default', ...
+    'testRoot', ''));
+
+settings.activeAppConfigName = 'new_test';
+settings.rememberAppConfig();
+verifyEqual(testCase, settings.startupConfigNames(), ...
+    struct('hwConfig', 'new_hardware', 'appConfig', 'new_test', ...
+    'testRoot', ''));
+
+names = settings.startupConfigNames();
+names.testRoot = folder;
+writeJson(settings.appInfoPath, names);
+settings.activeHwConfigName = 'default';
+settings.rememberHwConfig();
+verifyEqual(testCase, settings.testRoot(), folder);
+clear cleanup;
 end
 
 function testLegacyApplicationPresetMigration(testCase)

@@ -104,6 +104,7 @@ classdef TestPanel < handle
         function loadPresetByName(panel, filename)
             panel.settings.loadAppConfig(filename);
             panel.applyPreset(panel.settings.appConfig);
+            panel.settings.rememberAppConfig();
             if ismember(filename, panel.presetDrop.Items)
                 panel.presetDrop.Value = filename;
             end

@@ -100,7 +100,8 @@ connecting to another machine.
    run("aorty/main.m")
    ```
 
-5. The application opens offline with both `default.json` profiles loaded.
+5. The application opens offline with the last successfully applied profiles,
+   or `default.json` when no previous selection exists.
    Use the UI switches to connect the PLC and camera before starting a
    recorded test. Each successful connection automatically applies the
    currently selected hardware profile to that device.
@@ -119,7 +120,9 @@ is rejected if either axis does not report interface version `6`.
    force endpoint, with the configured hardware force tolerance used as the
    minimum absolute deadband. Imported General Test JSON tolerances remain
    in newtons.
-5. Choose an empty output folder when recording is enabled.
+5. Start the test. When `testRoot` is configured in
+   `aorty/.config/appInfo.json`, the application creates its output folder
+   automatically. Otherwise it asks for an empty output folder.
 6. Start the test and monitor system status, force, displacement, and errors.
 7. Inspect `recording.h5` and `cam.bin`; create TIFF output automatically or
    through **Post-process data** when required.
@@ -143,6 +146,20 @@ For General tests, start with
 the [General Test guide](aorty/examples/generalTestReadme.md).
 
 ## Recording outputs
+
+The user-specific `aorty/.config/appInfo.json` may define the recording root:
+
+```json
+{
+  "hwConfig": "default",
+  "appConfig": "default",
+  "testRoot": "/home/user/AortyTests"
+}
+```
+
+Recorded tests are organized as
+`YYYY-MM-DD/HH-mm-ss_<test-kind>_<axes>_<preset>`. A numeric suffix prevents
+collisions when two tests start within the same second.
 
 An enabled recording directory initially contains exactly:
 

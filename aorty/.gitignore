@@ -12,3 +12,6 @@ bin/
 /test-results/
 /**/processed_frames/
 /**/processed_frames_manual_*/
+
+# Per-user last selected configuration templates
+/.config/appInfo.json

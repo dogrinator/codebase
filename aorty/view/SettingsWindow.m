@@ -275,6 +275,7 @@ classdef SettingsWindow < handle
                 window.gatherConfig();
                 window.settings.applyCameraConfig();
                 window.settings.applyPlcConfig();
+                window.settings.rememberHwConfig();
                 window.notifySettingsChanged();
             catch exception
                 uialert(window.fig, exception.message, 'Cannot apply configuration');
