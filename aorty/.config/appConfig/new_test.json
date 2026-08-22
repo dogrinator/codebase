@@ -28,6 +28,7 @@
     "rate": {"x": 1, "y": 1, "lock": true},
     "forceTolerance": {"x": 1, "y": 1, "lock": true},
     "holdTime": {"x": 0, "y": 0, "lock": true},
+    "rupture": {"enabled": false, "value": 10},
     "postProcess": {
       "enabled": false,
       "samplingPeriod": 0.1,

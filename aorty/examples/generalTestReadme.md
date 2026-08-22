@@ -229,7 +229,7 @@ Post-test motion runs only after successful completion.
 | `"saved"` | `1` | Return to a previously saved PLC coordinate |
 | `"sequence_start"` | `2` | Return to the start reference captured after preload |
 | `"pretest_final"` | `3` | Return to the actual position captured after pre-test |
-| `"zero_force"` | `4` | Regulate toward signed zero force |
+| `"zero_force"` | `4` | Unload to zero tolerance without reversing |
 
 `"saved"` is rejected before execution unless every active axis reports a
 valid saved position.

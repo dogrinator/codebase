@@ -90,6 +90,7 @@ VAR
 	nEndpointSyncPoint      : BYTE;
 	nEndpointSyncCycle      : INT;
 	bForceEndpointReady     : BOOL;
+	bZeroForceUnload        : BOOL; // Post-test unload must not reverse across zero
 
 	// Optional OR criterion for the single test
 	bSinglePrimaryActive  : BOOL;
@@ -97,6 +98,7 @@ VAR
 	fStop2TargetPosition  : LREAL;
 	fStop2StartError      : LREAL;
 	fStop2CurrentError    : LREAL;
+	fSinglePeakForce      : LREAL;
 	
 END_VAR
 
@@ -260,7 +262,7 @@ END_IF
 // Runtime overforce response: halt, make one fixed relative release move, then abort.
 IF NOT bError AND NOT bSafetyError AND
 	nSeqState > STATE_IDLE AND nSeqState < STATE_ABORT_STOPPING AND
-	ABS(fForce) > stSettings.fMaxForce THEN
+	ABS(fForce) >= stSettings.fMaxForce THEN
 	IF stMoveCommand.nMode = 3 AND nLoadDirection <> 0 THEN
 		nReliefSourceDirection := nLoadDirection;
 	ELSIF Axis.Status.PositiveDirection THEN
@@ -487,6 +489,7 @@ fbMC_MoveRelative1.Execute := FALSE;
 bExecuteVelMove := FALSE;
 bSinglePrimaryActive := FALSE;
 bForceEndpointReady := FALSE;
+bZeroForceUnload := FALSE;
 fPositionHoldElapsed := 0.0;
 nSyncPoint := SYNC_NONE;
 nSyncCycle := 0;
@@ -552,15 +555,31 @@ CASE nSeqState OF
 		IF bHaltDone THEN
 			stateHalt := FALSE;
 			nVelocityState := 4;
-			nVelocityUpdateCounter := VELOCITY_UPDATE_CYCLES;
-			fLastSentVelocity := 0.0;
-			nSeqState := STATE_FORCE_HOLD;
+			IF bZeroForceUnload THEN
+				IF bSyncEnabled AND nEndpointSyncPoint <> SYNC_NONE THEN
+					bForceEndpointReady := TRUE;
+					nSyncPoint := nEndpointSyncPoint;
+					nSyncCycle := nEndpointSyncCycle;
+					nSeqState := STATE_FORCE_HOLD;
+				ELSE
+					bZeroForceUnload := FALSE;
+					nSeqState := nAfterEndpointState;
+				END_IF
+			ELSE
+				nVelocityUpdateCounter := VELOCITY_UPDATE_CYCLES;
+				fLastSentVelocity := 0.0;
+				nSeqState := STATE_FORCE_HOLD;
+			END_IF
 		END_IF
 
 	STATE_FORCE_HOLD: // P-regulate while the timer runs and the peer catches up.
-		IF bForceEndpointReady AND bSyncRelease THEN
+		IF bZeroForceUnload AND NOT bSyncRelease THEN
+			// Wait at standstill for the other axis; never reload across zero.
+			bExecuteVelMove := FALSE;
+		ELSIF bForceEndpointReady AND bSyncRelease THEN
 			bExecuteVelMove := FALSE;
 			bForceEndpointReady := FALSE;
+			bZeroForceUnload := FALSE;
 			nSyncPoint := SYNC_NONE;
 			nSyncCycle := 0;
 			nEndpointSyncPoint := SYNC_NONE;
@@ -926,6 +945,7 @@ fEndpointTargetForce := fTargetForceValue;
 fEndpointRate := ABS(fRate);
 fEndpointTolerance := fTolerance;
 fEndpointHoldTime := fHoldTime;
+bZeroForceUnload := FALSE;
 nEndpointSyncPoint := nTargetSyncPoint;
 nEndpointSyncCycle := nTargetSyncCycle;
 nAfterEndpointState := nNextState;
@@ -1007,6 +1027,12 @@ IF bSinglePrimaryActive AND stMoveCommand.nStop2Mode > 0 THEN
 					stSettings.fForceTolerance)) OR
 			(fStop2StartError > 0.0 AND fStop2CurrentError <= 0.0) OR
 			(fStop2StartError < 0.0 AND fStop2CurrentError >= 0.0) THEN
+			bSingleStopReached := TRUE;
+		END_IF
+	ELSIF stMoveCommand.nStop2Mode = 3 THEN
+		fSinglePeakForce := MAX(fSinglePeakForce, ABS(fForce));
+		IF fSinglePeakForce > 0.0 AND ABS(fForce) <= fSinglePeakForce *
+			(1.0 - stMoveCommand.fStop2Value / 100.0) THEN
 			bSingleStopReached := TRUE;
 		END_IF
 	END_IF
@@ -1323,6 +1349,7 @@ CASE nSeqState OF
 		nSystemStatus := STATUS_SINGLE_TEST;
 		bSingleStopReached := FALSE;
 		bSinglePrimaryActive := TRUE;
+		fSinglePeakForce := ABS(fForce);
 
 		IF stMoveCommand.nStop2Mode = 1 THEN
 			fStop2TargetPosition := fPreTestFinalPos + stMoveCommand.fStop2Value;
@@ -1430,7 +1457,7 @@ CASE nSeqState OF
 					nTargetSyncCycle := 0,
 					nNextState := STATE_OPERATION_COMPLETE);
 
-			4: // Release to signed zero force without a hold period.
+			4: // Unload to zero tolerance without regulating back across zero.
 				PrepareForceEndpoint(
 					fTargetForceValue := 0.0,
 					fRate := stMoveCommand.fTestRate,
@@ -1439,6 +1466,7 @@ CASE nSeqState OF
 					nTargetSyncPoint := SYNC_POSTTEST_DONE,
 					nTargetSyncCycle := 0,
 					nNextState := STATE_OPERATION_COMPLETE);
+				bZeroForceUnload := TRUE;
 
 		ELSE
 			stMoveCommand.bExecute := FALSE;

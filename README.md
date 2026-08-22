@@ -19,6 +19,7 @@ test sequencing, biaxial synchronization, and protective behavior.
 | [General Test guide](aorty/examples/generalTestReadme.md) | Authoring and importing versioned General Test JSON |
 | [MATLAB–TwinCAT interface guide](aorty/model/plc/interfaceReadme.md) | ADS symbols, packet layout, recording contracts, and communication tests |
 | [TwinCAT PLC guide](<TwinCat/AortyPLC/main program/READMEPLC.md>) | PLC states, synchronization, errors, deployment, and commissioning |
+| [EL3356 load-cell calibration](aorty/.config/hwConfig/tenzoCalibration.md) | Wiring, TwinCAT setup, force calibration, tare, and validation |
 
 ## System architecture
 

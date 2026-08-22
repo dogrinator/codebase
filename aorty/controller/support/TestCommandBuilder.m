@@ -45,10 +45,15 @@ classdef TestCommandBuilder
                             config.single.primaryMode, false);
                         command.stop1Value = ...
                             config.single.primary.(field);
-                        command.stop2Mode = TestCommandBuilder.controlMode( ...
-                            config.single.secondaryMode, true);
-                        command.stop2Value = ...
-                            config.single.secondary.(field);
+                        if config.single.rupture.enabled
+                            command.stop2Mode = 3;
+                            command.stop2Value = config.single.rupture.value;
+                        else
+                            command.stop2Mode = TestCommandBuilder.controlMode( ...
+                                config.single.secondaryMode, true);
+                            command.stop2Value = ...
+                                config.single.secondary.(field);
+                        end
                     case 'cyclic'
                         command = TestCommandBuilder.applyPreTest( ...
                             command, config.pre, field, ...
@@ -248,7 +253,7 @@ classdef TestCommandBuilder
                     mode = 2;
                 case 'Return to pre-test final position'
                     mode = 3;
-                case 'Unload (force)'
+                case {'Unload to zero force', 'Unload (force)'}
                     mode = 4;
                 otherwise
                     mode = 0;

@@ -112,9 +112,9 @@ CASE eState OF
 					 (stCommandY.nStop1Mode < 1) OR
 					 (stCommandY.nStop1Mode > 2) OR
 					 (stCommandX.nStop2Mode < 0) OR
-					 (stCommandX.nStop2Mode > 2) OR
+					 (stCommandX.nStop2Mode > 3) OR
 					 (stCommandY.nStop2Mode < 0) OR
-					 (stCommandY.nStop2Mode > 2)) THEN
+					 (stCommandY.nStop2Mode > 3)) THEN
 					bStartValid := FALSE;
 				ELSIF NOT stCommandX.bPreTestOnly AND
 					stCommandX.nCycleCount > 0 AND

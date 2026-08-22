@@ -53,7 +53,7 @@
 		// Single test (nMode=3, nCycleCount=0); criterion 2 is optional OR
 		nStop1Mode         : INT;   // 0=off, 1=displacement, 2=force
 		fStop1Value        : LREAL;
-		nStop2Mode         : INT;
+		nStop2Mode         : INT;   // 0=off, 1=displacement, 2=force, 3=rupture
 		fStop2Value        : LREAL;
 
 		// 0=stay, 1=saved position, 2=sequence start,

@@ -198,10 +198,11 @@ Force-drop and arm-above-force fields are not part of interface version 6.
 | `1` | `saved` | Return to a valid saved coordinate |
 | `2` | `sequence_start` | Return to the reference captured after preload |
 | `3` | `pretest_final` | Return to the actual position captured after pre-test |
-| `4` | `zero_force` | Release toward signed zero force |
+| `4` | `zero_force` | Unload to zero tolerance without reversing |
 
 Post-test runs only after normal main-test completion. Zero-force release
-derives direction from the current force error.
+derives direction from the current force error and stops inside tolerance or
+after crossing zero. It does not regulate back across zero.
 
 ## Biaxial start and synchronization
 

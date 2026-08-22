@@ -163,6 +163,13 @@ classdef Settings < handle
                     error('TestPreset:SchemaVersion', ...
                         'Application preset schemaVersion must be 2.');
                 end
+                if ~isfield(config.single, 'rupture')
+                    config.single.rupture = struct( ...
+                        'enabled', false, 'value', 10);
+                end
+                if strcmp(config.post.afterTest, 'Unload (force)')
+                    config.post.afterTest = 'Unload to zero force';
+                end
                 return;
             end
 
@@ -196,6 +203,11 @@ classdef Settings < handle
                 config.single.forceTolerance);
             config.cyclic.forceTolerance = settings.newtonsToPercent( ...
                 config.cyclic.forceTolerance);
+            config.single.rupture = struct( ...
+                'enabled', false, 'value', 10);
+            if strcmp(config.post.afterTest, 'Unload (force)')
+                config.post.afterTest = 'Unload to zero force';
+            end
             config.schemaVersion = 2;
         end
 

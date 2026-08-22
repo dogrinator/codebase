@@ -76,6 +76,10 @@
       "y": 0.5,
       "lock": true
     },
+    "rupture": {
+      "enabled": false,
+      "value": 10
+    },
     "postProcess": {
       "enabled": true,
       "samplingPeriod": 0.1,
