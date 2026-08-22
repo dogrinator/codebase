@@ -628,7 +628,8 @@ classdef TestDefinitionTabs < handle
                 control = controls.(field{1});
                 control.Limits = [0, 100];
                 control.Tooltip = ...
-                    'Percentage of the configured maximum force (0 to 100%).';
+                    ['Percentage of each force endpoint, using the hardware ' ...
+                    'force tolerance as the minimum (0 to 100%).'];
             end
         end
 

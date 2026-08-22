@@ -33,15 +33,15 @@
 		fPreUnloadValue : LREAL; // Signed force unload target [N]
 		bPreUnloadToStart : BOOL; // Return to sequence-start position instead of force unload
 		fPreTestRate     : LREAL; // Positive motor speed magnitude [mm/s]
-		fPreTestForceTolerance : LREAL := 0.1; // Force deadband for pre-test endpoints [N]
+		fPreTestForceTolerance : LREAL := 0.1; // [N], or negative for target-relative percent
 		fPreloadHoldTime : LREAL := 0.0; // Hold time for the initial preload endpoint [s]
 		fPreCycleHoldTime : LREAL := 0.0; // Hold time for cyclic pre-conditioning endpoints [s]
 
 		// Main test settings
 		fTestRate      : LREAL; // Positive motor speed magnitude [mm/s]
-		fSingleForceTolerance : LREAL := 0.1; // Force deadband for single-test endpoints [N]
+		fSingleForceTolerance : LREAL := 0.1; // [N], or negative for target-relative percent
 		fSingleForceHoldTime : LREAL := 0.0; // Hold time for the single-test primary endpoint [s]
-		fCyclicForceTolerance : LREAL := 0.1; // Force deadband for cyclic endpoints [N]
+		fCyclicForceTolerance : LREAL := 0.1; // [N], or negative for target-relative percent
 		fCyclicForceHoldTime : LREAL := 0.0; // Hold time for cyclic load/unload endpoints [s]
 
 		// Test selection: >0=cyclic count, 0=single test

@@ -116,9 +116,9 @@ is rejected if either axis does not report interface version `6`.
 3. Select X, Y, or Both and configure one test tab.
 4. Review force, displacement, rate, tolerance, hold-time, post-test, and
    recording options. Test-tab force tolerances are percentages of each
-   axis's configured maximum force; MATLAB converts them to newtons before
-   writing the PLC command. Imported General Test JSON tolerances remain in
-   newtons.
+   force endpoint, with the configured hardware force tolerance used as the
+   minimum absolute deadband. Imported General Test JSON tolerances remain
+   in newtons.
 5. Choose an empty output folder when recording is enabled.
 6. Start the test and monitor system status, force, displacement, and errors.
 7. Inspect `recording.h5` and `cam.bin`; create TIFF output automatically or

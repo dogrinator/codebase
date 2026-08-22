@@ -133,11 +133,11 @@ Cyclic. The command arrays always contain exactly 50 `LREAL` values; MATLAB
 pads unused elements with zero.
 
 Application preset schema version 2 stores Pre-test, Single-test, and
-Cyclic-test tolerances as percentages. Before writing the fields above,
-MATLAB converts each percentage with
-`tolerance_N = tolerance_percent * fMaxForce / 100` using the selected
-hardware profile. General Test schema version 2 remains an absolute-newton
-interface and is written without this conversion.
+Cyclic-test tolerances as percentages. MATLAB writes these percentages as
+negative command values so the PLC can resolve each endpoint as
+`max(abs(target) * tolerance_percent / 100, fForceTolerance)`. General Test
+schema version 2 remains an absolute-newton interface and is written as a
+positive value without this conversion.
 
 Removed `preLoadValue`, force-drop, and legacy combined-hold fields must not be
 sent.

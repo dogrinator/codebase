@@ -993,7 +993,12 @@ IF bSinglePrimaryActive AND stMoveCommand.nStop2Mode > 0 THEN
 		END_IF
 	ELSIF stMoveCommand.nStop2Mode = 2 THEN
 		fStop2CurrentError := stMoveCommand.fStop2Value - fForce;
-		IF ABS(fStop2CurrentError) <= stMoveCommand.fSingleForceTolerance OR
+		IF ABS(fStop2CurrentError) <=
+			SEL(stMoveCommand.fSingleForceTolerance < 0.0,
+				stMoveCommand.fSingleForceTolerance,
+				MAX(ABS(stMoveCommand.fStop2Value) *
+					ABS(stMoveCommand.fSingleForceTolerance) / 100.0,
+					stSettings.fForceTolerance)) OR
 			(fStop2StartError > 0.0 AND fStop2CurrentError <= 0.0) OR
 			(fStop2StartError < 0.0 AND fStop2CurrentError >= 0.0) THEN
 			bSingleStopReached := TRUE;
@@ -1030,7 +1035,7 @@ CASE nSeqState OF
 				(stMoveCommand.bPreTestOnly AND NOT stMoveCommand.bIncludePreTest) OR
 				NOT ((stMoveCommand.fPreTestForceTolerance = stMoveCommand.fPreTestForceTolerance) AND
 					ABS(stMoveCommand.fPreTestForceTolerance) < 1.0E300 AND
-					stMoveCommand.fPreTestForceTolerance >= 0.0) OR
+					stMoveCommand.fPreTestForceTolerance >= -100.0) OR
 				NOT ((stMoveCommand.fPreloadHoldTime = stMoveCommand.fPreloadHoldTime) AND
 					ABS(stMoveCommand.fPreloadHoldTime) < 1.0E300 AND
 					stMoveCommand.fPreloadHoldTime >= 0.0) OR
@@ -1039,13 +1044,13 @@ CASE nSeqState OF
 					stMoveCommand.fPreCycleHoldTime >= 0.0) OR
 				NOT ((stMoveCommand.fSingleForceTolerance = stMoveCommand.fSingleForceTolerance) AND
 					ABS(stMoveCommand.fSingleForceTolerance) < 1.0E300 AND
-					stMoveCommand.fSingleForceTolerance >= 0.0) OR
+					stMoveCommand.fSingleForceTolerance >= -100.0) OR
 				NOT ((stMoveCommand.fSingleForceHoldTime = stMoveCommand.fSingleForceHoldTime) AND
 					ABS(stMoveCommand.fSingleForceHoldTime) < 1.0E300 AND
 					stMoveCommand.fSingleForceHoldTime >= 0.0) OR
 				NOT ((stMoveCommand.fCyclicForceTolerance = stMoveCommand.fCyclicForceTolerance) AND
 					ABS(stMoveCommand.fCyclicForceTolerance) < 1.0E300 AND
-					stMoveCommand.fCyclicForceTolerance >= 0.0) OR
+					stMoveCommand.fCyclicForceTolerance >= -100.0) OR
 				NOT ((stMoveCommand.fCyclicForceHoldTime = stMoveCommand.fCyclicForceHoldTime) AND
 					ABS(stMoveCommand.fCyclicForceHoldTime) < 1.0E300 AND
 					stMoveCommand.fCyclicForceHoldTime >= 0.0) THEN
@@ -1087,7 +1092,11 @@ CASE nSeqState OF
 			nSystemStatus := STATUS_PRETENSION;
 			fEndpointTargetForce := stMoveCommand.fPreloadValue;
 			fEndpointRate := ABS(stMoveCommand.fPreTestRate);
-			fEndpointTolerance := stMoveCommand.fPreTestForceTolerance;
+			fEndpointTolerance := SEL(stMoveCommand.fPreTestForceTolerance < 0.0,
+				stMoveCommand.fPreTestForceTolerance,
+				MAX(ABS(fEndpointTargetForce) *
+					ABS(stMoveCommand.fPreTestForceTolerance) / 100.0,
+					stSettings.fForceTolerance));
 			fEndpointHoldTime := stMoveCommand.fPreloadHoldTime;
 			nEndpointSyncPoint := SYNC_PRETENSION_DONE;
 			nEndpointSyncCycle := 0;
@@ -1114,7 +1123,11 @@ CASE nSeqState OF
 		ELSE
 			fEndpointTargetForce := stMoveCommand.fPreCycleLoadValue;
 			fEndpointRate := ABS(stMoveCommand.fPreTestRate);
-			fEndpointTolerance := stMoveCommand.fPreTestForceTolerance;
+			fEndpointTolerance := SEL(stMoveCommand.fPreTestForceTolerance < 0.0,
+				stMoveCommand.fPreTestForceTolerance,
+				MAX(ABS(fEndpointTargetForce) *
+					ABS(stMoveCommand.fPreTestForceTolerance) / 100.0,
+					stSettings.fForceTolerance));
 			fEndpointHoldTime := stMoveCommand.fPreCycleHoldTime;
 			nEndpointSyncPoint := SYNC_LOAD_DONE;
 			nEndpointSyncCycle := nCurrentPreCycle;
@@ -1141,7 +1154,11 @@ CASE nSeqState OF
 		ELSE
 			fEndpointTargetForce := stMoveCommand.fPreUnloadValue;
 			fEndpointRate := ABS(stMoveCommand.fPreTestRate);
-			fEndpointTolerance := stMoveCommand.fPreTestForceTolerance;
+			fEndpointTolerance := SEL(stMoveCommand.fPreTestForceTolerance < 0.0,
+				stMoveCommand.fPreTestForceTolerance,
+				MAX(ABS(fEndpointTargetForce) *
+					ABS(stMoveCommand.fPreTestForceTolerance) / 100.0,
+					stSettings.fForceTolerance));
 			fEndpointHoldTime := stMoveCommand.fPreCycleHoldTime;
 			IF nCurrentPreCycle = stMoveCommand.nPreCycleCount THEN
 				nEndpointSyncPoint := SYNC_PRETEST_DONE;
@@ -1226,7 +1243,11 @@ CASE nSeqState OF
 		ELSIF stMoveCommand.nLoadMode = 2 THEN
 			fEndpointTargetForce := stMoveCommand.fLoadValues[nCurrentCycle];
 			fEndpointRate := ABS(stMoveCommand.fTestRate);
-			fEndpointTolerance := stMoveCommand.fCyclicForceTolerance;
+			fEndpointTolerance := SEL(stMoveCommand.fCyclicForceTolerance < 0.0,
+				stMoveCommand.fCyclicForceTolerance,
+				MAX(ABS(fEndpointTargetForce) *
+					ABS(stMoveCommand.fCyclicForceTolerance) / 100.0,
+					stSettings.fForceTolerance));
 			fEndpointHoldTime := stMoveCommand.fCyclicForceHoldTime;
 			nEndpointSyncPoint := SYNC_LOAD_DONE;
 			nEndpointSyncCycle := nCurrentCycle;
@@ -1259,7 +1280,11 @@ CASE nSeqState OF
 		ELSIF stMoveCommand.nUnloadMode = 2 THEN
 			fEndpointTargetForce := stMoveCommand.fUnloadValues[nCurrentCycle];
 			fEndpointRate := ABS(stMoveCommand.fTestRate);
-			fEndpointTolerance := stMoveCommand.fCyclicForceTolerance;
+			fEndpointTolerance := SEL(stMoveCommand.fCyclicForceTolerance < 0.0,
+				stMoveCommand.fCyclicForceTolerance,
+				MAX(ABS(fEndpointTargetForce) *
+					ABS(stMoveCommand.fCyclicForceTolerance) / 100.0,
+					stSettings.fForceTolerance));
 			fEndpointHoldTime := stMoveCommand.fCyclicForceHoldTime;
 			IF nCurrentCycle = stMoveCommand.nCycleCount THEN
 				nEndpointSyncPoint := SYNC_MAIN_DONE;
@@ -1317,7 +1342,11 @@ CASE nSeqState OF
 		ELSIF stMoveCommand.nStop1Mode = 2 THEN
 			fEndpointTargetForce := stMoveCommand.fStop1Value;
 			fEndpointRate := ABS(stMoveCommand.fTestRate);
-			fEndpointTolerance := stMoveCommand.fSingleForceTolerance;
+			fEndpointTolerance := SEL(stMoveCommand.fSingleForceTolerance < 0.0,
+				stMoveCommand.fSingleForceTolerance,
+				MAX(ABS(fEndpointTargetForce) *
+					ABS(stMoveCommand.fSingleForceTolerance) / 100.0,
+					stSettings.fForceTolerance));
 			fEndpointHoldTime := stMoveCommand.fSingleForceHoldTime;
 			nEndpointSyncPoint := SYNC_MAIN_DONE;
 			nEndpointSyncCycle := 0;

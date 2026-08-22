@@ -156,7 +156,7 @@ in-tolerance time.
 | `fPreUnloadValue` | Repeated force-unload target |
 | `bPreUnloadToStart` | Return to the post-preload sequence-start coordinate instead of force unload |
 | `fPreTestRate` | Positive force-control speed magnitude |
-| `fPreTestForceTolerance` | Shared preload/pre-cycle force deadband |
+| `fPreTestForceTolerance` | Absolute deadband [N], or negative endpoint percentage |
 | `fPreloadHoldTime` | Initial preload endpoint hold |
 | `fPreCycleHoldTime` | Pre-cycle load/unload endpoint hold |
 
@@ -169,9 +169,9 @@ tolerances when both phases run on that axis.
 | Field | Meaning |
 | --- | --- |
 | `fTestRate` | Positive main-test speed magnitude |
-| `fSingleForceTolerance` | Single force-endpoint deadband |
+| `fSingleForceTolerance` | Absolute deadband [N], or negative endpoint percentage |
 | `fSingleForceHoldTime` | Hold at the Single primary endpoint |
-| `fCyclicForceTolerance` | Cyclic force-endpoint deadband |
+| `fCyclicForceTolerance` | Absolute deadband [N], or negative endpoint percentage |
 | `fCyclicForceHoldTime` | Hold at Cyclic load/unload endpoints |
 | `nCycleCount` | `0` Single; `1..50` Cyclic |
 | `nLoadMode`, `nUnloadMode` | `1` displacement, `2` force |

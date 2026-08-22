@@ -294,13 +294,11 @@ classdef MachinePanel < handle
 
         function lines = createPositionLimitLines(~, axesHandle, axisName)
             limits = AppInfo.POSITION_LIMITS_MM.(axisName);
-            labels = {'Visual minimum', 'Visual maximum'};
             lines = gobjects(1, numel(limits));
             for index = 1:numel(limits)
                 lines(index) = yline(axesHandle, limits(index), '--', ...
-                    sprintf('%s: %g mm', labels{index}, limits(index)), ...
+                    '', ...
                     'Color', [0.75, 0.16, 0.16], 'LineWidth', 1.25, ...
-                    'LabelHorizontalAlignment', 'left', ...
                     'Visible', 'off', 'HitTest', 'off', ...
                     'PickableParts', 'none', 'Tag', 'PositionLimit');
             end
@@ -525,6 +523,9 @@ classdef MachinePanel < handle
             end
             panel.plotTime.(axisName) = startTime + samplePeriod * count;
             panel.updateAxisTimeWindow(axisName, axesHandle);
+            if strcmp(panel.modeDrop.Value, 'Displacement')
+                panel.updateDisplacementYLimits(axisName, axesHandle);
+            end
         end
 
         function plotModeChanged(panel, mode)
@@ -540,6 +541,8 @@ classdef MachinePanel < handle
                 end
             end
             if strcmp(mode, 'Force')
+                panel.fxAxes.YLimMode = 'auto';
+                panel.fyAxes.YLimMode = 'auto';
                 ylabel(panel.fxAxes, 'Force [N]');
                 ylabel(panel.fyAxes, 'Force [N]');
                 panel.liveActionButton.Text = 'Tare load cells';
@@ -547,6 +550,8 @@ classdef MachinePanel < handle
                 ylabel(panel.fxAxes, 'Displacement [mm]');
                 ylabel(panel.fyAxes, 'Displacement [mm]');
                 panel.liveActionButton.Text = 'Auto home';
+                panel.updateDisplacementYLimits('X', panel.fxAxes);
+                panel.updateDisplacementYLimits('Y', panel.fyAxes);
             end
             panel.updatePositionLimitLines(mode);
             panel.updateForceReferenceLines();
@@ -604,6 +609,25 @@ classdef MachinePanel < handle
                 max(0, currentTime - window), ...
                 max(window, currentTime)];
             panel.updateReferenceBandExtents(axisName, axesHandle.XLim);
+        end
+
+        function updateDisplacementYLimits(panel, axisName, axesHandle)
+            [xValues, yValues] = getpoints( ...
+                panel.plotLines.(axisName).Displacement);
+            visible = xValues >= axesHandle.XLim(1) & ...
+                xValues <= axesHandle.XLim(2) & isfinite(yValues);
+            yValues = yValues(visible);
+            if isempty(yValues)
+                return;
+            end
+            lower = min(yValues);
+            upper = max(yValues);
+            if lower == upper
+                padding = 0.01;
+            else
+                padding = 0.1 * (upper - lower);
+            end
+            axesHandle.YLim = [lower - padding, upper + padding];
         end
 
         %% Force-target overlays and hover inspection
@@ -778,10 +802,11 @@ classdef MachinePanel < handle
             upper = entry.target + entry.tolerance;
             panel.hoverInspector.Text = sprintf( ...
                 ['%s axis | %s | %s: %g N | ', ...
-                'tolerance %g%% of %g N max = +/- %g N ', ...
+                'tolerance %g%% (minimum %g N) = +/- %g N ', ...
                 '(%g to %g N)'], ...
                 axisName, entry.phase, entry.label, ...
-                entry.target, entry.tolerancePercent, entry.maxForce, ...
+                entry.target, entry.tolerancePercent, ...
+                entry.minimumTolerance, ...
                 entry.tolerance, lower, upper);
             [color, ~] = panel.referenceStyle(entry.role);
             panel.hoverInspector.FontColor = color;
