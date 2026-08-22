@@ -91,7 +91,7 @@ direct `ReadAny`/`WriteAny` calls.
 
 | Mode | Meaning | Primary fields | Start |
 | ---: | --- | --- | --- |
-| `1` | Relative move | `fMoveDistance`, `fMoveVelocity` | Selected-axis `bExecute` |
+| `1` | Maintained jog | signed `fMoveVelocity` | selected-axis `bExecute` while pressed |
 | `2` | Constant force for accumulated duration | `fTargetForce`, `fForceDuration` | Selected-axis `bExecute` |
 | `3` | Pre-test + Single/Cyclic + post-test sequence | Remaining test fields | Axis `bExecute` or shared biaxial start |
 

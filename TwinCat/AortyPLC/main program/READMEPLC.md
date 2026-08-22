@@ -129,9 +129,9 @@ and skip post-test motion.
 
 | Field | Meaning |
 | --- | --- |
-| `fMoveDistance`, `fMoveVelocity` | Mode 1 relative move |
+| `fMoveVelocity` | Signed Mode 1 jog velocity while `bExecute` is true |
 | `fTargetForce`, `fForceDuration` | Mode 2 force target and accumulated in-tolerance time |
-| `nMode` | `1` relative, `2` force/time, `3` complete test |
+| `nMode` | `1` jog, `2` force/time, `3` complete test |
 | `bExecute` | Selected-axis start request |
 | `bPower` | Maintained motor-enable request |
 | `bHalt`, `bReset`, `bHome`, `bStartTar` | Stop/reset/home/tare requests |

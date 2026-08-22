@@ -3,17 +3,16 @@
   <DUT Name="ST_MoveCommand" Id="{f7a5f6bb-0c5b-440f-b36c-9128ecf27acb}">
     <Declaration><![CDATA[TYPE ST_MoveCommand :
 	STRUCT
-		// Mode 1: one relative move
-		fMoveDistance : LREAL;
-		fMoveVelocity : LREAL;
+		// Mode 1: maintained jog
+		fMoveVelocity : LREAL; // Signed jog velocity while bExecute is TRUE
 
 		// Mode 2: one PI-regulated force hold
 		fTargetForce   : LREAL;
 		fForceDuration : LREAL;
 	
 		// Command and service controls
-		nMode       : INT;  // 1=relative move, 2=force/time, 3=test sequence
-		bExecute    : BOOL; // Start movement
+		nMode       : INT;  // 1=jog, 2=force/time, 3=test sequence
+		bExecute    : BOOL; // Start movement; maintained press signal for jog
 		bHalt       : BOOL; // Panic stop
 		bPower      : BOOL; // Maintained motor-enable request
 		bReset      : BOOL; // Reset errors

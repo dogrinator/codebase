@@ -205,13 +205,14 @@ classdef PlcAds < handle
                 firstValue, secondValue)
             command = ads.handles.(axisName).command;
             ads.writeInt(command.mode, mode);
-            if mode == 1
-                ads.writeLreal(command.moveDistance, firstValue);
-                ads.writeLreal(command.moveVelocity, secondValue);
-            else
-                ads.writeLreal(command.targetForce, firstValue);
-                ads.writeLreal(command.forceDuration, secondValue);
-            end
+            ads.writeLreal(command.targetForce, firstValue);
+            ads.writeLreal(command.forceDuration, secondValue);
+        end
+
+        function writeJogCommand(ads, axisName, velocity)
+            command = ads.handles.(axisName).command;
+            ads.writeInt(command.mode, 1);
+            ads.writeLreal(command.moveVelocity, velocity);
         end
 
         function writeAxisTestCommand(ads, axisName, values)
@@ -329,7 +330,6 @@ classdef PlcAds < handle
 
             handles.status = ads.makeHandle(statusRoot);
             handles.command = struct( ...
-                'moveDistance', ads.makeHandle([commandRoot, 'fMoveDistance']), ...
                 'moveVelocity', ads.makeHandle([commandRoot, 'fMoveVelocity']), ...
                 'targetForce', ads.makeHandle([commandRoot, 'fTargetForce']), ...
                 'forceDuration', ads.makeHandle([commandRoot, 'fForceDuration']), ...

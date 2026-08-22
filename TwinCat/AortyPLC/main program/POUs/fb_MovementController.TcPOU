@@ -13,6 +13,7 @@ VAR_INPUT
 	bSyncEnabled  : BOOL;  // TRUE only for a PLC-owned biaxial test
 	bSyncRelease  : BOOL;  // Shared barrier release from MAIN
 	bSyncAbort    : BOOL;  // Stop this axis when the synchronized peer aborts
+	bSyncSingleComplete : BOOL; // Peer reached its biaxial Single endpoint
 	stSettings    : ST_Settings;
 END_VAR
 
@@ -396,6 +397,15 @@ END_IF
 //                      Mode switcher
 // =========================================================
 
+// In a biaxial Single test, either axis endpoint completes both axes.
+IF bSinglePrimaryActive AND bSyncSingleComplete THEN
+	fbMC_MoveRelative1.Execute := FALSE;
+	bExecuteVelMove := FALSE;
+	bSinglePrimaryActive := FALSE;
+	stateHalt := TRUE;
+	nSeqState := STATE_SINGLE_WAIT_STOP;
+END_IF
+
 IF NOT bError AND NOT bSafetyError AND
 	nSeqState < STATE_ABORT_STOPPING THEN
 	IF nSeqState >= STATE_POSITION_PREPARE AND
@@ -682,39 +692,35 @@ END_CASE
       <Implementation>
         <ST><![CDATA[
 // =========================================================
-//                  Mode 1: Single relative move
+//                  Mode 1: Maintained jog
 // =========================================================
 
 CASE nSeqState OF
 	STATE_IDLE:
-		fbMC_MoveRelative1.Execute := FALSE;
 		IF stMoveCommand.bExecute THEN
-			stMoveCommand.bExecute := FALSE;
 			nSystemStatus := STATUS_BASIC_MOVE;
-			fTargetDist1 := stMoveCommand.fMoveDistance;
-			fTargetVel1 := ABS(stMoveCommand.fMoveVelocity);
-			nLoadDirection := 0;
-			nReliefSourceDirection := 0;
-			IF fTargetDist1 > POSITION_EPSILON THEN
+			fCmdVelocity := ABS(stMoveCommand.fMoveVelocity);
+			IF stMoveCommand.fMoveVelocity > 0.0 THEN
+				mcDirection := MC_Positive_Direction;
 				nLastMotionDirection := 1;
-			ELSIF fTargetDist1 < -POSITION_EPSILON THEN
+			ELSE
+				mcDirection := MC_Negative_Direction;
 				nLastMotionDirection := -1;
 			END_IF
-			nSeqState := STATE_MODE_START;
-		END_IF
-
-	STATE_MODE_START:
-		IF ABS(fTargetDist1) <= POSITION_EPSILON THEN
-			bOperationCompleted := TRUE;
-			nSeqState := STATE_IDLE;
-		ELSE
-			fbMC_MoveRelative1.Execute := TRUE;
+			bExecuteVelMove := TRUE;
 			nSeqState := STATE_MODE_RUN;
 		END_IF
 
 	STATE_MODE_RUN:
-		IF fbMC_MoveRelative1.Done THEN
-			fbMC_MoveRelative1.Execute := FALSE;
+		IF NOT stMoveCommand.bExecute THEN
+			bExecuteVelMove := FALSE;
+			stateHalt := TRUE;
+			nSeqState := STATE_MODE_START;
+		END_IF
+
+	STATE_MODE_START:
+		IF bHaltDone THEN
+			stateHalt := FALSE;
 			bOperationCompleted := TRUE;
 			nSeqState := STATE_IDLE;
 		END_IF

@@ -132,9 +132,11 @@ classdef Control < handle
             button.BackgroundColor = [1, 0.45, 0.2];
         end
 
-        function jog(controler, axisName, direction, distance, velocity)
-            controler.requireIdleOperation('jog an axis');
-            controler.plc.jog(axisName, direction * abs(distance), velocity);
+        function jog(controler, axisName, pressed, velocity)
+            if pressed
+                controler.requireIdleOperation('jog an axis');
+            end
+            controler.plc.jog(axisName, pressed, velocity);
         end
 
         function tare(controler, axisMode)

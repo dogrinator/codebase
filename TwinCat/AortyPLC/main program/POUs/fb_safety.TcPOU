@@ -49,6 +49,7 @@ VAR
 
 	eState             : E_SafetyState := E_SafetyState.Idle;
 	bFaultPowerInhibit : BOOL;
+	bResetPending      : BOOL;
 	bResetExecute      : BOOL;
 	bHaltDonePulse     : BOOL;
 	stHomeOptions      : ST_HomingOptions;
@@ -89,9 +90,15 @@ rtHome(CLK := bHome);
 // Halt completion is exposed as a one-cycle pulse.
 bHaltDonePulse := FALSE;
 
-// Reset a latched fault
-IF rtReset.Q AND bError AND eState = E_SafetyState.Idle THEN
-	bResetExecute := TRUE;
+// Retain reset until any active stop has returned the safety state to Idle.
+IF rtReset.Q THEN
+	bResetPending := TRUE;
+END_IF
+IF bResetPending AND eState = E_SafetyState.Idle THEN
+	bResetPending := FALSE;
+	IF bError THEN
+		bResetExecute := TRUE;
+	END_IF
 END_IF
 
 IF bResetExecute AND fbReset.Done THEN

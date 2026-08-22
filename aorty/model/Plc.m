@@ -80,6 +80,8 @@ classdef Plc < handle
             % cannot prevent the client and its handles from being released.
             if plc.connected && ~isempty(plc.ads) && ~isempty(plc.client)
                 try
+                    plc.ads.writeCommand('X', 'execute', false);
+                    plc.ads.writeCommand('Y', 'execute', false);
                     plc.setPower({'X', 'Y'}, false);
                 catch exception
                     warning('PLC:PowerOffBeforeDisconnect', ...
@@ -155,9 +157,9 @@ classdef Plc < handle
             % trigger is raised, preventing half-started biaxial commands.
             accepted = false;
             plc.requireConnection();
-            if ~ismember(double(mode), [1, 2])
+            if double(mode) ~= 2
                 error('PLC:InvalidTrajectoryMode', ...
-                    'Only PLC modes 1 and 2 use basic scalar commands.');
+                    'Only PLC mode 2 uses basic scalar commands.');
             end
 
             % Reject commands before writing when a selected axis is unavailable.
@@ -234,22 +236,25 @@ classdef Plc < handle
             end
         end
 
-        function jog(plc, axisName, distance, velocity)
-            if ~isfinite(distance) || distance == 0 || ...
-                    ~isfinite(velocity) || velocity <= 0
-                error('PLC:InvalidJog', ...
-                    ['Jog distance must be non-zero and velocity ' ...
-                    'must be positive.']);
-            end
+        function jog(plc, axisName, pressed, velocity)
             axisName = upper(char(axisName));
-            if strcmp(axisName, 'X')
-                plc.SendCommands(1, distance, velocity, [], []);
-            elseif strcmp(axisName, 'Y')
-                plc.SendCommands(1, [], [], distance, velocity);
-            else
+            if ~any(strcmp(axisName, {'X', 'Y'}))
                 error('PLC:InvalidAxes', ...
                     'Unknown axis selection: %s', axisName);
             end
+            plc.requireConnection();
+            if ~pressed
+                plc.ads.writeCommand(axisName, 'execute', false);
+                return;
+            end
+            statusNow = plc.ads.readAxisStatus(axisName);
+            if statusNow.working || statusNow.error
+                error('PLC:AxisUnavailable', ...
+                    '%s axis is busy or in error.', axisName);
+            end
+            plc.ensureAxisPowered(axisName);
+            plc.ads.writeJogCommand(axisName, velocity);
+            plc.ads.writeCommand(axisName, 'execute', true);
         end
 
         function stop(plc, axes)

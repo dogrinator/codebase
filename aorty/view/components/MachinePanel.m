@@ -31,8 +31,6 @@ classdef MachinePanel < handle
         fxAxes
         fyAxes
         plotLines = struct()
-        posX
-        posY
         velX
         velY
         actualForceFields = struct()
@@ -53,6 +51,7 @@ classdef MachinePanel < handle
         samplePeriod = 0.01
         hoveredReference = struct('axis', '', 'index', 0)
         figureHandle
+        activeJogAxis = ''
     end
 
     methods
@@ -101,8 +100,6 @@ classdef MachinePanel < handle
         end
 
         function values = getManualMotion(panel)
-            values.distance = struct( ...
-                'X', panel.posX.Value, 'Y', panel.posY.Value);
             values.speed = struct( ...
                 'X', panel.velX.Value, 'Y', panel.velY.Value);
         end
@@ -277,6 +274,10 @@ classdef MachinePanel < handle
             if ~isempty(panel.figureHandle) && isvalid(panel.figureHandle)
                 panel.figureHandle.WindowButtonMotionFcn = ...
                     @(~, ~) panel.updateHoverInspector();
+                panel.figureHandle.WindowButtonDownFcn = ...
+                    @(~, ~) panel.jogButtonPressed();
+                panel.figureHandle.WindowButtonUpFcn = ...
+                    @(~, ~) panel.jogButtonReleased();
             end
         end
 
@@ -394,23 +395,19 @@ classdef MachinePanel < handle
 
         function createManualControls(panel, parent)
             container = uipanel(parent, 'Title', 'Manual positioning');
-            grid = uigridlayout(container, [3, 3]);
+            grid = uigridlayout(container, [3, 2]);
             grid.RowHeight = {30, 34, 34};
-            grid.ColumnWidth = {50, '1x', '1x'};
+            grid.ColumnWidth = {50, '1x'};
             grid.Padding = [6, 4, 6, 4];
             uilabel(grid, 'Text', 'Axis', 'FontWeight', 'bold', ...
-                'HorizontalAlignment', 'center');
-            uilabel(grid, 'Text', 'Distance [mm]', 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
             uilabel(grid, 'Text', 'Speed [mm/s]', 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
             uilabel(grid, 'Text', 'X', 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
-            panel.posX = uieditfield(grid, 'numeric', 'Value', 10);
             panel.velX = panel.speedField(grid);
             uilabel(grid, 'Text', 'Y', 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
-            panel.posY = uieditfield(grid, 'numeric', 'Value', 10);
             panel.velY = panel.speedField(grid);
         end
 
@@ -513,11 +510,34 @@ classdef MachinePanel < handle
                 panel, grid, row, column, text, axisName, direction)
             button = uibutton(grid, 'Text', text, ...
                 'FontWeight', 'bold', 'FontColor', [1, 1, 1], ...
-                'BackgroundColor', [0.22, 0.22, 0.22], ...
-                'ButtonPushedFcn', ...
-                @(~, ~) panel.callbacks.jog(axisName, direction));
+                'BackgroundColor', [0.22, 0.22, 0.22]);
+            button.UserData = struct( ...
+                'axis', axisName, 'direction', direction);
             button.Layout.Row = row;
             button.Layout.Column = column;
+        end
+
+        function jogButtonPressed(panel)
+            target = hittest(panel.figureHandle);
+            names = fieldnames(panel.jogButtons);
+            for index = 1:numel(names)
+                button = panel.jogButtons.(names{index});
+                if isequal(target, button) && strcmp(button.Enable, 'on')
+                    panel.activeJogAxis = button.UserData.axis;
+                    panel.callbacks.jog( ...
+                        button.UserData.axis, button.UserData.direction, true);
+                    return;
+                end
+            end
+        end
+
+        function jogButtonReleased(panel)
+            if isempty(panel.activeJogAxis)
+                return;
+            end
+            axisName = panel.activeJogAxis;
+            panel.activeJogAxis = '';
+            panel.callbacks.jog(axisName, 0, false);
         end
 
         %% Control-state coordination
@@ -541,9 +561,7 @@ classdef MachinePanel < handle
             else
                 restoreReady = false;
             end
-            panel.setEnabled(panel.posX, selectedX && ready);
             panel.setEnabled(panel.velX, selectedX && ready);
-            panel.setEnabled(panel.posY, selectedY && ready);
             panel.setEnabled(panel.velY, selectedY && ready);
             panel.setEnabled(panel.jogButtons.xMinus, selectedX && ready);
             panel.setEnabled(panel.jogButtons.xPlus, selectedX && ready);

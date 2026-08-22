@@ -28,6 +28,8 @@ VAR_OUTPUT
 	bStartBoth      : BOOL;
 	bSyncActive     : BOOL;
 	bSyncRelease    : BOOL;
+	bSingleCompleteX: BOOL;
+	bSingleCompleteY: BOOL;
 	bAbortX         : BOOL;
 	bAbortY         : BOOL;
 	bStartError     : BOOL;
@@ -52,6 +54,8 @@ END_VAR
 // while eState is Aborting.
 bStartBoth := FALSE;
 bSyncRelease := FALSE;
+bSingleCompleteX := FALSE;
+bSingleCompleteY := FALSE;
 
 IF bResetRequest AND eState = E_BiaxialState.Idle THEN
 	bStartError := FALSE;
@@ -140,6 +144,15 @@ CASE eState OF
 
 	E_BiaxialState.Running:
 		bSyncActive := TRUE;
+		IF stCommandX.nCycleCount = 0 AND stCommandY.nCycleCount = 0 AND
+			NOT stCommandX.bPreTestOnly THEN
+			bSingleCompleteX :=
+				nSyncPointY = TO_BYTE(E_SyncPoint.MainDone) AND
+				nSyncPointX <> TO_BYTE(E_SyncPoint.MainDone);
+			bSingleCompleteY :=
+				nSyncPointX = TO_BYTE(E_SyncPoint.MainDone) AND
+				nSyncPointY <> TO_BYTE(E_SyncPoint.MainDone);
+		END_IF
 
 		IF bCommonAbortRequest THEN
 			bAbortX := TRUE;

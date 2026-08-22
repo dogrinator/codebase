@@ -193,11 +193,16 @@ end
 function testModeOneAndTwoUseCurrentScalarFields(testCase)
 [plc, client] = connectedPlc();
 client.clearWrites();
-verifyTrue(testCase, plc.SendCommands(1, -5, 2, [], []));
+plc.jog('X', true, -2);
 verifyEqual(testCase, client.getSymbol( ...
-    'MAIN.stMoveCommandX.fMoveDistance'), -5);
-verifyEqual(testCase, client.getSymbol( ...
-    'MAIN.stMoveCommandX.fMoveVelocity'), 2);
+    'MAIN.stMoveCommandX.fMoveVelocity'), -2);
+verifyTrue(testCase, client.getSymbol( ...
+    'MAIN.stMoveCommandX.bExecute'));
+
+client.clearWrites();
+plc.jog('X', false, 0);
+verifyFalse(testCase, client.getSymbol( ...
+    'MAIN.stMoveCommandX.bExecute'));
 
 client.clearWrites();
 verifyTrue(testCase, plc.SendCommands(2, [], [], 12.5, 3));

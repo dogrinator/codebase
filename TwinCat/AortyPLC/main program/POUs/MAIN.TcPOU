@@ -236,6 +236,7 @@ fbMovementControllerX(
 	bSyncEnabled := fbBiaxialCoordinator.bSyncActive,
 	bSyncRelease := fbBiaxialCoordinator.bSyncRelease,
 	bSyncAbort := fbBiaxialCoordinator.bAbortX,
+	bSyncSingleComplete := fbBiaxialCoordinator.bSingleCompleteX,
     fForce := stSystemStatusX.fTenzoBuffer[stSystemStatusX.nBufferHead]);
 
 fbMovementControllerY(
@@ -252,6 +253,7 @@ fbMovementControllerY(
 	bSyncEnabled := fbBiaxialCoordinator.bSyncActive,
 	bSyncRelease := fbBiaxialCoordinator.bSyncRelease,
 	bSyncAbort := fbBiaxialCoordinator.bAbortY,
+	bSyncSingleComplete := fbBiaxialCoordinator.bSingleCompleteY,
 	fForce := stSystemStatusY.fTenzoBuffer[stSystemStatusY.nBufferHead]);
 
 ///////////////////////////////////////////////////
