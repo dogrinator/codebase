@@ -106,6 +106,13 @@ classdef Settings < handle
                 end
                 settings.plc.writeAxisConfig(config.plc.xAxis, 'X')
                 settings.plc.writeAxisConfig(config.plc.yAxis, "Y")
+                appliedX = settings.plc.readAxisConfig('X');
+                appliedY = settings.plc.readAxisConfig('Y');
+                if ~isequaln(appliedX, config.plc.xAxis) || ...
+                        ~isequaln(appliedY, config.plc.yAxis)
+                    error('PLC:ConfigurationReadback', ...
+                        'PLC hardware settings did not match after write.');
+                end
                 disp('PLC settings applied.');
             else
                 disp('PLC disconnected or configuration not loaded.');

@@ -302,12 +302,12 @@ END_IF
 IF NOT bError AND NOT bSafetyError AND
 	nSeqState > STATE_IDLE AND nSeqState < STATE_ABORT_STOPPING AND
 	ABS(fForce) >= stSettings.fMaxForce THEN
-	IF stMoveCommand.nMode = 3 AND nLoadDirection <> 0 THEN
-		nReliefSourceDirection := nLoadDirection;
-	ELSIF Axis.Status.PositiveDirection THEN
+	IF Axis.Status.PositiveDirection THEN
 		nReliefSourceDirection := 1;
 	ELSIF Axis.Status.NegativeDirection THEN
 		nReliefSourceDirection := -1;
+	ELSIF stMoveCommand.nMode = 3 AND nLoadDirection <> 0 THEN
+		nReliefSourceDirection := nLoadDirection;
 	ELSE
 		nReliefSourceDirection := nLastMotionDirection;
 	END_IF
@@ -652,7 +652,9 @@ CASE nSeqState OF
 			ELSE
 				mcPendingDirection := MC_Negative_Direction;
 			END_IF
-			nVelocityUpdateCounter := nVelocityUpdateCounter + 1;
+			IF nVelocityUpdateCounter < VELOCITY_UPDATE_CYCLES THEN
+				nVelocityUpdateCounter := nVelocityUpdateCounter + 1;
+			END_IF
 
 			// Tiny corrections are replaced by a powered position hold.
 			IF fPendingVelocity <= fForceRegMinVelocity THEN
@@ -881,7 +883,9 @@ CASE nSeqState OF
 			INT_TO_LREAL(FORCE_POLARITY);
 		fCmdVelocity := LIMIT(-stSettings.fMaxVelocity, fCmdVelocity, stSettings.fMaxVelocity);
 		
-		nVelocityUpdateCounter := nVelocityUpdateCounter + 1;
+		IF nVelocityUpdateCounter < VELOCITY_UPDATE_CYCLES THEN
+			nVelocityUpdateCounter := nVelocityUpdateCounter + 1;
+		END_IF
 
 		IF ABS(fForceError) <= stSettings.fForceTolerance THEN
 			// Stop in the force deadband without powering the axis off.

@@ -436,7 +436,7 @@ classdef MachinePanel < handle
                 'HorizontalAlignment', 'center');
             actualHeader.Layout.Row = 1;
             actualHeader.Layout.Column = 2;
-            maximumHeader = uilabel(grid, 'Text', 'Maximum [N]', ...
+            maximumHeader = uilabel(grid, 'Text', 'Peak [N]', ...
                 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
             maximumHeader.Layout.Row = 1;
@@ -455,11 +455,12 @@ classdef MachinePanel < handle
                 panel.actualForceFields.(axisName).Layout.Row = row;
                 panel.actualForceFields.(axisName).Layout.Column = 2;
                 panel.maximumForceFields.(axisName) = uieditfield( ...
-                    grid, 'numeric', 'Value', 0, 'Editable', 'off');
+                    grid, 'numeric', 'Value', 0, 'Editable', 'off', ...
+                    'Tag', ['MaximumForce', axisName]);
                 panel.maximumForceFields.(axisName).Layout.Row = row;
                 panel.maximumForceFields.(axisName).Layout.Column = 3;
             end
-            resetButton = uibutton(grid, 'Text', 'Reset maximum', ...
+            resetButton = uibutton(grid, 'Text', 'Reset peak', ...
                 'ButtonPushedFcn', @(~, ~) panel.resetMaximumForce());
             resetButton.Layout.Row = 4;
             resetButton.Layout.Column = [1, 3];
@@ -598,8 +599,12 @@ classdef MachinePanel < handle
                     continue;
                 end
                 panel.actualForceFields.(axisName).Value = values(end);
-                panel.maximumForce.(axisName) = max( ...
-                    panel.maximumForce.(axisName), max(values));
+                [~, peakIndex] = max(abs(values));
+                peak = values(peakIndex);
+                if ~isfinite(panel.maximumForce.(axisName)) || ...
+                        abs(peak) > abs(panel.maximumForce.(axisName))
+                    panel.maximumForce.(axisName) = peak;
+                end
                 panel.maximumForceFields.(axisName).Value = ...
                     panel.maximumForce.(axisName);
             end
