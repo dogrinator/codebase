@@ -178,6 +178,27 @@ verifyFalse(testCase, isfile(fullfile(folder, 'invalid.json')));
 clear cleanup;
 end
 
+function testCameraFrameRateAndReliefVelocityLimits(testCase)
+settings = Settings(Plc(Model()), Camera(Model()));
+config = jsondecode(fileread(fullfile( ...
+    testCase.TestData.root, '.config', 'hwConfig', 'default.json')));
+
+config.camera.acquisitionFrameRateAbs = 60;
+settings.validateHardwareConfigCandidate(config);
+config.camera.acquisitionFrameRateAbs = 60.01;
+verifyError(testCase, ...
+    @() settings.validateHardwareConfigCandidate(config), ...
+    'Settings:InvalidHardwareConfig');
+
+config = jsondecode(fileread(fullfile( ...
+    testCase.TestData.root, '.config', 'hwConfig', 'default.json')));
+config.plc.xAxis.fForceReliefVelocity = ...
+    config.plc.xAxis.fMaxVelocity + 0.01;
+verifyError(testCase, ...
+    @() settings.validateHardwareConfigCandidate(config), ...
+    'PLC:InvalidConfiguration');
+end
+
 function testReadingPresetCandidateDoesNotCommitSelection(testCase)
 settings = Settings(Plc(Model()), Camera(Model()));
 settings.loadHwConfig('default');

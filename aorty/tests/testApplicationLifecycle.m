@@ -75,6 +75,36 @@ firstView.testPanel.applyPreset(currentPreset);
 verifyEqual(testCase, ...
     firstView.getTestConfiguration().system.axisMode, 'Both');
 verifyEqual(testCase, firstView.machinePanel.sampleCountField.Value, 500);
+cyclicCycles = findall(firstView.fig, 'Tag', 'CyclicCycleCount');
+preCycles = findall(firstView.fig, 'Tag', 'PreCycleCount');
+verifyTrue(testCase, isa(cyclicCycles, ...
+    'matlab.ui.control.NumericEditField'));
+verifyTrue(testCase, isa(preCycles, ...
+    'matlab.ui.control.NumericEditField'));
+verifyEqual(testCase, cyclicCycles.Limits, [1, 50]);
+verifyEqual(testCase, preCycles.Limits, [1, 50]);
+verifyEqual(testCase, string(cyclicCycles.RoundFractionalValues), "on");
+verifyEqual(testCase, string(preCycles.RoundFractionalValues), "on");
+
+manualSpeedX = findall(firstView.fig, 'Tag', 'ManualSpeedX');
+manualSpeedY = findall(firstView.fig, 'Tag', 'ManualSpeedY');
+verifyEqual(testCase, manualSpeedX.Limits, [0, 5]);
+verifyEqual(testCase, manualSpeedY.Limits, [0, 5]);
+singlePrimaryX = findall(firstView.fig, 'Tag', 'SinglePrimaryX');
+singlePrimaryY = findall(firstView.fig, 'Tag', 'SinglePrimaryY');
+verifyEqual(testCase, singlePrimaryX.Limits, [-2.5, 2.5]);
+verifyEqual(testCase, singlePrimaryY.Limits, [-0.9, 0.9]);
+verifyEqual(testCase, ...
+    string(findall(firstView.fig, 'Tag', 'SinglePrimaryUnit').Text), "N");
+
+cyclicLoadMode = findall(firstView.fig, 'Tag', 'CyclicLoadMode');
+cyclicLoadUnit = findall(firstView.fig, 'Tag', 'CyclicLoadUnit');
+loadBefore = firstView.getTestConfiguration().cyclic.load;
+verifyEqual(testCase, string(cyclicLoadUnit.Text), "mm");
+cyclicLoadMode.Value = 'Force';
+cyclicLoadMode.ValueChangedFcn(cyclicLoadMode, []);
+verifyEqual(testCase, string(cyclicLoadUnit.Text), "N");
+verifyEqual(testCase, firstView.getTestConfiguration().cyclic.load, loadBefore);
 referenceLines = findForceReferenceLines(firstView.fig);
 verifyNotEmpty(testCase, referenceLines);
 for index = 1:numel(referenceLines)
@@ -130,6 +160,15 @@ for index = 1:numel(animated)
 end
 firstView.openSettingsWindow();
 verifyTrue(testCase, firstView.settingsWindow.isOpen());
+fpsField = findall(firstView.settingsWindow.fig, ...
+    'Tag', 'Hardware-acquisitionFrameRateAbs');
+reliefX = findall(firstView.settingsWindow.fig, ...
+    'Tag', 'Hardware-fForceReliefVelocity');
+verifyEqual(testCase, fpsField.Limits, [0, 60]);
+verifyEqual(testCase, numel(reliefX), 2);
+for index = 1:numel(reliefX)
+    verifyEqual(testCase, reliefX(index).Limits, [0, 5]);
+end
 firstView.settingsWindow.close();
 firstView.reportApplicationAlert('Recording', 'Disk write failed.');
 firstView.updateErrorStatus(false, '');

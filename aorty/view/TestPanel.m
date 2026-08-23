@@ -72,7 +72,8 @@ classdef TestPanel < handle
             panel.definitionTabs = TestDefinitionTabs( ...
                 parent, panel.parentFig, tabCallbacks, ...
                 @() panel.getAxisMode(), ...
-                @(value) panel.setAxisMode(value));
+                @(value) panel.setAxisMode(value), ...
+                @() panel.settings.hwConfig);
             panel.tabs = panel.definitionTabs.tabs;
             panel.refreshRunAvailability();
         end
@@ -117,6 +118,10 @@ classdef TestPanel < handle
 
         function definition = getGeneralDefinition(panel)
             definition = panel.definitionTabs.getGeneralDefinition();
+        end
+
+        function adjusted = refreshHardwareLimits(panel)
+            adjusted = panel.definitionTabs.refreshHardwareLimits();
         end
 
         function preview = getForceReferencePreview(panel)

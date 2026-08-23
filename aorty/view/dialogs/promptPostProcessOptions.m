@@ -22,12 +22,12 @@ grid.ColumnWidth = {'1x', 130};
 grid.Padding = [14, 14, 14, 14];
 grid.RowSpacing = 8;
 grid.ColumnSpacing = 8;
-uilabel(grid, 'Text', 'TIFF sampling period [s]');
+uilabel(grid, 'Text', 'TIFF sampling period (s)');
 periodField = uieditfield(grid, 'numeric', ...
     'Value', 0.1, 'Limits', [0, Inf], ...
     'ValueDisplayFormat', '%.3f');
 includeCheck = uicheckbox(grid, ...
-    'Text', 'Include pre-test', 'Value', false);
+    'Text', 'Include pre/post-test frames', 'Value', false);
 includeCheck.Layout.Row = 2;
 includeCheck.Layout.Column = [1, 2];
 legacyTimestampCheck = uicheckbox(grid, ...

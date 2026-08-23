@@ -38,7 +38,8 @@ classdef TestControlFactory
                 'HorizontalAlignment', 'center');
         end
 
-        function controls = axisRow(grid, row, text, value, unit, changed)
+        function [controls, unitLabel] = axisRow( ...
+                grid, row, text, value, unit, changed)
             % The XY lock keeps both values synchronized until the user unlocks it.
             TestControlFactory.label(grid, row, 1, text, '');
             controls.x = uieditfield(grid, 'numeric', 'Value', value);
@@ -47,7 +48,9 @@ classdef TestControlFactory
             controls.y = uieditfield(grid, 'numeric', 'Value', value);
             controls.y.Layout.Row = row;
             controls.y.Layout.Column = 3;
-            TestControlFactory.label(grid, row, 4, unit, 'center');
+            unitLabel = TestControlFactory.label( ...
+                grid, row, 4, '', 'center');
+            TestControlFactory.setUnitLabel(unitLabel, unit);
             controls.lock = uibutton(grid, 'state', 'Text', 'XY', ...
                 'Value', true);
             controls.lock.Layout.Row = row;
@@ -64,15 +67,17 @@ classdef TestControlFactory
         end
 
         %% Scalar, optional, and action rows
-        function control = cycleRow(grid, row, text, value, unit)
+        function control = numericCycleRow(grid, row, text, value, unit)
             TestControlFactory.label(grid, row, 1, text, '');
-            cycleValues = 1:50;
-            control = uidropdown(grid, ...
-                'Items', cellstr(string(cycleValues)), ...
-                'ItemsData', cycleValues, 'Value', value);
+            control = uieditfield(grid, 'numeric', ...
+                'Value', value, 'Limits', [1, 50], ...
+                'RoundFractionalValues', 'on', ...
+                'Tooltip', 'Enter a whole cycle count from 1 to 50.');
             control.Layout.Row = row;
             control.Layout.Column = [2, 3];
-            TestControlFactory.label(grid, row, 4, unit, 'center');
+            unitLabel = TestControlFactory.label( ...
+                grid, row, 4, '', 'center');
+            TestControlFactory.setUnitLabel(unitLabel, unit);
         end
 
         function control = checkRow(grid, row, text, value)
@@ -92,7 +97,9 @@ classdef TestControlFactory
                 'Value', value, 'Enable', 'off');
             controls.value.Layout.Row = row;
             controls.value.Layout.Column = [2, 3];
-            TestControlFactory.label(grid, row, 4, unit, 'center');
+            unitLabel = TestControlFactory.label( ...
+                grid, row, 4, '', 'center');
+            TestControlFactory.setUnitLabel(unitLabel, unit);
             controls.enabled.ValueChangedFcn = @(~, ~) changed();
         end
 
@@ -111,7 +118,9 @@ classdef TestControlFactory
                 'numeric', 'Value', value);
             controls.value.y.Layout.Row = row;
             controls.value.y.Layout.Column = 3;
-            TestControlFactory.label(grid, row, 4, unit, 'center');
+            unitLabel = TestControlFactory.label( ...
+                grid, row, 4, '', 'center');
+            TestControlFactory.setUnitLabel(unitLabel, unit);
             controls.value.lock = uibutton(grid, 'state', ...
                 'Text', 'XY', 'Value', true);
             controls.value.lock.Layout.Row = row;
@@ -151,11 +160,37 @@ classdef TestControlFactory
             button.Layout.Row = row;
             button.Layout.Column = [1, 5];
         end
+
+        function setUnitLabel(control, unit)
+            % Typeset compound physical units without slash/caret notation.
+            control.Interpreter = 'none';
+            switch char(unit)
+                case 'mm/s'
+                    control.Text = ...
+                        '$\frac{\mathrm{mm}}{\mathrm{s}}$';
+                    control.Interpreter = 'latex';
+                case 'N/count'
+                    control.Text = ...
+                        '$\frac{\mathrm{N}}{\mathrm{count}}$';
+                    control.Interpreter = 'latex';
+                case 'mm/(s N)'
+                    control.Text = ...
+                        '$\frac{\mathrm{mm}}{\mathrm{s}\cdot\mathrm{N}}$';
+                    control.Interpreter = 'latex';
+                case 'mm/(N s^2)'
+                    control.Text = ...
+                        ['$\frac{\mathrm{mm}}{\mathrm{N}\cdot', ...
+                        '\mathrm{s}^{2}}$'];
+                    control.Interpreter = 'latex';
+                otherwise
+                    control.Text = char(unit);
+            end
+        end
     end
 
     methods (Static, Access = private)
         %% Primitive layout and XY-lock callbacks
-        function label(grid, row, column, text, alignment)
+        function control = label(grid, row, column, text, alignment)
             control = uilabel(grid, 'Text', text);
             control.Layout.Row = row;
             control.Layout.Column = column;
@@ -166,16 +201,37 @@ classdef TestControlFactory
 
         function syncPair(source, target, lock, changed)
             if lock.Value
-                target.Value = source.Value;
+                if TestControlFactory.isWithinLimits( ...
+                        target, source.Value)
+                    target.Value = source.Value;
+                else
+                    % Restore the edited field to the paired valid value.
+                    source.Value = target.Value;
+                end
             end
             changed();
         end
 
         function syncLock(lock, xField, yField, changed)
             if lock.Value
-                yField.Value = xField.Value;
+                if TestControlFactory.isWithinLimits( ...
+                        yField, xField.Value)
+                    yField.Value = xField.Value;
+                else
+                    lock.Value = false;
+                end
             end
             changed();
+        end
+
+        function valid = isWithinLimits(control, value)
+            lowerValid = value > control.Limits(1) || ...
+                (strcmp(control.LowerLimitInclusive, 'on') && ...
+                value == control.Limits(1));
+            upperValid = value < control.Limits(2) || ...
+                (strcmp(control.UpperLimitInclusive, 'on') && ...
+                value == control.Limits(2));
+            valid = lowerValid && upperValid;
         end
     end
 end

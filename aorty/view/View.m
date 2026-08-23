@@ -174,6 +174,7 @@ classdef View < handle
                 settings.applyPlcConfig(config);
                 settings.commitHardwareConfig(config, filename);
                 settings.rememberHwConfig();
+                app.refreshHardwareDependentInputs(true);
             catch exception
                 % A partial hardware write cannot be rolled back reliably.
                 % Disconnect both devices so motion cannot continue with a
@@ -295,7 +296,8 @@ classdef View < handle
             app.machinePanel = MachinePanel( ...
                 mainGrid, machineCallbacks, ...
                 @() app.getAxisMode(), ...
-                @() app.testPanel.getForceReferencePreview());
+                @() app.testPanel.getForceReferencePreview(), ...
+                @() app.controller.settings.hwConfig);
         end
 
         function createToolbar(app, mainGrid)
@@ -636,6 +638,7 @@ classdef View < handle
                     return;
                 end
             end
+            app.refreshHardwareDependentInputs(false);
             try
                 app.testPanel.loadPresetByName(names.appConfig);
             catch
@@ -651,6 +654,17 @@ classdef View < handle
         function ensureHardwareConfigLoaded(app)
             if isempty(app.controller.settings.hwConfig)
                 app.controller.settings.loadHwConfig('default');
+            end
+        end
+
+        function refreshHardwareDependentInputs(app, notifyOperator)
+            adjusted = app.testPanel.refreshHardwareLimits();
+            adjusted = app.machinePanel.refreshHardwareLimits() || adjusted;
+            if notifyOperator && adjusted
+                uialert(app.fig, ...
+                    ['One or more visible motion or force entries were ' ...
+                    'reset because the new hardware profile has lower limits.'], ...
+                    'Inputs adjusted');
             end
         end
 

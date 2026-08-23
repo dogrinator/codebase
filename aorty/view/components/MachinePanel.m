@@ -23,6 +23,7 @@ classdef MachinePanel < handle
         callbacks
         axisModeGetter
         previewGetter
+        hardwareConfigGetter
 
         % Camera preview and manual-motion controls
         cameraContent
@@ -55,10 +56,13 @@ classdef MachinePanel < handle
 
     methods
         %% Live display updates and machine state
-        function panel = MachinePanel(parent, callbacks, axisModeGetter, previewGetter)
+        function panel = MachinePanel( ...
+                parent, callbacks, axisModeGetter, previewGetter, ...
+                hardwareConfigGetter)
             panel.callbacks = callbacks;
             panel.axisModeGetter = axisModeGetter;
             panel.previewGetter = previewGetter;
+            panel.hardwareConfigGetter = hardwareConfigGetter;
             panel.createLivePanel(parent);
             panel.createMachinePanel(parent);
             panel.applyState();
@@ -216,6 +220,18 @@ classdef MachinePanel < handle
             panel.updateForceReferenceLines();
         end
 
+        function adjusted = refreshHardwareLimits(panel)
+            adjusted = false;
+            config = panel.hardwareConfigGetter();
+            if isempty(config) || ~isfield(config, 'plc')
+                return;
+            end
+            adjusted = panel.configureSpeedLimit( ...
+                panel.velX, config.plc.xAxis.fMaxVelocity) || adjusted;
+            adjusted = panel.configureSpeedLimit( ...
+                panel.velY, config.plc.yAxis.fMaxVelocity) || adjusted;
+        end
+
         function cancelActiveJog(panel, notifyController)
             if nargin < 2
                 notifyController = true;
@@ -305,8 +321,8 @@ classdef MachinePanel < handle
         function [axesHandle, lines] = createPlot(panel, parent, axisName, color)
             axesHandle = uiaxes(parent);
             title(axesHandle, [axisName, ' axis']);
-            xlabel(axesHandle, 'Time [s]');
-            ylabel(axesHandle, 'Force [N]');
+            xlabel(axesHandle, 'Time (s)');
+            ylabel(axesHandle, 'Force (N)');
             axesHandle.XGrid = 'on';
             axesHandle.YGrid = 'on';
             lines = struct();
@@ -410,14 +426,18 @@ classdef MachinePanel < handle
             grid.Padding = [6, 4, 6, 4];
             uilabel(grid, 'Text', 'Axis', 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
-            uilabel(grid, 'Text', 'Speed [mm/s]', 'FontWeight', 'bold', ...
+            speedHeader = uilabel(grid, ...
+                'Text', '$\mathrm{Speed}\;(\frac{\mathrm{mm}}{\mathrm{s}})$', ...
+                'Interpreter', 'latex', 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
             uilabel(grid, 'Text', 'X', 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
             panel.velX = panel.speedField(grid);
+            panel.velX.Tag = 'ManualSpeedX';
             uilabel(grid, 'Text', 'Y', 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
             panel.velY = panel.speedField(grid);
+            panel.velY.Tag = 'ManualSpeedY';
         end
 
         function createForceReadouts(panel, parent)
@@ -431,12 +451,12 @@ classdef MachinePanel < handle
                 'HorizontalAlignment', 'center');
             axisHeader.Layout.Row = 1;
             axisHeader.Layout.Column = 1;
-            actualHeader = uilabel(grid, 'Text', 'Actual [N]', ...
+            actualHeader = uilabel(grid, 'Text', 'Actual (N)', ...
                 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
             actualHeader.Layout.Row = 1;
             actualHeader.Layout.Column = 2;
-            maximumHeader = uilabel(grid, 'Text', 'Peak [N]', ...
+            maximumHeader = uilabel(grid, 'Text', 'Peak (N)', ...
                 'FontWeight', 'bold', ...
                 'HorizontalAlignment', 'center');
             maximumHeader.Layout.Row = 1;
@@ -470,6 +490,20 @@ classdef MachinePanel < handle
             control = uieditfield(parent, 'numeric', 'Value', 1, ...
                 'Limits', [0, Inf], 'LowerLimitInclusive', 'off', ...
                 'Tooltip', 'Speed must be greater than 0.');
+        end
+
+        function adjusted = configureSpeedLimit(~, control, maximum)
+            maximum = double(maximum);
+            adjusted = control.Value > maximum;
+            if adjusted
+                control.Value = min(1, maximum);
+            end
+            control.Limits = [0, maximum];
+            control.LowerLimitInclusive = 'off';
+            control.UpperLimitInclusive = 'on';
+            control.Tooltip = sprintf( ...
+                'Speed must be greater than 0 and at most %.6g mm per s.', ...
+                maximum);
         end
 
         function createMachineActions(panel, parent)
@@ -669,12 +703,12 @@ classdef MachinePanel < handle
             if strcmp(mode, 'Force')
                 panel.fxAxes.YLimMode = 'auto';
                 panel.fyAxes.YLimMode = 'auto';
-                ylabel(panel.fxAxes, 'Force [N]');
-                ylabel(panel.fyAxes, 'Force [N]');
+                ylabel(panel.fxAxes, 'Force (N)');
+                ylabel(panel.fyAxes, 'Force (N)');
                 panel.liveActionButton.Text = 'Tare load cells';
             else
-                ylabel(panel.fxAxes, 'Displacement [mm]');
-                ylabel(panel.fyAxes, 'Displacement [mm]');
+                ylabel(panel.fxAxes, 'Displacement (mm)');
+                ylabel(panel.fyAxes, 'Displacement (mm)');
                 panel.liveActionButton.Text = 'Auto home';
                 panel.updateDisplacementYLimits('X', panel.fxAxes);
                 panel.updateDisplacementYLimits('Y', panel.fyAxes);
