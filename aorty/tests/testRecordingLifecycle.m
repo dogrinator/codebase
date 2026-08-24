@@ -417,7 +417,7 @@ verifyEqual(testCase, strtrim(char(h5readatt( ...
 clear cleanup;
 end
 
-function testDroppedSamplesAbortActiveRecording(testCase)
+function testDroppedSamplesAreRecordedWithoutAborting(testCase)
 folder = makeTemporaryFolder();
 cleanup = onCleanup(@() removeTemporaryFolder(folder));
 [controler, client, command] = ...
@@ -433,10 +433,12 @@ client.setStatus('X', struct( ...
 client.setStatus('Y', struct( ...
     'sampleCounter', uint32(60), 'bufferHead', int16(10)));
 controler.readCallback();
-verifyFalse(testCase, controler.testRunning);
+verifyTrue(testCase, controler.testRunning);
+verifyTrue(testCase, controler.model.isRecording);
+controler.processTestStatusForTesting(struct('X', completionStatus()));
 filename = fullfile(folder, 'recording.h5');
 verifyEqual(testCase, strtrim(char(h5readatt( ...
-    filename, '/metadata', 'status'))), 'aborted');
+    filename, '/metadata', 'status'))), 'completed');
 verifyEqual(testCase, h5readatt(filename, '/metadata', ...
     'x_dropped_sample_count'), uint64(10));
 verifyEqual(testCase, h5readatt(filename, '/metadata', ...

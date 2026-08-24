@@ -829,10 +829,6 @@ classdef Control < handle
             if restartDetected
                 message = ['PLC streaming counter restarted during the ' ...
                     'operation. The recording is incomplete.'];
-            elseif drops.X > 0 || drops.Y > 0
-                message = sprintf( ...
-                    ['PLC sample loss detected during the operation ' ...
-                    '(X: %d, Y: %d).'], drops.X, drops.Y);
             end
         end
 
