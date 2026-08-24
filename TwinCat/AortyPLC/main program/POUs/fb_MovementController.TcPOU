@@ -444,6 +444,51 @@ END_IF
 //                      Mode switcher
 // =========================================================
 
+// Check criterion 2 every scan while the primary endpoint is moving.
+IF bSinglePrimaryActive AND stMoveCommand.nStop2Mode > 0 THEN
+	bSingleStopReached := FALSE;
+	IF stMoveCommand.nStop2Mode = 1 THEN
+		fStop2CurrentError := fStop2TargetPosition - fActPosition;
+		IF ABS(fStop2CurrentError) <= POSITION_EPSILON OR
+			(fStop2StartError > 0.0 AND fStop2CurrentError <= 0.0) OR
+			(fStop2StartError < 0.0 AND fStop2CurrentError >= 0.0) THEN
+			bSingleStopReached := TRUE;
+		END_IF
+	ELSIF stMoveCommand.nStop2Mode = 2 THEN
+		fStop2CurrentError := stMoveCommand.fStop2Value - fForce;
+		IF ABS(fStop2CurrentError) <=
+			SEL(stMoveCommand.fSingleForceTolerance < 0.0,
+				stMoveCommand.fSingleForceTolerance,
+				MAX(ABS(stMoveCommand.fStop2Value) *
+					ABS(stMoveCommand.fSingleForceTolerance) / 100.0,
+					stSettings.fForceTolerance)) OR
+			(fStop2StartError > 0.0 AND fStop2CurrentError <= 0.0) OR
+			(fStop2StartError < 0.0 AND fStop2CurrentError >= 0.0) THEN
+			bSingleStopReached := TRUE;
+		END_IF
+	ELSIF stMoveCommand.nStop2Mode = 3 THEN
+		IF NOT bSingleRuptureArmed AND
+			ABS(fForce) >= fSingleStartForce + stSettings.fForceTolerance THEN
+			bSingleRuptureArmed := TRUE;
+		END_IF
+		IF bSingleRuptureArmed THEN
+			fSinglePeakForce := MAX(fSinglePeakForce, ABS(fForce));
+		END_IF
+		IF bSingleRuptureArmed AND ABS(fForce) <= fSinglePeakForce *
+			(1.0 - stMoveCommand.fStop2Value / 100.0) THEN
+			bSingleStopReached := TRUE;
+		END_IF
+	END_IF
+
+	IF bSingleStopReached THEN
+		fbMC_MoveRelative1.Execute := FALSE;
+		bExecuteVelMove := FALSE;
+		bSinglePrimaryActive := FALSE;
+		stateHalt := TRUE;
+		nSeqState := STATE_SINGLE_WAIT_STOP;
+	END_IF
+END_IF
+
 // In a biaxial Single test, either axis endpoint completes both axes.
 IF bSinglePrimaryActive AND bSyncSingleComplete THEN
 	fbMC_MoveRelative1.Execute := FALSE;
@@ -1100,51 +1145,6 @@ END_IF
         <ST><![CDATA[
 // Shared pre-test, main-test and post-test sequence for mode 3.
 // All stored coordinates are references only; every position command is relative.
-
-// Criterion 2 ends a single test immediately when its signed level is crossed.
-IF bSinglePrimaryActive AND stMoveCommand.nStop2Mode > 0 THEN
-	bSingleStopReached := FALSE;
-	IF stMoveCommand.nStop2Mode = 1 THEN
-		fStop2CurrentError := fStop2TargetPosition - fActPosition;
-		IF ABS(fStop2CurrentError) <= POSITION_EPSILON OR
-			(fStop2StartError > 0.0 AND fStop2CurrentError <= 0.0) OR
-			(fStop2StartError < 0.0 AND fStop2CurrentError >= 0.0) THEN
-			bSingleStopReached := TRUE;
-		END_IF
-	ELSIF stMoveCommand.nStop2Mode = 2 THEN
-		fStop2CurrentError := stMoveCommand.fStop2Value - fForce;
-		IF ABS(fStop2CurrentError) <=
-			SEL(stMoveCommand.fSingleForceTolerance < 0.0,
-				stMoveCommand.fSingleForceTolerance,
-				MAX(ABS(stMoveCommand.fStop2Value) *
-					ABS(stMoveCommand.fSingleForceTolerance) / 100.0,
-					stSettings.fForceTolerance)) OR
-			(fStop2StartError > 0.0 AND fStop2CurrentError <= 0.0) OR
-			(fStop2StartError < 0.0 AND fStop2CurrentError >= 0.0) THEN
-			bSingleStopReached := TRUE;
-		END_IF
-	ELSIF stMoveCommand.nStop2Mode = 3 THEN
-		IF NOT bSingleRuptureArmed AND
-			ABS(fForce) >= fSingleStartForce + stSettings.fForceTolerance THEN
-			bSingleRuptureArmed := TRUE;
-		END_IF
-		IF bSingleRuptureArmed THEN
-			fSinglePeakForce := MAX(fSinglePeakForce, ABS(fForce));
-		END_IF
-		IF bSingleRuptureArmed AND ABS(fForce) <= fSinglePeakForce *
-			(1.0 - stMoveCommand.fStop2Value / 100.0) THEN
-			bSingleStopReached := TRUE;
-		END_IF
-	END_IF
-
-	IF bSingleStopReached THEN
-		fbMC_MoveRelative1.Execute := FALSE;
-		bExecuteVelMove := FALSE;
-		bSinglePrimaryActive := FALSE;
-		stateHalt := TRUE;
-		nSeqState := STATE_SINGLE_WAIT_STOP;
-	END_IF
-END_IF
 
 CASE nSeqState OF
 	STATE_IDLE: // Start a test. MATLAB keeps command values unchanged while bWorking is TRUE.

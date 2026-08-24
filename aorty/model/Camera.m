@@ -50,8 +50,8 @@ classdef Camera < handle
                     end
 
                     % Tune packet transport when the source exposes these controls.
-                    if isprop(camera.cameraSrc,'PacketSize'),  camera.cameraSrc.PacketSize  = 8000; end
-                    if isprop(camera.cameraSrc,'PacketDelay'), camera.cameraSrc.PacketDelay = 500;  end
+                    if isprop(camera.cameraSrc,'PacketSize'),  camera.cameraSrc.PacketSize  = 1500; end
+                    %if isprop(camera.cameraSrc,'PacketDelay'), camera.cameraSrc.PacketDelay = 500;  end
 
                     % Acquire one frame per repeated immediate trigger.
                     camera.cameraHW.FramesPerTrigger = 1;
