@@ -26,6 +26,8 @@ classdef Settings < handle
             settings.appPath = fullfile(applicationRoot, '.config', 'appConfig');
             settings.appInfoPath = fullfile(applicationRoot, '.config', ...
                 'appInfo.json');
+            Settings.ensureLocalDefaults(applicationRoot, ...
+                settings.hwPath, settings.appPath);
         end
 
         %% Hardware configuration
@@ -286,6 +288,35 @@ classdef Settings < handle
 
     %% JSON file handling
     methods (Static, Access = private)
+        function ensureLocalDefaults(applicationRoot, hwPath, appPath)
+            templateRoot = fullfile(applicationRoot, 'configDefaults');
+            pairs = {
+                fullfile(templateRoot, 'hwConfig', 'default.json'), ...
+                    fullfile(hwPath, 'default.json')
+                fullfile(templateRoot, 'appConfig', 'default.json'), ...
+                    fullfile(appPath, 'default.json')};
+            for index = 1:size(pairs, 1)
+                source = pairs{index, 1};
+                destination = pairs{index, 2};
+                folder = fileparts(destination);
+                if ~isfolder(folder)
+                    [created, message] = mkdir(folder);
+                    if ~created
+                        error('Settings:WriteFailed', ...
+                            'Could not create %s: %s', folder, message);
+                    end
+                end
+                if ~isfile(destination)
+                    [copied, message] = copyfile(source, destination);
+                    if ~copied
+                        error('Settings:WriteFailed', ...
+                            'Could not initialize %s: %s', ...
+                            destination, message);
+                    end
+                end
+            end
+        end
+
         function names = listJsonFiles(folder)
             files = dir(fullfile(folder, '*.json'));
             names = erase({files.name}, '.json');

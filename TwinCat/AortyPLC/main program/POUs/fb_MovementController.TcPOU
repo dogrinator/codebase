@@ -118,6 +118,8 @@ VAR CONSTANT
 	FORCE_REG_MIN_SPEED_FRACTION : LREAL := 0.01;
 	POSITION_EPSILON : LREAL := 0.000001;
 	FORCE_POLARITY : INT := -1;
+	// Positive test displacement follows the positive-force/loading direction.
+	DISPLACEMENT_POLARITY : INT := -1;
 	STATUS_IDLE : INT := 0;
 	STATUS_STOPPING : INT := 3;
 	STATUS_BASIC_MOVE : INT := 5;
@@ -1381,7 +1383,8 @@ CASE nSeqState OF
 			nSeqState := STATE_POSTTEST_SELECT;
 		ELSIF stMoveCommand.nLoadMode = 1 THEN
 			fEndpointTargetPosition := fPreTestFinalPos +
-				stMoveCommand.fLoadValues[nCurrentCycle];
+				stMoveCommand.fLoadValues[nCurrentCycle] *
+				INT_TO_LREAL(DISPLACEMENT_POLARITY);
 			fTargetDist1 := fEndpointTargetPosition - fActPosition;
 			fTargetVel1 := ABS(stMoveCommand.fTestRate);
 			fEndpointHoldTime := stMoveCommand.fCyclicForceHoldTime;
@@ -1418,7 +1421,8 @@ CASE nSeqState OF
 		nSystemStatus := STATUS_CYCLIC_TEST;
 		IF stMoveCommand.nUnloadMode = 1 THEN
 			fEndpointTargetPosition := fPreTestFinalPos +
-				stMoveCommand.fUnloadValues[nCurrentCycle];
+				stMoveCommand.fUnloadValues[nCurrentCycle] *
+				INT_TO_LREAL(DISPLACEMENT_POLARITY);
 			fTargetDist1 := fEndpointTargetPosition - fActPosition;
 			fTargetVel1 := ABS(stMoveCommand.fTestRate);
 			fEndpointHoldTime := stMoveCommand.fCyclicForceHoldTime;
@@ -1476,14 +1480,18 @@ CASE nSeqState OF
 		bSingleRuptureArmed := FALSE;
 
 		IF stMoveCommand.nStop2Mode = 1 THEN
-			fStop2TargetPosition := fPreTestFinalPos + stMoveCommand.fStop2Value;
+			fStop2TargetPosition := fPreTestFinalPos +
+				stMoveCommand.fStop2Value *
+				INT_TO_LREAL(DISPLACEMENT_POLARITY);
 			fStop2StartError := fStop2TargetPosition - fActPosition;
 		ELSIF stMoveCommand.nStop2Mode = 2 THEN
 			fStop2StartError := stMoveCommand.fStop2Value - fForce;
 		END_IF
 
 		IF stMoveCommand.nStop1Mode = 1 THEN
-			fEndpointTargetPosition := fPreTestFinalPos + stMoveCommand.fStop1Value;
+			fEndpointTargetPosition := fPreTestFinalPos +
+				stMoveCommand.fStop1Value *
+				INT_TO_LREAL(DISPLACEMENT_POLARITY);
 			fTargetDist1 := fEndpointTargetPosition - fActPosition;
 			fTargetVel1 := ABS(stMoveCommand.fTestRate);
 			fEndpointHoldTime := stMoveCommand.fSingleForceHoldTime;

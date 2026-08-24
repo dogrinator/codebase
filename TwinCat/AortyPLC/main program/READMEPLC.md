@@ -119,6 +119,8 @@ reference. With preload, both axes finish pretension at a shared barrier and
 then replace that reference with their actual positions. At the transition
 into the main test, each axis captures its actual pre-test-final position; that
 coordinate is the `0 mm` origin for Single/Cyclic displacement endpoints.
+Positive endpoint displacement follows the positive-force/loading direction;
+the controller converts it to the configured NC-axis polarity.
 
 STOP, safety errors, end stops, axis errors, and overforce abort the sequence
 and skip post-test motion.

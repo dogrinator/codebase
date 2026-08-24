@@ -170,7 +170,8 @@ Example section:
 ```
 
 Displacement values are relative to the actual position captured at the
-transition into the main test. The captured position is `0 mm`.
+transition into the main test. The captured position is `0 mm`; positive
+values move in the positive-force/loading direction.
 
 ## Cyclic object
 

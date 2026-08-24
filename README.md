@@ -142,7 +142,9 @@ is rejected if either axis does not report interface version `7`.
 
 Single and Cyclic displacement endpoints are relative to the coordinate
 captured at the synchronized transition into the main test. This origin is
-`0 mm`; the live displacement display itself remains the absolute NC position.
+`0 mm`; positive test displacement follows the positive-force/loading
+direction. The live displacement display itself remains the absolute NC
+position.
 
 For General tests, start with
 [`general_test_example.json`](aorty/examples/general_test_example.json) and

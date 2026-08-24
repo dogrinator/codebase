@@ -101,8 +101,7 @@ end
 function testTrackedConfigurationsUseCurrentContract(testCase)
 root = testCase.TestData.root;
 files = {
-    fullfile(root, '.config', 'appConfig', 'default.json')
-    fullfile(root, '.config', 'appConfig', 'new_test.json')
+    fullfile(root, 'configDefaults', 'appConfig', 'default.json')
     fullfile(root, 'examples', 'general_test_example.json')};
 for index = 1:numel(files)
     text = fileread(files{index});
@@ -110,7 +109,7 @@ for index = 1:numel(files)
     verifyEmpty(testCase, strfind(text, 'failureThreshold'));
 end
 
-for index = 1:2
+for index = 1
     preset = jsondecode(fileread(files{index}));
     verifyEqual(testCase, preset.schemaVersion, 2);
     verifyGreaterThanOrEqual(testCase, preset.pre.cycles, 1);
@@ -136,7 +135,7 @@ for index = 1:2
         sort({'enabled'; 'includePrePost'; 'samplingPeriod'}));
 end
 
-general = jsondecode(fileread(files{3}));
+general = jsondecode(fileread(files{2}));
 verifyEqual(testCase, general.schemaVersion, 2);
 verifyEqual(testCase, sort(fieldnames(general.cyclic.forceTolerance)), ...
     sort({'x'; 'y'}));

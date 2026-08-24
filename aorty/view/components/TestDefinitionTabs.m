@@ -838,7 +838,8 @@ classdef TestDefinitionTabs < handle
 
         function text = displacementTooltip(~)
             text = ['Displacement is the current axis position relative ' ...
-                'to the position captured at test start (start = 0 mm).'];
+                'to the position captured at test start (start = 0 mm). ' ...
+                'Positive values move in the loading direction.'];
         end
     end
 
