@@ -1,25 +1,26 @@
 # Aorty biaxial test system
 
-Aorty is a two-axis material-test system built from a MATLAB operator
-application and a Beckhoff TwinCAT PLC program. MATLAB prepares and validates
-tests, controls recording, and presents machine state. The PLC owns motion,
-test sequencing, biaxial synchronization, and protective behavior.
+Aorty is a two-axis push/pull test system built specificaly for biomechanical tests.
+Main user interface, validation of inputs and test selection is done inside of MATLAB
+All realtime control is managed from Beckhoff PLC witch is communicating
+with PC runnyng matlab by ADS interface created by Twincat 3.
 
 > [!CAUTION]
 > The UI **STOP** command is a controlled software halt, not a safety-rated
-> emergency stop. Operate the machine only with its approved safety system and
-> begin commissioning with conservative force and velocity limits.
+> emergency stop. Also it is mandatory for operator to check if ewerithing
+> is correctly connected before the machine is turned on and also to validate
+> the values that he is imputing before system is used for measurement
 
 ## Documentation
 
 | Guide | Use it for |
 | --- | --- |
-| This README | Installation, first run, normal workflow, and project navigation |
+| This README | Installation, first run, test definitions |
+| [DevNotes](aorty/ARCHITECTURE.md) | Workflow, and project navigation |
 | [MATLAB architecture](aorty/ARCHITECTURE.md) | Component responsibilities and application execution flows |
 | [General Test guide](aorty/examples/generalTestReadme.md) | Authoring and importing versioned General Test JSON |
 | [MATLAB–TwinCAT interface guide](aorty/model/plc/interfaceReadme.md) | ADS symbols, packet layout, recording contracts, and communication tests |
 | [TwinCAT PLC guide](<TwinCat/AortyPLC/main program/READMEPLC.md>) | PLC states, synchronization, errors, deployment, and commissioning |
-| [EL3356 load-cell calibration](aorty/.config/hwConfig/tenzoCalibration.md) | Wiring, TwinCAT setup, force calibration, tare, and validation |
 
 ## System architecture
 
@@ -56,7 +57,7 @@ The main responsibilities are deliberately separated:
 aorty/
   main.m                         MATLAB entry point
   controller/                    Test, acquisition, and recording coordination
-  model/                         PLC, camera, settings, and recording models
+  model/                         PLC, camera, settings, and recording
   model/plc/                     ADS transport and command validation
   view/                          Operator UI
   examples/                      General Test JSON and authoring guide
@@ -69,33 +70,24 @@ TwinCat/AortyPLC/
     DUTs/                        ADS command, status, and settings structures
     POUs/                        Motion, safety, status, and synchronization logic
     main program.tmc             Generated ADS metadata
-    READMEPLC.md                 PLC and commissioning guide
+    READMEPLC.md                 PLC guide
 ```
 
 ## Requirements
 
-- MATLAB with UI support and .NET interoperability. The offline suite was
-  verified with MATLAB R2024b; the minimum supported release is not yet
-  established.
-- The Beckhoff TwinCAT ADS assembly used by
-  `aorty/model/plc/PlcAds.m`.
-- A TwinCAT/XAE installation for building and deploying the PLC project.
-- Image Acquisition Toolbox for recorded tests.
-- Computer Vision Toolbox when annotated TIFF export is required (`insertText`),
-  including the complete offline test suite.
+- MATLAB version R2024b with toolboxes: GiGe cam, Image Acquisition, Computer Vision.
+- The Beckhoff TwinCAT ADS assembly used by `aorty/model/plc/PlcAds.m`.
+- A TwinCAT/XAE installation for building and deploying the PLC project `add later`
 
 The checked-in machine configuration uses AMS Net ID
 `5.85.113.174.1.1`, ADS port `851`, and interface version `7`. These are
-deployment-specific values: review the hardware configuration before
-connecting to another machine.
+deployment-specific values
 
 ## Setup and first run
 
 1. Build and deploy `TwinCat/AortyPLC/aortyPLC.tsproj`.
-2. Confirm that TwinCAT generated the symbols in `main program.tmc`.
-3. Review the deployment properties in `aorty/model/Plc.m` (AMS route, ADS
-   port, and assembly path), then review
-   `aorty/.config/hwConfig/default.json` for camera, force calibration,
+2. Review the  properties in `aorty/model/Plc.m` (AMS route, and assembly path),
+3. Review `aorty/.config/hwConfig/default.json` for camera, force calibration,
    velocity, maximum-force, and relief settings.
 4. Start MATLAB from the repository root and run:
 
@@ -103,14 +95,11 @@ connecting to another machine.
    run("aorty/main.m")
    ```
 
-5. The application opens offline with the last successfully applied profiles,
+5. The application opens with the last successfully applied profiles,
    or `default.json` when no previous selection exists.
    Use the UI switches to connect the PLC and camera before starting a
    recorded test. Each successful connection automatically applies the
    currently selected hardware profile to that device.
-
-At PLC connection, MATLAB reads `nInterfaceVersion` from both axes. Connection
-is rejected if either axis does not report interface version `7`.
 
 ## Operator workflow
 
@@ -120,12 +109,10 @@ is rejected if either axis does not report interface version `7`.
 3. Select X, Y, or Both and configure one test tab.
 4. Review force, displacement, rate, tolerance, hold-time, post-test, and
    recording options. Test-tab force tolerances are percentages of each
-   force endpoint, with the configured hardware force tolerance used as the
-   minimum absolute deadband. Imported General Test JSON tolerances remain
-   in newtons.
+   force endpoint.
 5. Start the test. When `testRoot` is configured in
    `aorty/.config/appInfo.json`, the application creates its output folder
-   automatically. Otherwise it asks for an empty output folder.
+   automatically. If no root folder is selected app asks for an empty output folder.
 6. Monitor system status, force, displacement, and errors.
 7. Inspect `recording.h5` and `cam.bin`; create TIFF output automatically or
    through **Post-process data** when required.
@@ -136,19 +123,15 @@ is rejected if either axis does not report interface version `7`.
 | --- | --- |
 | **Pre-test** | Optional initial preload followed by repeated force pre-conditioning cycles |
 | **Single** | One displacement or force endpoint with an optional OR endpoint or percentage-drop rupture stop |
-| **Cyclic** | Constant load/unload endpoints for 1–50 cycles, including mixed control modes |
+| **Cyclic** | Constant load/unload endpoints for n cycles, including mixed control modes |
 | **General** | A complete, versioned JSON definition with variable cyclic arrays |
 | **Post-test** | Stay, return to a saved/sequence coordinate, return to pre-test final, or release to zero force |
 
-Single and Cyclic displacement endpoints are relative to the coordinate
-captured at the synchronized transition into the main test. This origin is
-`0 mm`; positive test displacement follows the positive-force/loading
-direction. The live displacement display itself remains the absolute NC
-position.
+Single and Cyclic displacement endpoints are relative to the position
+that is recorded on start of each test sequenc
 
 For General tests, start with
-[`general_test_example.json`](aorty/examples/general_test_example.json) and
-the [General Test guide](aorty/examples/generalTestReadme.md).
+[`general_test_example.json`](aorty/examples/general_test_example.json) and the [General Test guide](aorty/examples/generalTestReadme.md).
 
 ## Recording outputs
 
@@ -163,8 +146,7 @@ The user-specific `aorty/.config/appInfo.json` may define the recording root:
 ```
 
 Recorded tests are organized as
-`YYYY-MM-DD/HH-mm-ss_<test-kind>_<axes>_<preset>`. A numeric suffix prevents
-collisions when two tests start within the same second.
+`YYYY-MM-DD/HH-mm-ss_<test-kind>_<axes>_<preset>`.
 
 An enabled recording directory initially contains exactly:
 
@@ -197,13 +179,6 @@ folder is never replaced.
 integrity and regulation metrics, and plots the raw X/Y force and position
 signals with phase, target, and tolerance overlays. It does not require
 `cam.bin` and does not assign pass/fail results.
-
-Non-monotonic PLC timestamps are rejected by default. For a recording known to
-come from the legacy callback-overlap implementation, pass
-`"legacy-fixed-rate"` as the second constructor/open argument to rebuild its
-fixed-rate timeline explicitly. Recording schema 1 does not identify individual
-Cyclic load/unload transitions, so per-endpoint timing and overshoot metrics are
-reported as unavailable rather than inferred.
 
 ```matlab
 cd aorty
@@ -255,14 +230,3 @@ Perform the manual connected checks in the
 They cover sign conventions, power, homing, save/restore, tare, every test
 type, synchronized barriers, stop/error propagation, overforce relief,
 recording, and post-processing.
-
-## Development rules
-
-- Update the MATLAB command builder, ADS transport, PLC DUTs/POUs, tests, and
-  documentation together when the interface changes.
-- Increment the interface version when a deployed ADS contract is incompatible.
-- Build TwinCAT after DUT changes and commit the regenerated TMC.
-- Preserve the 50-entry command/status arrays, the version-6 status layout,
-  and the external TIFF contract unless all consumers are migrated together.
-- Treat General Test JSON as authoritative; UI presets do not override an
-  imported definition.
